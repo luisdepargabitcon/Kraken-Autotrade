@@ -204,7 +204,7 @@ function idcaMarketDetail(pc, s, pro=false){
 export function idcaCycles(ctx){
   const d = ctx.data;
   const list = d.cycles ?? [];
-  const cards = list.map(c=>{
+  const cards = list.map((c,index)=>{
     const pnlCls = (c.unrealizedPnlUsd||0)>=0?'pos':'neg';
     const head = `<div class="row" style="border:0"><b>${esc(c.pair)} · ${esc(c.id)}</b>
       <span>${badge(c.status, c.status==='open'?'on':'off')} ${badge(c.mode,'sim')}</span></div>`;
@@ -247,7 +247,9 @@ export function idcaCycles(ctx){
       <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Cerrar posición</button>
       <button class="btn danger prot" data-action="idca.deleteCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Eliminar ciclo</button></div>
       <div class="tiny">Acciones sujetas a permisos y comprobación del servidor.</div>`;
-    return card(head+core+anchors+prot+(ctx.mode==='pro'?tp+orders+actions:expandable('Detalle completo (TP, órdenes, acciones)', tp+orders+actions)),{});
+    return card(head+core+anchors+prot+
+      '<button class="btn nx-inspect-open" type="button" data-inspect="idca:cycles:'+index+'">Ver ficha completa del ciclo ↗</button>'+
+      (ctx.mode==='pro'?tp+orders+actions:expandable('Detalle completo (TP, órdenes, acciones)', tp+orders+actions)),{});
   }).join('');
   return `<div class="grid">${cards||'<div class="na">Sin ciclos</div>'}</div>`;
 }
@@ -269,12 +271,12 @@ export function idcaHistory(ctx){
        ['Neutros / sin PnL confirmado',even+' / '+unknown],
        ['PnL de ciclos con dato',sum===null?NA:signed(sum,signedUsd(sum))]])+
    (unknown?'<p class="nx-idca-hint">Falta PnL verificado en '+unknown+' ciclo(s); el resultado mostrado no representa el total definitivo.</p>':''));
- const renderCycle=c=>{
+ const renderCycle=(c,index)=>{
    const result=idcaKnownNum(c.realizedPnlUsd)?signed(c.realizedPnlUsd,signedUsd(c.realizedPnlUsd)):NA;
    const orders=Array.isArray(c.orders)?c.orders:[];
    const head='<span class="nx-idca-history-pair">'+idcaPlain(c.pair)+' <small>#'+idcaPlain(c.id)+'</small></span>'+
       '<span class="nx-idca-history-result">'+result+'</span><small>'+idcaPlain(c.closeReason||c.exitType||'Cierre sin tipo')+'</small>';
-   return '<details class="nx-idca-history-row"><summary>'+head+'</summary><div class="nx-idca-history-body">'+
+   return '<details class="nx-idca-history-row" data-inspect="idca:history:'+index+'"><summary>'+head+'</summary><div class="nx-idca-history-body">'+
       kv([['Modo',idcaPlain(c.mode)],['Inicio',esc(fmtTs(c.startedAt))],
          ['Cierre',c.closedAt?esc(fmtTs(c.closedAt)):NA],
          ['Duración',c.startedAt&&c.closedAt?duration(c.startedAt,c.closedAt):NA],
@@ -286,7 +288,7 @@ export function idcaHistory(ctx){
  };
  const list=items.slice(0,12).map(renderCycle).join('');
  const rest=items.length>12?'<details class="nx-idca-rest"><summary>Ver otros '+(items.length-12)+' ciclos del historial</summary><div class="nx-idca-history-list">'+
-    items.slice(12).map(renderCycle).join('')+'</div></details>':'';
+    items.slice(12).map((c,i)=>renderCycle(c,i+12)).join('')+'</div></details>':'';
  return '<div class="nx-idca-history">'+summary+
     (items.length?'<div class="nx-idca-history-list">'+list+'</div>'+rest:
       '<p class="nx-idca-hint">No se recibieron ciclos cerrados en esta lectura. Esto no confirma que el histórico completo esté vacío.</p>')+
@@ -300,10 +302,10 @@ export function idcaOrders(ctx){
    const matches=usable.filter(o=>String(o.side).toUpperCase()===side);
    return matches.length?fmtUsd(matches.reduce((n,o)=>n+o.valueUsd,0)):'—';
  };
- const item=o=>{
+ const item=(o,index)=>{
    const side=String(o.side||'').toUpperCase(),buy=side==='BUY',sell=side==='SELL';
    const amount=idcaKnownNum(o.valueUsd)?fmtUsd(o.valueUsd):'Importe sin verificar';
-   return '<details class="nx-idca-trade"><summary><span class="nx-idca-trade-kind '+(buy?'is-buy':sell?'is-sell':'')+'">'+
+   return '<details class="nx-idca-trade" data-inspect="idca:orders:'+index+'"><summary><span class="nx-idca-trade-kind '+(buy?'is-buy':sell?'is-sell':'')+'">'+
      idcaSide(side)+'</span><span class="nx-idca-trade-main"><b>'+amount+'</b><small>'+
      esc(fmtTs(o.ts))+' · Ciclo #'+idcaPlain(o.cycleId)+'</small></span><span class="nx-idca-trade-chevron">⌄</span></summary>'+
      '<div class="nx-idca-trade-detail">'+
@@ -323,7 +325,7 @@ export function idcaOrders(ctx){
       '<small>'+all.length+' operaciones recibidas · importes brutos USD confirmados</small></section>'+warn+
    (all.length?'<div class="nx-idca-trade-list">'+all.slice(0,15).map(item).join('')+'</div>'+
      (all.length>15?'<details class="nx-idca-rest"><summary>Ver '+(all.length-15)+' operaciones más</summary>'+
-       '<div class="nx-idca-trade-list">'+all.slice(15).map(item).join('')+'</div></details>':''):
+       '<div class="nx-idca-trade-list">'+all.slice(15).map((o,i)=>item(o,i+15)).join('')+'</div></details>':''):
      '<p class="nx-idca-hint">La API no ha enviado órdenes en esta lectura. No se presupone un histórico vacío.</p>')+
    '</div>';
 }
@@ -390,7 +392,7 @@ export function spotPanel(ctx){
 }
 export function spotPositions(ctx){
   const list = ctx.data.positions ?? [];
-  const rows = list.map(p=>[esc(p.pair), fmtQty(p.quantity), fmtUsd(p.avgPrice), fmtUsd(p.currentPrice),
+  const rows = list.map((p,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="spot:positions:${i}">${esc(p.pair)} ↗</button>`, fmtQty(p.quantity), fmtUsd(p.avgPrice), fmtUsd(p.currentPrice),
     fmtUsd(p.costUsd), fmtUsd(p.valueUsd), signed(p.pnlUsd,signedUsd(p.pnlUsd)), signedPct(p.pnlPct),
     fmtPct(p.exposurePct), esc((p.protections||[]).join(', '))]);
   return card('Posiciones SPOT', table(
@@ -399,7 +401,7 @@ export function spotPositions(ctx){
      {label:'Exposición',num:1},{label:'Protecciones'}],rows,{minWidth:780}));
 }
 export function spotHistory(ctx){
-  const rows=(ctx.data.trades||[]).map(t=>[esc(fmtTs(t.ts)), `<span class="mono">${esc(t.id)}</span>`,
+  const rows=(ctx.data.trades||[]).map((t,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="spot:trades:${i}">${esc(fmtTs(t.ts))} ↗</button>`, `<span class="mono">${esc(t.id)}</span>`,
     esc(t.pair), `<b class="${t.side==='BUY'?'pos':'neg'}">${esc(t.side)}</b>`, fmtUsd(t.price),
     fmtQty(t.quantity), fmtUsd(t.feeUsd), fmtPct(t.slippagePct), esc(t.closeReason||'—'),
     badge(t.mode,'sim'), `<small>${esc(t.reason)}</small>`]);
@@ -459,7 +461,7 @@ function cyclesTable(cycles){
   return table(
     [{label:'Ciclo'},{label:'Rango'},{label:'BUY',num:1},{label:'Cant.',num:1},{label:'SELL objetivo',num:1},
      {label:'Cant. SELL',num:1},{label:'Estado'},{label:'Fee',num:1},{label:'Obj. USD',num:1},{label:'PnL',num:1}],
-    cycles.map(c=>[`<span class="mono">${esc(c.id)}</span>`, `<small>${esc(c.rangeVersionId)}</small>`,
+    cycles.map(c=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:cycles:id=${encodeURIComponent(String(c.id))}">#${esc(c.id)} ↗</button>`, `<small>${esc(c.rangeVersionId)}</small>`,
       `${fmtUsd(c.buyPrice)}<small>${esc(fmtAge(c.buyFillTs))}</small>`, fmtQty(c.buyQty,'BTC',6),
       fmtUsd(c.sellTargetPrice), fmtQty(c.sellQty,'BTC',6),
       badge(c.status, /closed/.test(c.status)?'on':/legacy/.test(c.status)?'warn':'sim'),
@@ -489,7 +491,7 @@ export function gridLevels(ctx){
       ['Abierto', fmtTs(l.currentRange?.openedAt)],
     ]) + gridLevelsChart(l))}
     ${card('Niveles', table([{label:'Precio',num:1},{label:'Lado'},{label:'Estado'}],
-      (l.levels||[]).map(x=>[fmtUsd(x.price), badge(x.side,x.side==='BUY'?'on':'sim'), esc(x.state)]),{minWidth:360}))}
+      (l.levels||[]).map((x,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:levels.levels:${i}">${fmtUsd(x.price)} ↗</button>`, badge(x.side,x.side==='BUY'?'on':'sim'), esc(x.state)]),{minWidth:360}))}
     ${card('Rangos anteriores', table(
       [{label:'ID'},{label:'Límites'},{label:'Abierto'},{label:'Cerrado'},{label:'SELL pendientes',num:1}],
       (l.previousRanges||[]).map(r=>[esc(r.id), `${fmtUsd(r.low)} — ${fmtUsd(r.high)}`,
@@ -509,9 +511,9 @@ export function gridMonitor(ctx){
       ['Bloqueado', fmtUsd(m.capitalLockedUsd)],['Liberado', fmtUsd(m.capitalReleasedUsd)],
     ]))}
     ${card('Estados de órdenes', table([{label:'ID'},{label:'Lado'},{label:'Precio',num:1},{label:'Estado'}],
-      (m.orderStates||[]).map(o=>[esc(o.id),esc(o.side),fmtUsd(o.price),badge(o.state,'sim')]),{minWidth:360}))}
+      (m.orderStates||[]).map((o,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:monitor.orderStates:${i}">${esc(o.id)} ↗</button>`,esc(o.side),fmtUsd(o.price),badge(o.state,'sim')]),{minWidth:360}))}
     ${card('Cancelaciones', table([{label:'Fecha'},{label:'Orden'},{label:'Motivo'}],
-      (m.cancellations||[]).map(c=>[fmtTs(c.ts),esc(c.orderId),`<small>${esc(c.reason)}</small>`]),{minWidth:420}))}
+      (m.cancellations||[]).map((c,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:monitor.cancellations:${i}">${fmtTs(c.ts)} ↗</button>`,esc(c.orderId),`<small>${esc(c.reason)}</small>`]),{minWidth:420}))}
     ${card('Eventos', `<div class="feed">${(m.events||[]).map(evRow).join('')}</div>
       <div class="feed">${(m.alerts||[]).map(evRow).join('')}</div>`)}
   </div>`;
@@ -553,7 +555,7 @@ export function amaMandate(ctx){
   const m = ctx.data.mandate ?? {};
   return `<div class="grid">
     ${card('Mandato', kv([
-      ['ID', esc(m.id)],['Estado', badge(m.status,'on')],
+      ['ID', `<button type="button" class="nx-inspect-inline" data-inspect="ama:mandate:single">${esc(m.id||'Ver mandato')} ↗</button>`],['Estado', badge(m.status,'on')],
       ['Activos', (m.assets||[]).map(a=>`${esc(a.asset)} ${a.weightPct}%`).join(' · ')],
       ['Score macro', fmtNum(m.scoring?.macroScore,{dec:2}), `umbral ${fmtNum(m.scoring?.threshold,{dec:2})}`],
       ['Banda riesgo', esc(m.scoring?.riskBand)],
@@ -569,13 +571,13 @@ export function amaTrace(ctx){
   return `<div class="grid">
     ${card('Órdenes / tranches — semántica estricta', table(
       [{label:'ID'},{label:'Ciclo'},{label:'Estado'},{label:'executed'},{label:'orderId'},{label:'Venue'}],
-      (t.orders||[]).map(o=>[`<span class="mono">${esc(o.id)}</span>`,esc(o.cycleId),badge(o.state,o.state==='filled'?'on':'warn'),
+      (t.orders||[]).map((o,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="ama:trace.orders:${i}">${esc(o.id)} ↗</button>`,esc(o.cycleId),badge(o.state,o.state==='filled'?'on':'warn'),
         badge(String(o.executed),o.executed?'on':'off'),`<span class="mono">${esc(o.orderId??'null')}</span>`,`<small>${esc(o.venue)}</small>`]),{minWidth:560})
       + `<div class="tiny" style="margin-top:6px">executed/reserved/submitted/filled NO son sinónimos (hallazgo P0-1).</div>`)}
     ${card('Tranches', table([{label:'ID'},{label:'Ciclo'},{label:'Nº'},{label:'Plan USD',num:1},{label:'Ejec. USD',num:1},{label:'Estado'}],
-      (t.tranches||[]).map(x=>[esc(x.id),esc(x.cycleId),x.idx,fmtUsd(x.plannedUsd),fmtUsd(x.executedUsd),badge(x.state,'sim')]),{minWidth:520}))}
-    ${card('Ledger', `<div class="feed">${(t.ledger||[]).map(l=>`<div class="ev"><span class="sev info"></span><div class="msg">${esc(l.entry)}<small>${esc(fmtTs(l.ts))}</small></div></div>`).join('')}</div>`)}
-    ${card('Decisiones', `<div class="feed">${(t.decisions||[]).map(x=>`<div class="ev"><span class="sev info"></span><div class="msg">${esc(x.text)}<small>${esc(fmtTs(x.ts))}</small></div></div>`).join('')}</div>`)}
+      (t.tranches||[]).map((x,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="ama:trace.tranches:${i}">${esc(x.id)} ↗</button>`,esc(x.cycleId),x.idx,fmtUsd(x.plannedUsd),fmtUsd(x.executedUsd),badge(x.state,'sim')]),{minWidth:520}))}
+    ${card('Ledger', `<div class="feed">${(t.ledger||[]).map((l,i)=>`<div class="ev nx-inspect-clickable" tabindex="0" role="button" data-inspect="ama:trace.ledger:${i}"><span class="sev info"></span><div class="msg">${esc(l.entry)}<small>${esc(fmtTs(l.ts))}</small></div></div>`).join('')}</div>`)}
+    ${card('Decisiones', `<div class="feed">${(t.decisions||[]).map((x,i)=>`<div class="ev nx-inspect-clickable" tabindex="0" role="button" data-inspect="ama:trace.decisions:${i}"><span class="sev info"></span><div class="msg">${esc(x.text)}<small>${esc(fmtTs(x.ts))}</small></div></div>`).join('')}</div>`)}
   </div>`;
 }
 export function amaLab(ctx){
