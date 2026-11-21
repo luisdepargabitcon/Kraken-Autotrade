@@ -36,6 +36,7 @@ export const ROUTES = {
     events:    'GET /grid-isolated/events',
     pumpDump:  'GET /grid-isolated/pump-dump-state',
     unlock:    'GET /grid-isolated/unlock-status',
+    monitor:   'GET /grid-isolated/monitor/audit',
     audit:     'GET /grid-isolated/monitor/audit',
     actions: {
       setMode:       'POST /grid-isolated/mode {mode}',
@@ -54,6 +55,8 @@ export const ROUTES = {
     cycles:    'GET /ama/cycles',
     portfolio: 'GET /ama/portfolio',
     readiness: 'GET /ama/readiness',
+    events:    'GET /ama/events',
+    ledger:    'GET /ama/ledger',
     actions: {
       setMode:    'POST /ama/mode {mode}',
       killSwitch: 'POST /ama/kill-switch',
@@ -263,13 +266,18 @@ export function normMarket(raw){
 
 export function normEvent(raw){
   if(!raw || typeof raw!=='object') return null;
-  return {
-    ts: pick(raw,'ts','timestamp','createdAt'),
-    level: pick(raw,'level','severity','sev'),
+  const sev=pick(raw,'level','severity','sev');
+  const msg=pick(raw,'msg','naturalMessage','message','text','summary');
+  return { ...raw,
+    id: pick(raw,'id','eventId','event_id'),
+    ts: pick(raw,'ts','timestamp','createdAt','created_at'),
+    level: sev,
+    severity: sev,
     engine: pick(raw,'engine','motor','source'),
-    type: pick(raw,'eventType','type'),
-    msg: pick(raw,'msg','naturalMessage','message','text','summary'),
-    detail: pick(raw,'detail','details','payload'),
+    type: pick(raw,'eventType','event_name','type'),
+    msg,
+    message: msg,
+    detail: pick(raw,'detail','details','payload','data'),
   };
 }
 

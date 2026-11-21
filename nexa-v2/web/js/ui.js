@@ -113,14 +113,21 @@ export function miniSpark(points, {w=120,hh=34}={}){
 export function openModal(innerHtml){
   const root=document.getElementById('modal-root');
   const previous=document.activeElement;
+  const alreadyOpen=!root.classList.contains('hidden');
   root.innerHTML=`<div class="modal"><button type="button" class="close-x" aria-label="Cerrar ficha">✕</button>${innerHtml}</div>`;
   root.classList.remove('hidden');
+  // El botón Atrás de Android/navegador cierra la ficha en lugar de salir de la app.
+  let popped=false;
+  const onPop=()=>{popped=true;close();};
+  if(!alreadyOpen){try{history.pushState({nxModal:Date.now()},'');window.addEventListener('popstate',onPop);}catch{}}
   const onKey=e=>{if(e.key==='Escape'&& !root.classList.contains('hidden'))close();};
   const close=()=>{
     if(root.classList.contains('hidden'))return;
     root.classList.add('hidden');root.innerHTML='';
     root.onclick=null;
     document.removeEventListener('keydown',onKey);
+    window.removeEventListener('popstate',onPop);
+    if(!popped){try{if(history.state?.nxModal)history.back();}catch{}}
     if(previous&&previous.isConnected)previous.focus?.({preventScroll:true});
   };
   root.onclick=e=>{if(e.target===root||e.target.closest('.close-x'))close();};

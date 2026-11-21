@@ -43,10 +43,10 @@ export function createApiProvider(){
   return {
     kind:'api',
     async idca(){
-      const [summary, controls, cycles, orders, history, pairs] = await Promise.all([
+      const [summary, controls, cycles, orders, history, pairs, events] = await Promise.all([
         get(ROUTES.idca.summary), get(ROUTES.idca.controls),
         get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
-        get(ROUTES.idca.pairs),
+        get(ROUTES.idca.pairs), get(ROUTES.idca.events),
       ]);
       const worst = [summary,controls].find(r=>r.state!=='ok');
       const status = wrap(controls.data, normEngineStatus);
@@ -71,6 +71,7 @@ export function createApiProvider(){
         cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
         orders: wrap(orders.state==='ok'?list(orders.data).map(normOrder).filter(Boolean):null, x=>x, {ts:Date.now()}),
         history: wrap(history.state==='ok'?list(history.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
+        events: wrap(events.state==='ok'?list(events.data).map(normEvent).filter(Boolean):null, x=>x, {ts:Date.now()}),
         latency: Math.max(summary.latency||0,controls.latency||0,cycles.latency||0,
           history.latency||0,orders.latency||0),
       };
@@ -87,24 +88,43 @@ export function createApiProvider(){
       };
     },
     async grid(){
-      const [status, levels, cycles, events] = await Promise.all([
+      const [status, levels, cycles, events, config, audit] = await Promise.all([
         get(ROUTES.grid.status), get(ROUTES.grid.levels),
         get(ROUTES.grid.cycles), get(ROUTES.grid.events),
+        get(ROUTES.grid.config), get(ROUTES.grid.monitor),
       ]);
+      const a = audit.data || {};
+      const cfg = config.data || {};
       return {
         state: status.state==='ok'?'ok':st(status.state),
         status: wrap(status.data, normGridStatus),
-        levels: wrap(list(levels.data), x=>x, {ts:Date.now()}),
+        levels: wrap({
+          levels: list(levels.data),
+          rangeVersionId: status.data?.activeRangeVersionId,
+          rangeStatus: status.data?.activeRangeStatus,
+          currentRange: a.range ? {low:a.range.low??a.range.lowerBound, high:a.range.high??a.range.upperBound, openedAt:a.range.openedAt??a.range.createdAt} : null,
+          previousRanges: Array.isArray(a.rangeHistory) ? a.rangeHistory : [],
+        }, x=>x, {ts:Date.now()}),
         cycles: wrap(list(cycles.data).map(normGridCycle).filter(Boolean), x=>x, {ts:Date.now()}),
         events: wrap(list(events.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}),
+        config: wrap({...cfg, policy:cfg.executionPolicy??cfg.policy, makerTaker:cfg.executionPolicy??cfg.makerTaker}, x=>x, {ts:Date.now()}),
+        monitor: wrap({
+          ...a,
+          capitalLockedUsd: a.wallet?.reservedUsd ?? null,
+          capitalReleasedUsd: a.wallet?.freeUsd ?? null,
+          walletTotalUsd: a.wallet?.totalUsd ?? null,
+          events: list(a.events?.length?a.events:events.data).map(normEvent).filter(Boolean),
+          alerts: list(a.decisions).map(normEvent).filter(Boolean),
+        }, x=>x, {ts:Date.now()}),
         latency: status.latency,
       };
     },
     async ama(){
-      const [status, mandate, tranches, cycles, readiness, portfolio] = await Promise.all([
+      const [status, mandate, tranches, cycles, readiness, portfolio, events, ledger] = await Promise.all([
         get(ROUTES.ama.status), get(ROUTES.ama.mandate),
         get(ROUTES.ama.tranches), get(ROUTES.ama.cycles),
         get(ROUTES.ama.readiness), get(ROUTES.ama.portfolio),
+        get(ROUTES.ama.events), get(ROUTES.ama.ledger),
       ]);
       return {
         state: status.state==='ok'?'ok':st(status.state),
@@ -114,6 +134,12 @@ export function createApiProvider(){
         cycles: wrap(list(cycles.data), x=>x, {ts:Date.now()}),
         readiness: wrap(readiness.data, x=>x, {ts:Date.now()}),
         portfolio: wrap(portfolio.data, x=>x, {ts:Date.now()}),
+        trace: wrap({
+          orders: [],
+          tranches: list(tranches.data),
+          ledger: list(ledger.data),
+          decisions: list(events.data).map(normEvent).filter(Boolean).map(e=>({...e, text:e.msg||e.type||'Evento AMA'})),
+        }, x=>x, {ts:Date.now()}),
         latency: status.latency,
       };
     },
@@ -122,13 +148,19 @@ export function createApiProvider(){
       return { state: st(r.state), market: wrap(r.data, normMarket), latency: r.latency };
     },
     async portfolio(){
-      const [summary, holdings] = await Promise.all([
+      const [summary, holdings, ledger, reservations, budgets, inventory] = await Promise.all([
         get(ROUTES.common.portfolio), get(ROUTES.common.holdings),
+        get('GET /portfolio/ledger'), get('GET /portfolio/reservations'),
+        get('GET /portfolio/budgets'), get('GET /portfolio/inventory'),
       ]);
       return {
         state: summary.state==='ok'?'ok':st(summary.state),
         summary: wrap(summary.data, normPortfolioSummary, {ts:Date.now()}),
         holdings: wrap(list(holdings.data), x=>x, {ts:Date.now()}),
+        ledger: wrap(ledger.state==='ok'?list(ledger.data):[], x=>x, {ts:Date.now()}),
+        reservations: wrap(reservations.state==='ok'?list(reservations.data):[], x=>x, {ts:Date.now()}),
+        budgets: wrap(budgets.state==='ok'?{items:list(budgets.data)}:null, x=>x, {ts:Date.now()}),
+        inventory: wrap(inventory.state==='ok'?list(inventory.data):[], x=>x, {ts:Date.now()}),
         latency: summary.latency,
       };
     },

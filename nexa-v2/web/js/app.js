@@ -65,10 +65,17 @@ async function loadData(){
   ]);
   const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
   state.enginesData = { idca:pack(idca), spot:pack(spot), grid:pack(grid), ama:pack(ama) };
+  // Actividad global = feed de notificaciones + eventos reales de cada motor, sin duplicados.
+  const feed=[...(activity.events?.data??[])];
+  const seen=new Set(feed.map(e=>`${e.engine||'bot'}:${e.id??e.ts}`));
+  const push=(arr,engine)=>{for(const e of arr||[]){const k=`${engine}:${e.id??e.ts??e.msg}`;if(!seen.has(k)){seen.add(k);feed.push({...e,engine:e.engine||engine});}}};
+  const gd=state.enginesData.grid.data,ad=state.enginesData.ama.data,id=state.enginesData.idca.data;
+  push(gd?.events,'grid');push(ad?.trace?.decisions,'ama');push(id?.events,'idca');
+  feed.sort((a,b)=>new Date(b.ts||0)-new Date(a.ts||0));
   state.common = {
     market: { state: market.state, data: market.market?.data ?? null },
-    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? [] } },
-    activity: { state: activity.state, data: { events: activity.events?.data ?? [] } },
+    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? [], ledger: portfolio.ledger?.data ?? [], reservations: portfolio.reservations?.data ?? [], budgets: portfolio.budgets?.data ?? null, inventory: portfolio.inventory?.data ?? [] } },
+    activity: { state: activity.state, data: { events: feed } },
     fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note },
   };
 }

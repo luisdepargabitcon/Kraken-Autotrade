@@ -413,7 +413,8 @@ function engineSummary(ctx,id,d){
  const obj={
  idca:[['PnL',pnl(first(s,'realizedPnlUsd','realizedPnl'))],
  ['Ciclos',value(first(s,'activeCyclesCount','activeCycles'))],
- ['Capital',money(first(s,'capitalUsedUsd','capitalUsed'))]],
+ ['Asignado',money(first(s,'allocatedCapitalUsd','capitalAllocated'))],
+ ['Usado',money(first(s,'capitalUsedUsd','capitalUsed'))]],
  grid:[['Capital',money(first(st,'capitalUsedUsd','capitalReservedUsd'))],['Ciclos',first(st,'activeCyclesCount','openCycles')!==null?value(first(st,'activeCyclesCount','openCycles')):'—'],['Par',value(st.pair)]],
  spot:[['Posiciones',Array.isArray(d.positions)?d.positions.length:'—'],['Estrategia',value(st.strategy)],['Fuente',value(st.dataExchange)]],
  ama:[['Presupuesto',money(d.portfolio?.budgetUsd)],['Reservado',money(d.portfolio?.reservedUsd)],['Mandato',value(d.mandate?.status)]]

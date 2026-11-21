@@ -506,16 +506,20 @@ function gridLevelsChart(l){
 }
 export function gridMonitor(ctx){
   const m = ctx.data.monitor ?? {};
+  const blocks = (m.safety?.blockingReasons||[]).map(r=>`<div class="ev nx-inspect-clickable"><span class="sev warn"></span><div class="msg">${esc(r)}</div></div>`).join('');
+  const evRows=(arr,base)=>arr.map((e,i)=>`<div class="ev nx-inspect-clickable" tabindex="0" role="button" data-inspect="grid:monitor.${base}:${e.id!=null?'id='+encodeURIComponent(String(e.id)):i}"><span class="sev ${esc(e.severity||'info')}"></span><div class="msg"><b>${esc(e.engine||'grid')}</b> · ${esc(e.type||'')} — ${esc(e.message||e.msg||'')}<small>${esc(fmtTs(e.ts,{withSec:true}))}</small></div></div>`).join('');
   return `<div class="grid">
     ${card('Capital', kv([
+      ['Total cartera grid', fmtUsd(m.walletTotalUsd)],
       ['Bloqueado', fmtUsd(m.capitalLockedUsd)],['Liberado', fmtUsd(m.capitalReleasedUsd)],
     ]))}
+    ${m.safety?card('Seguridad y bloqueos', `<div class="feed">${blocks||'<div class="na">Sin razones de bloqueo verificadas</div>'}</div>`):''}
     ${card('Estados de órdenes', table([{label:'ID'},{label:'Lado'},{label:'Precio',num:1},{label:'Estado'}],
       (m.orderStates||[]).map((o,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:monitor.orderStates:${i}">${esc(o.id)} ↗</button>`,esc(o.side),fmtUsd(o.price),badge(o.state,'sim')]),{minWidth:360}))}
     ${card('Cancelaciones', table([{label:'Fecha'},{label:'Orden'},{label:'Motivo'}],
       (m.cancellations||[]).map((c,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="grid:monitor.cancellations:${i}">${fmtTs(c.ts)} ↗</button>`,esc(c.orderId),`<small>${esc(c.reason)}</small>`]),{minWidth:420}))}
-    ${card('Eventos', `<div class="feed">${(m.events||[]).map(evRow).join('')}</div>
-      <div class="feed">${(m.alerts||[]).map(evRow).join('')}</div>`)}
+    ${card('Eventos', `<div class="feed">${evRows(m.events||[],'events')||'<div class="na">Sin eventos verificados</div>'}</div>`)}
+    ${(m.alerts||[]).length?card('Decisiones', `<div class="feed">${evRows(m.alerts,'alerts')}</div>`):''}
   </div>`;
 }
 export function gridConfig(ctx){
@@ -615,6 +619,10 @@ function renderPortfolioLegacy(ctx){
   const basic = `
     ${card('Cartera', `
       <div class="big-num">${fmtUsd(s.navUsd)}</div>
+      <div class="tiny">Valor total según lectura /portfolio/summary del bot${s.ts?` · ${esc(fmtTs(s.ts))}`:''}. Presupuesto asignado ≠ patrimonio de mercado.</div>
+      <div class="row"><span class="k">Capital asignado</span><span class="v">${fmtUsd(s.allocatedUsd)}</span></div>
+      <div class="row"><span class="k">Desplegado</span><span class="v">${fmtUsd(s.deployedUsd)}</span></div>
+      <div class="row"><span class="k">Libre asignado</span><span class="v">${fmtUsd(s.freeAssignedUsd)}</span></div>
       <div class="row"><span class="k">Exposición</span><span class="v">${fmtUsd(s.exposureUsd)}</span></div>
       <div class="row"><span class="k">PnL realizado</span><span class="v">${signed(s.realizedPnlUsd,signedUsd(s.realizedPnlUsd))}</span></div>
       <div class="row"><span class="k">PnL no realizado</span><span class="v">${signed(s.unrealizedPnlUsd,signedUsd(s.unrealizedPnlUsd))}</span></div>
@@ -623,11 +631,28 @@ function renderPortfolioLegacy(ctx){
         (s.byEngine||[]).map(e=>[`Motor ${e.engine}`, `${fmtUsd(e.exposureUsd)} · ${signedUsd(e.pnlUsd)}`])))}`)}`;
   const pro = `
     ${card('NAV y exposición', kv([
-      ['NAV', fmtUsd(s.navUsd)],['Exposición', fmtUsd(s.exposureUsd)],
+      ['Valor total (API)', fmtUsd(s.navUsd)],['Capital asignado', fmtUsd(s.allocatedUsd)],
+      ['Desplegado', fmtUsd(s.deployedUsd)],['Libre asignado', fmtUsd(s.freeAssignedUsd)],
+      ['Exposición', fmtUsd(s.exposureUsd)],
       ['PnL realizado', signed(s.realizedPnlUsd,signedUsd(s.realizedPnlUsd))],
       ['PnL no realizado', signed(s.unrealizedPnlUsd,signedUsd(s.unrealizedPnlUsd))],
       ['HOLD separado', fmtUsd(s.holdUsd)],
-    ]))}
+    ])+`<div class="tiny">«Valor total» procede de totalValueUsd en la API. No es una prueba independiente de NAV de exchange.</div>`)}
+    ${card('Activos en cartera', table(
+      [{label:'Activo'},{label:'Cantidad',num:1},{label:'Valor USD',num:1},{label:'Detalle'}],
+      (p.holdings||[]).map((h,i)=>[esc(h.asset||h.symbol||'—'),fmtNum(h.quantity??h.qty,{dec:8}),
+        fmtUsd(h.valueUsd??h.usdValue),
+        `<button type="button" class="nx-inspect-inline" data-inspect="common:portfolio.holdings:${i}">Ficha ↗</button>`]),{minWidth:420}))}
+    ${card('Movimientos', table(
+      [{label:'Fecha'},{label:'Tipo'},{label:'Activo'},{label:'Importe',num:1},{label:'Detalle'}],
+      (p.ledger||[]).map((l,i)=>[fmtTs(l.ts||l.createdAt),esc(l.type||l.kind||'—'),esc(l.asset||'—'),
+        fmtUsd(l.amountUsd??l.valueUsd),
+        `<button type="button" class="nx-inspect-inline" data-inspect="common:portfolio.ledger:${i}">Ficha ↗</button>`]),{minWidth:480}))}
+    ${card('Reservas activas', table(
+      [{label:'ID'},{label:'Modo'},{label:'Importe',num:1},{label:'Estado'},{label:'Detalle'}],
+      (p.reservations||[]).map((r,i)=>[esc(r.id||'—'),esc(r.mode||r.engine||'—'),fmtUsd(r.amountUsd??r.usd),
+        badge(r.state||r.status,'sim'),
+        `<button type="button" class="nx-inspect-inline" data-inspect="common:portfolio.reservations:${i}">Ficha ↗</button>`]),{minWidth:480}))}
     ${card('Por activo', table(
       [{label:'Activo'},{label:'Valor USD',num:1},{label:'PnL USD',num:1}],
       (s.byAsset||[]).map(a=>[esc(a.asset),fmtUsd(a.valueUsd),signed(a.pnlUsd,signedUsd(a.pnlUsd))]),{minWidth:360}))}
@@ -664,7 +689,13 @@ function renderActivityLegacy(ctx){
   const head = `
     <div class="chips" style="margin-bottom:8px">${sevBtn('all','Todas')}${sevBtn('ok','OK')}${sevBtn('info','Info')}${sevBtn('warn','Aviso')}${sevBtn('err','Error')}</div>
     <div class="chips" style="margin-bottom:10px">${engBtn('all','Todos')}${engBtn('idca','IDCA')}${engBtn('spot','SPOT')}${engBtn('grid','Grid')}${engBtn('ama','AMA')}${engBtn('system','Sistema')}</div>`;
-  const feed = `<div class="feed">${filtered.map(evRow).join('')||'<div class="na">Sin eventos</div>'}</div>`;
+  const feed = `<div class="feed">${filtered.map((e)=>{
+    const i=list.indexOf(e);
+    const ref=e.id!=null?'id='+encodeURIComponent(String(e.id)):i;
+    return `<div class="ev nx-inspect-clickable" tabindex="0" role="button" data-inspect="common:events:${ref}"><span class="sev ${esc(e.severity||'info')}"></span>
+      <div class="msg"><b>${esc(e.engine||'')}</b> · ${esc(e.type||'')} — ${esc(e.message||e.msg||'')}
+      <small>${esc(fmtTs(e.ts,{withSec:true}))}${e.source?` · ${esc(e.source)}`:''}${e.detail?` · ${esc(typeof e.detail==='object'?'':e.detail)}`:''}</small></div></div>`;
+  }).join('')||'<div class="na">Sin eventos</div>'}</div>`;
   return `${head}${card(`Actividad (${filtered.length}/${list.length})`,feed)}
     ${mode==='pro'?'<div class="tiny" style="margin-top:6px">Stream · estados de exchange, latencias y staleness visibles por evento.</div>':''}`;
 }

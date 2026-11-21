@@ -36,6 +36,8 @@ const TITLES={
  'ama:trace.orders':'Orden AMA','ama:trace.tranches':'Tramo AMA',
  'ama:trace.ledger':'Apunte de ledger AMA','ama:trace.decisions':'Decisión AMA',
  'ama:mandate':'Mandato AMA','common:events':'Evento del bot',
+ 'common:portfolio.holdings':'Activo de cartera','common:portfolio.ledger':'Movimiento de cartera',
+ 'common:portfolio.reservations':'Reserva de cartera',
 };
 const num=v=>{
  if(typeof v==='number'&&Number.isFinite(v))return v;
@@ -80,13 +82,17 @@ function fields(record,depth=0){
    ' campos sin información confirmada</summary><p>'+missing.map(([k])=>esc(label(k))).join(' · ')+'</p></details>':'');
 }
 const getPath=(obj,path)=>path.split('.').reduce((o,k)=>o?.[k],obj);
-function resolve(state,ref){
+export function resolve(state,ref){
  const parts=String(ref||'').split(':');
  if(parts.length!==3)return null;
  const [engine,path,key]=parts;
  if(!/^(idca|spot|grid|ama|common)$/.test(engine)||!/^[a-zA-Z.]+$/.test(path))return null;
- const root=engine==='common'?state.common?.activity?.data:state.enginesData?.[engine]?.data;
- const raw=getPath(root,path);
+ let root,sub=path;
+ if(engine==='common'){
+   if(path==='events')root=state.common?.activity?.data;
+   else{const seg=path.split('.')[0];root=state.common?.[seg]?.data;sub=path.slice(seg.length+1);}
+ }else root=state.enginesData?.[engine]?.data;
+ const raw=getPath(root,sub);
  if(raw===null||raw===undefined)return null;
  let record;
  if(Array.isArray(raw)){
@@ -104,7 +110,7 @@ function summary(record){
  const amount=first(record,'grossValueUsd','valueUsd','netValueUsd','executedUsd','capitalUsedUsd','plannedUsd');
  return {kind,result,price,amount,
   quantity:first(record,'quantity','qty','buyQty','sellQty','totalQuantity'),
-  reason:first(record,'closeReason','triggerReason','reason','exitType','humanReason'),
+  reason:first(record,'closeReason','triggerReason','reason','exitType','humanReason','naturalMessage','message','msg','text'),
   stamp:first(record,'executedAt','ts','buyFillTs','sellFillTs','startedAt','createdAt','closedAt'),
   mode:first(record,'mode','executionMode'),
   state:first(record,'status','state','executionStatus'),
