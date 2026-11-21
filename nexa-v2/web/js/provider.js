@@ -56,14 +56,23 @@ export function createApiProvider(){
         const cfgs = list(pairs.data);
         if(cfgs.length) status.data.assetPairs = cfgs.map(x=>({pair:x.pair, enabled:x.enabled}));
       }
+      const resourceStates={
+        summary:st(summary.state),controls:st(controls.state),
+        cycles:st(cycles.state),orders:st(orders.state),
+        history:st(history.state),pairs:st(pairs.state)
+      };
+      // Un GET secundario fallido es parcial, no «0 ciclos» ni histórico vacío.
+      const partial=!worst && [cycles,orders,history,pairs].some(r=>r.state!=='ok');
       return {
-        state: worst ? st(worst.state) : 'ok',
+        state: worst ? st(worst.state) : (partial?'partial':'ok'),
+        resourceStates,
         status,
         summary: wrap(summary.data, normIdcaSummary),
-        cycles: wrap(list(cycles.data).map(normIdcaCycle).filter(Boolean), x=>x, {ts:Date.now()}),
-        orders: wrap(list(orders.data).map(normOrder).filter(Boolean), x=>x, {ts:Date.now()}),
-        history: wrap(list(history.data).map(normIdcaCycle).filter(Boolean), x=>x, {ts:Date.now()}),
-        latency: Math.max(summary.latency||0, controls.latency||0),
+        cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
+        orders: wrap(orders.state==='ok'?list(orders.data).map(normOrder).filter(Boolean):null, x=>x, {ts:Date.now()}),
+        history: wrap(history.state==='ok'?list(history.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
+        latency: Math.max(summary.latency||0,controls.latency||0,cycles.latency||0,
+          history.latency||0,orders.latency||0),
       };
     },
     async spot(){
