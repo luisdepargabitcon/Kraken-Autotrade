@@ -75,3 +75,13 @@ Cascade **DEBE LEER Y EJECUTAR** [REFERENCIAS_UX_REV10_REVOLUT_KRAKEN_COINBASE.m
 **La revisión 9 es sólo una BASE PARCIAL:** aunque ya hay un nuevo cockpit Inicio/Mercado/Motores/Cartera, gran parte de las subpestañas Pro siguen siendo el renderizador anterior dentro de `<details>`. Eso NO satisface la promesa de una app del nivel de las referencias. Hay que reconstruir el **flujo de trabajo** por pantalla, priorizar gráficos reales, timelines IDCA y niveles Grid, cambios Básico vs Pro visibles en una foto, cards/gestos/modales móviles; conservar 100 % datos/controles por compatibilidad.
 
 **Bloqueo de aprobación:** no compilar/publicar como UI terminada si no hay captura comparativa 0.3.0 vs nueva Básico/Pro, pruebas de interacción reales (Android/web), 0 solapes y 0 datos falsos, y checklist C001–C121 evidenciado. Mantener accesos PIN/biometría segura de rev8. No VPS, DB, LIVE, producción ni main.
+
+
+## ACTUALIZACIÓN 21/11/2026 — AUTORIZACIÓN LIMITADA DE CONEXIÓN VPS (SIN LIVE)
+El propietario ha autorizado expresamente **continuar la conexión de NEXA al bot**, con el alcance declarado en [CONEXION_VPS_SOLO_LECTURA_2026-11-21.md](CONEXION_VPS_SOLO_LECTURA_2026-11-21.md). Esta autorización es **excepción muy limitada** a la regla anterior «no tocar VPS»: se permite auditar y, tras superar gates, instalar la PASARELA NEXA **INDEPENDIENTE DE SOLO LECTURA** (nuevo proceso, certificado HTTPS, virtual host limitado, clave de vinculación), nunca modificar motores, DB, órdenes, estrategias, configuraciones LIVE, claves exchange, reglas del bot, ni `main`.
+
+**Pasarela obligatoria**: `nexa-v2/bff/read-only-server.mjs`, NO `v2-proxy.mjs` antiguo. Solo GET de rutas verificadas por allowlist y 405 de métodos mutables. PIN/biometría de la APK es desbloqueo local; autorización remota por P-256 y rol `read`. FISCO aparte `fisco:read` no habilitado por defecto.
+
+**Orden para Cascade:** seguir el runbook y pruebas `nexa-v2/tests/read-only-server.test.mjs`; identificar puerto backend real y seguridad de API antigua, no asumir; HTTPS IP con CA válida y renovación automática; comprobar 401/403/405 y no entrega de órdenes; dispositivo Pixel 9 vinculado y datos reales sin ceros ficticios. Si no es posible instalar de forma aislada, PARAR y documentar bloqueo, nunca improvisar HTTP o exponer APIs de escritura. No publicar secretos/códigos de vinculación. **No marcar «conectado» hasta prueba desde Pixel 9.**
+
+**Desde ChatGPT no se accedió al VPS:** no hay conectividad TCP hacia host en esta ejecución; el código está subido a la rama, pero el despliegue/QA operativo deben hacerse con el entorno privado de Cascade. Las APK Release anteriores no incluyen los últimos cambios de config y provider.
