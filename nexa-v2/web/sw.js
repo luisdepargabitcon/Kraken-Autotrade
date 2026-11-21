@@ -1,5 +1,5 @@
 // NEXA premium rev11 — static shell only. Never cache API/auth responses.
-const CACHE='nexa-v2-premium-r11b';
+const CACHE='nexa-v2-access-settings-r12';
 const SHELL=[
  './','./index.html','./manifest.webmanifest','./assets/icon.svg',
  './css/style.css','./css/premium.css',
