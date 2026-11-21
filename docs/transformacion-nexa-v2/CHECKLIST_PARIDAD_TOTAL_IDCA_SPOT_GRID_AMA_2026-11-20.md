@@ -8,7 +8,7 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 
 1. Leer **primero y de forma íntegra** el [PLAN MAESTRO F0–F6](PLAN_MAESTRO_2026-11-20.md) y la [ORDEN OPERATIVA](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). Ejecutar el plan completo; el checklist **no sustituye** sus entregables, prioridades, dependencias ni restricciones.
 2. En F0 inicializar `docs/transformacion-nexa-v2/seguimiento/ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv` (sin datos financieros personales), `EVIDENCIAS_CHECKLIST.md` y `INCIDENCIAS.md`. Marcar fases F0–F6 como PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AUTORIZACIÓN. Actualizar después de cada cambio relevante.
-3. Los controles enumerados C001–C086 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
+3. Los controles enumerados C001–C102 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
 4. Solo transformar `- [ ]` en `- [x]` si existe prueba verificable satisfactoria y toda la comprobación se cumplió. No marcar por suposición, por maqueta o por documentación de tercero. Para NO APLICA o BLOQUEADA dejar la casilla sin marcar y referenciar su justificación; la verificación de runtime nunca se sustituye por una prueba de HTML ficticio.
 5. Al finalizar **cada fase**, volver a recorrer los IDs relacionados, identificar faltantes, corregir defectos ordinarios y volver a probar. Registrar el resumen en `ESTADO_FASES.md`: total de controles, verificados, fallidos, pendientes, N/A justificados y bloqueados; porcentaje calculado sobre controles aplicables, sin considerar N/A o bloqueados como tests exitosos.
 6. **Añadir nuevas casillas con nuevos IDs** cuando el inventario de código/pantallas descubra un campo, acción o control que no aparece aquí. No eliminar ninguna comprobación para mejorar el porcentaje de cobertura.
@@ -125,5 +125,24 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 - [ ] **C084** Panel web definitivo empaquetado para HTTPS protegido con configuración de backend segura; URL real pendiente de despliegue autorizado, nunca GitHub Pages público como consola administrativa.
 - [ ] **C085** Gate de autorización documentado con runbook de despliegue reversible; no afirmar conexión ni pruebas en VPS hasta recibir permiso y ejecutarlas.
 - [ ] **C086** Revisados los 75 controles originales y los adicionales uno a uno: evidencias correctas por ID; C041–C046 GRID y C047–C051 AMA, no pruebas de APK/PIN; estado global honesto.
+
+
+## REV. 8 — EXPERIENCIA PREMIUM Y ACCESO SIN USER/PASSWORD (OBLIGATORIO)
+- [ ] **C087** Comparativa UX Revolut X/Kraken Pro/Coinbase Advanced documentada con decisiones propias; sin copiar identidad, logos, código ni assets.
+- [ ] **C088** Pixel 9 Android: 0 solapes de status bar/batería y cabecera, edge-to-edge probado en Android 14/15/16 y rotación, no solo padding especulativo.
+- [ ] **C089** Cabecera móvil legible, motor en bottom-sheet/modal, Básico/Pro visibles, estado seguro compacto, tabbar inferior con espacio de gestos.
+- [ ] **C090** Inicio y Cartera: jerarquía patrimonio/PnL/exposición, composición moderna, sin tarjetas gigantes de «No disponible» ni datos falseados.
+- [ ] **C091** Mercado Pro: gráficas legibles OHLCV, periodos, RSI/MACD/BB/EMA/ATR/ADX/volumen y filtros/leyendas; Básico útil y detalle accesible.
+- [ ] **C092** Motores: subnavegación táctil, paneles de información compactos/expansibles, todos los datos originales de IDCA/SPOT/Grid/AMA conservados y acciones correctas.
+- [ ] **C093** Ninguna pantalla de inicio de sesión en APK/Web requiere escribir **nombre de usuario ni contraseña**, ni reaparece una cuenta técnica escondida detrás de un PIN.
+- [ ] **C094** Alta segura: un solo código/QR de vinculación expirante generado en entorno administrador autorizado, clave pública por dispositivo, permisos limitados, revocación y recuperación.
+- [ ] **C095** PIN local definido/confirmado por usuario, sin PIN fijo en bundle, con protección de intentos y almacenamiento protegido; 0 PIN enviado por red.
+- [ ] **C096** Huella y desbloqueo facial nativo con BiometricPrompt/Credential Manager cuando estén disponibles, fallback PIN, estados cancel/error/no sensor; sin prompt HTML falso.
+- [ ] **C097** El bloqueo biométrico/PIN está ligado a credencial de dispositivo y a sesión autenticada por challenge firmado; no da acceso a trading simplemente por desbloquear la pantalla.
+- [ ] **C098** Web usa WebAuthn/passkey o vinculación de dispositivo segura, sin formulario user/password; backend autentica sin usuario/pass compartidos.
+- [ ] **C099** Acciones críticas exigen permisos server-side y validación adicional (biometría/PIN seguro), confirmación real, auditoría, idempotencia y ruta exacta; 0 operaciones no autorizadas.
+- [ ] **C100** Tests reales de enrolamiento, reinicio, PIN erróneo, biometrias, cancelación, dispositivos revocados, pérdida móvil, 401/403, web/Android sin herramientas de producción.
+- [ ] **C101** Firma APK sin secretos embebidos; claves previas potencialmente expuestas rotadas/gestionadas con plan de actualización; entrega solo tras QA, SHA y archivo GitHub verificable.
+- [ ] **C102** Entrega final inspeccionable Pixel 9/web: capturas, pruebas visuales 360–1920, sin «ok.» suelto ni «Sin ciclos» cuando API no disponible; APK compilada y publicada solo tras verificación.
 
 **Regla final:** no sacrificar datos por estética, no fusionar motores, no degradar trazabilidad y no afirmar éxito sin evidencia.
