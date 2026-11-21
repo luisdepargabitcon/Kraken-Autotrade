@@ -734,3 +734,8 @@ html.nexa-native .topbar{
  .nxp-entry-decision{max-width:45%}
  .nx-spot-history-overview{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+.nx-subview-partial{border:1px solid #74603b;background:#2b261e;color:#eed09a;padding:11px 13px;border-radius:10px;margin-bottom:13px;font-size:12px;line-height:1.5}
+.nx-spot-load-more{width:100%;min-height:48px;margin-top:14px;border-radius:12px;border:1px solid #4a78a8;background:#18395b;color:#cce5ff;font-size:13px;font-weight:750;cursor:pointer}
+.nx-spot-load-more:disabled{opacity:.65;cursor:wait}
+.nx-spot-load-more:focus-visible{outline:2px solid #86c1ff;outline-offset:2px}
