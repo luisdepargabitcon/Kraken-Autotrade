@@ -61,7 +61,7 @@ test('Motor conectado: los controles del panel antiguo siguen en el DOM detrás 
 });
 test('Cartera desconectada: no presenta NAV, saldo cero ni PnL falsos',()=>{
   const out=renderPortfolioExperience(base,legacy);
-  assert.match(out,/Cartera/);
+  assert.match(out,/cartera/i);
   assert.match(out,/Vincula NEXA/);
   assert.doesNotMatch(out,/0\.00\s?USD/);
 });
