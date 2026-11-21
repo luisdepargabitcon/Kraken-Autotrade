@@ -75,11 +75,11 @@ test('Cartera autenticada: cifras de fuente y desglose original en Pro',()=>{
   assert.match(out,/Balances y desglose completos/);
   assert.match(out,/original-detail/);
 });
-test('Pantallas públicas de screens.js usan composición nueva en vez de las tarjetas antiguas por defecto',()=>{
+test('Pantallas públicas de screens.js usan la composición premium Rev11',()=>{
   const out=Screens.renderHome(base);
-  assert.match(out,/nx-wealth-hero/);
+  assert.match(out,/nxp-basic-balance/);
   const out2=Screens.renderMarket(base);
-  assert.match(out2,/nx-chart-shell/);
+  assert.match(out2,/nxp-chartbox/);
   const out3=Screens.renderEngine(base);
-  assert.match(out3,/nx-engine-intro/);
+  assert.match(out3,/nxp-engine-head/);
 });
