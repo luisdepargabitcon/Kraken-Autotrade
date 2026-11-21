@@ -50,7 +50,7 @@ export function collectPositions(ctx){
 function market(ctx,pair){
  const snap=ctx.data?.marketPairs?.[pair]||ctx.data?.market;
  const m=snap?.data||{},valid=snap?.state==='ok'&&ctx.authenticated;
- return {m,valid,price:valid?val(m,'price','lastPrice'):null,change:valid?val(m,'change24hPct','change24h'):null,
+ return {m,valid,price:valid?val(m,'price','lastPrice'):null,change:valid?val(m,'change24hPct','pct24h'):null,
   indicators:valid?m.indicators||{}:{},state:snap?.state||'unavailable'};
 }
 function candles(ctx,pair){
