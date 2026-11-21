@@ -147,8 +147,8 @@ export function idcaPanel(ctx){
   const basic = `
     ${card('IDCA — Panel', `
       <div class="row"><span class="k">Modo</span><span class="v">${modeBadge(st.mode)}</span></div>
-      <div class="row"><span class="k">Motor</span><span class="v">${badge(st.running?'en marcha':'detenido', st.running?'on':'off')} ${freshChip(st.lastTickAt,'scheduler')}</span></div>
-      <div class="row"><span class="k">Pausa global</span><span class="v">${badge(st.globalTradingPause?'PAUSADO':'sin pausa', st.globalTradingPause?'err':'on')}</span></div>
+      <div class="row"><span class="k">Motor</span><span class="v">${badge(st.running==null?'Sin confirmar':st.running?'en marcha':'detenido',st.running==null?'warn':st.running?'on':'off')} ${freshChip(st.lastTickAt,'scheduler')}</span></div>
+      <div class="row"><span class="k">Pausa global</span><span class="v">${badge(st.globalTradingPause==null?'Sin confirmar':st.globalTradingPause?'PAUSADO':'sin pausa',st.globalTradingPause==null?'warn':st.globalTradingPause?'err':'on')}</span></div>
       <div class="row"><span class="k">Pares</span><span class="v">${(st.assetPairs||[]).map(p=>`<span class="chip ${p.enabled?'on':''}" style="margin-left:4px">${esc(p.pair)}·${esc(p.mode)}</span>`).join('')}</span></div>
       <div class="row"><span class="k">Score de entrada</span><span class="v">${fmtNum(pc.entryScore,{dec:2})} / umbral ${fmtNum(pc.entryThreshold,{dec:2})} ${microBar((pc.entryScore||0)/(pc.entryThreshold||1)*100,{mark:100})}</span></div>
       <div class="row"><span class="k">Capital usado / libre</span><span class="v">${fmtUsd(s.capitalUsedUsd)} / ${fmtUsd(s.capitalFreeUsd)}</span></div>
@@ -160,8 +160,8 @@ export function idcaPanel(ctx){
   return `
     ${card('IDCA — Panel (Pro)', `
       ${kv([
-        ['Modo', modeBadge(st.mode)], ['Motor', badge(st.running?'en marcha':'detenido',st.running?'on':'off')],
-        ['Pausa global', badge(st.globalTradingPause?'PAUSADA':'sin pausa', st.globalTradingPause?'err':'on')],
+        ['Modo', modeBadge(st.mode)], ['Motor', badge(st.running==null?'Sin confirmar':st.running?'en marcha':'detenido',st.running==null?'warn':st.running?'on':'off')],
+        ['Pausa global', badge(st.globalTradingPause==null?'Sin confirmar':st.globalTradingPause?'PAUSADA':'sin pausa',st.globalTradingPause==null?'warn':st.globalTradingPause?'err':'on')],
         ['Último tick', fmtTs(st.lastTickAt,{withSec:true}), `ticks ${fmtNum(st.tickCount,{dec:0})}`],
         ['Último error', esc(st.lastError||'—')],
       ])}
@@ -169,10 +169,10 @@ export function idcaPanel(ctx){
     <div class="row"><span class="k">Protecciones</span><span class="v">Break-even · Trailing · TP dinámico<small class="tiny"> detalle por ciclo en «Ciclos abiertos»</small></span></div>
     ${idcaMarketDetail(pc, s, true)}
     ${card('Métricas de estrategia', kv([
-      ['Score estrategia', fmtNum(s.strategyScore,{dec:2})],['Win rate', fmtPct((s.winRate||0)*100)],
+      ['Score estrategia', fmtNum(s.strategyScore,{dec:2})],['Win rate', (typeof s.winRate==='number'?fmtPct(s.winRate*100):NA)],
       ['Profit factor', fmtNum(s.profitFactor,{dec:2})],['Expectancy', fmtUsd(s.expectancy)],
       ['Compras hoy', s.buysToday],['Ventas hoy', s.sellsToday],
-      ['Trailing activos', s.trailingActiveCount],['Smart Mode', badge(s.smartModeEnabled?'ON':'off',s.smartModeEnabled?'on':'off')],
+      ['Trailing activos', s.trailingActiveCount],['Smart Mode', badge(s.smartModeEnabled==null?'Sin confirmar':s.smartModeEnabled?'ON':'off',s.smartModeEnabled==null?'warn':s.smartModeEnabled?'on':'off')],
     ]))}
     ${card('Controles del motor (protegidos)', `
       <div class="btn-row">
@@ -195,8 +195,8 @@ function idcaMarketDetail(pc, s, pro=false){
       ['Referencia', esc(pc.reference??NA)],
       ['Market score', fmtNum(pc.marketScore,{dec:2})],
     ])}
-    <div class="row"><span class="k">Progreso hacia umbral de entrada</span><span class="v">${microBar(Math.min(100,(pc.entryScore||0)/(pc.entryThreshold||1)*100),{mark:100})}</span></div>
-    ${provLine({source:'kraken', ts:pc.priceTs, state:'fresh'})}
+    <div class="row"><span class="k">Progreso hacia umbral de entrada</span><span class="v">${isNum(pc.entryScore)&&isNum(pc.entryThreshold)&&pc.entryThreshold>0?microBar(Math.min(100,pc.entryScore/pc.entryThreshold*100),{mark:100}):NA}</span></div>
+    ${pc.priceTs?provLine({source:pc.source||pc.exchange||'API',ts:pc.priceTs,state:'unknown'}):''}
     ${pro?`<h4 class="small" style="margin:10px 0 4px">Desglose score V/C/R/D/M</h4>
       ${table([{label:'Componente'},{label:'Valor',num:1}],
         Object.entries(pc.scoreBreakdown||{}).map(([k,v])=>[esc(k),fmtNum(v,{dec:2})]),{minWidth:260})}`:''}`;
@@ -226,10 +226,10 @@ export function idcaCycles(ctx){
     const prot = `
       <div class="row"><span class="k">Break-even</span><span class="v">${badge(c.breakEven?.enabled?'habilitado':'off',c.breakEven?.armed?'warn':(c.breakEven?.enabled?'on':'off'))}
         <small class="tiny"> arma en ${fmtPct(c.breakEven?.armPct)} · dist. ${fmtPct(c.breakEven?.distancePct)}</small></span></div>
-      ${microBar(Math.min(100,(c.breakEven?.armed?100:35)))}
+      ${c.breakEven?.armed===true?microBar(100):''}
       <div class="row"><span class="k">Trailing</span><span class="v">${badge(c.trailing?.enabled?'habilitado':'off',c.trailing?.armed?'warn':'on')}
         <small class="tiny"> ${fmtPct(c.trailing?.pct)} · dist. ${fmtPct(c.trailing?.distancePct)}</small></span></div>
-      ${microBar(c.trailing?.progressPct??0)}
+      ${isNum(c.trailing?.progressPct)?microBar(c.trailing.progressPct):''}
       <div class="row"><span class="k">Duración / regla</span><span class="v">${duration(c.startedAt)}<small>${esc(c.timeStop?.rule||'')} · quedan ${esc(c.timeStop?.remaining||'')}</small></span></div>`;
     const tp = expandable('Desglose TP dinámico', table(
       [{label:'Componente'},{label:'Valor'}],
