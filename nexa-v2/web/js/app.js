@@ -47,6 +47,7 @@ function navTo(target){
   if(target.startsWith('engine:')){ state.ui.engineId = target.slice(7); state.ui.subtab = ENGINE_SUBTABS[state.ui.engineId]?.[0]?.id || 'panel'; state.screen='engines'; }
   else state.screen = target;
   render();
+  window.scrollTo?.(0,0);
 }
 window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.hash.slice(1)); });
 
@@ -337,7 +338,16 @@ document.addEventListener('click', e=>{
   if(ui){
     const [k,v] = ui.dataset.ui.split(':');
     if(k==='subtab') state.ui.subtab=v;
-    else if(k==='marketPair') state.ui.marketPair=v;
+    else if(k==='marketPair'){
+      state.ui.marketPair=v;
+      render(); // The chosen pair changes immediately.
+      if(session.get()) state.provider.market(v).then(res=>{
+        if(state.ui.marketPair!==v) return; // ignore a stale in-flight pair response
+        state.common.market={state:res.state,data:res.market?.data??null};
+        render();
+      }).catch(()=>{ state.common.market={state:'error',data:null};render(); });
+      return;
+    }
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
     render(); return;
