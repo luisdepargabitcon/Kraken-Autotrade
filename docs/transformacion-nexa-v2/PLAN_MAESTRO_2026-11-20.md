@@ -1,5 +1,5 @@
 # NEXA V2 — PLAN MAESTRO DEFINITIVO, WEB + APK
-**Revisión 7 · 21-11-2026 · Sustituye íntegramente el plan acumulativo anterior**
+**Revisión 8 · 21-11-2026 · Sustituye íntegramente el plan acumulativo anterior**
 **Repositorio:** https://github.com/luisdepargabitcon/Kraken-Autotrade
 **Rama única:** `feature/nexa-v2-transformacion-20261120`
 **Main congelado (base de partida):** `47d79db3f7065e0e54481447129f2f88e9225fe2`
@@ -71,7 +71,15 @@ Una vez desarrolladas web+APK definitivas, Cascade entrega runbook de conexión 
 ## 6. ORGANIZACIÓN, EVIDENCIA Y ENTREGABLES
 - `main` intacto. Rama de referencia `design/nexa-apk-web-basico-pro-20261120` intacta. Trabajo nuevo solo en `feature/nexa-v2-transformacion-20261120`.
 - Preservar proyectos previos, no borrar WIP, sin `reset --hard`, `clean`, `stash`, `rebase`, `push --force`, ni `git add -A`.
-- Seguir `docs/transformacion-nexa-v2/seguimiento/{ESTADO_FASES.md,MATRIZ_PARIDAD.csv,EVIDENCIAS_CHECKLIST.md,INCIDENCIAS.md}`. Cascade marca C001–C086+ individualmente con prueba. Ampliar si aparecen datos/acciones no inventariados.
+- Seguir `docs/transformacion-nexa-v2/seguimiento/{ESTADO_FASES.md,MATRIZ_PARIDAD.csv,EVIDENCIAS_CHECKLIST.md,INCIDENCIAS.md}`. Cascade marca C001–C102+ individualmente con prueba. Ampliar si aparecen datos/acciones no inventariados.
 - Entregables: código completo web+APK de una versión, contratos, adaptadores, flujos autenticados, pruebas y evidencias, paquete web preparado para hosting seguro, APK compilada y enlace GitHub Release cuando aprobada, SHA y guía de instalación, pendientes reales de autorización para conectar a producción. **No fases intermedias publicadas, demos ni pre-releases solo para completar enlaces.**
 - Repositorio es público. Nunca subir `.env`, secretos, CSV fiscales, backups, datos personales ni transacciones individuales. Drive privado solo para evidencias sensibles.
 - VPS, DB operativa, órdenes reales, deployments, configuración LIVE y merge a main **EXPRESAMENTE NO AUTORIZADOS** por esta orden. Si precisa permisos de administrador para toolchain o servicios externos, solicitar autorización solo para esa acción, continuar lo demás.
+
+
+## PRIORIDAD REV. 8 — UX TRADING PREMIUM Y ACCESO PASSWORDLESS
+Leer y ejecutar íntegramente [REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md). El usuario rechaza el diseño actual y los campos Usuario/Contraseña. Sustituir la UX móvil por navegación y visualizaciones premium con jerarquía de datos, smart cards, gráficos y pantallas completas, preservando cada indicador. Eliminar solape físico con Android status bar y exceso de `No disponible`.
+
+**Acceso producto final:** PIN personal + BiometricPrompt nativo (huella/rostro soportados) y vinculación inicial del dispositivo con QR/código de un solo uso y credencial asimétrica; WebAuthn/passkeys para web. No pedir nombre de usuario ni contraseña. Desbloqueo de vista NO equivale a autenticación del bot: mantener seguridad servidor, permisos, sesiones, revocación y step-up para acciones críticas. Reemplazar el BFF provisional user/password por backend de emparejamiento/challenge seguro; primero implementar y probar todo en local, sin tocar VPS. No empaquetar secretos de firma: versiones anteriores contienen contraseña de firma expuesta, rotar/tratar con seguridad.
+
+Cascade deberá completar checks C087–C102 además de C001–C086, realizar QA visual de Pixel 9, compilar APK corregida y subir a GitHub Release únicamente cuando la nueva versión supere todas las comprobaciones. No declarar biometric funcionando hasta probarlo realmente. No conectar VPS ni LIVE sin permiso.
