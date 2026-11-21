@@ -21,3 +21,5 @@ El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización de
 - [Referencia visual Rev.10: Revolut X, Kraken Pro, Coinbase Advanced y especificación por pantalla](REFERENCIAS_UX_REV10_REVOLUT_KRAKEN_COINBASE.md). La experiencia Pro NO puede seguir siendo un acordeón del panel antiguo.
 
 - [Conexión autorizada de solo lectura NEXA → VPS, IP HTTPS, emparejamiento y rollback](CONEXION_VPS_SOLO_LECTURA_2026-11-21.md). Nunca habilitar acciones LIVE con esta pasarela.
+
+- [Corrección Rev12: Ajustes visibles sin vincular, códigos de 24 caracteres y compilación APK pendiente](FIX_AJUSTES_VINCULACION_REV12_2026-11-21.md)
