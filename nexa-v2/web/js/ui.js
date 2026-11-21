@@ -49,7 +49,7 @@ export function microBar(pct, {mark=null, cls:clsN=''}={}){
 }
 export function signed(v, text){ const c = !isNum(v)?'':(v>0?'pos':v<0?'neg':''); return `<span class="${c}">${text}</span>`; }
 export function stateBanner(state, msg){
-  if(state==='fresh'||state==='demo') return '';
+  if(state==='ok'||state==='fresh'||state==='demo') return '';
   const map={ stale:['warn','Datos posiblemente antiguos'], offline:['err','Sin conexión — última lectura cacheada'],
     unavailable:['warn','Sin datos'], error:['err','Error de lectura'], partial:['warn','Datos parciales'] };
   const [k,label]=map[state]||['info',state];
