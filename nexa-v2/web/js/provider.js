@@ -134,7 +134,7 @@ export function createApiProvider(){
       ]);
       const tradeList=trades.state==='ok'?list(trades.data):null;
       return {
-        state: pos.state==='ok'?'ok':st(pos.state),
+        state: pos.state==='ok'?(diag.state==='ok'&&trades.state==='ok'?'ok':'partial'):st(pos.state),
         resourceStates:{
           positions:st(pos.state), diagnostics:st(diag.state), trades:st(trades.state),
         },
