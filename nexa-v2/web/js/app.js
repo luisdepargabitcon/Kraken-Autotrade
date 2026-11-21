@@ -104,8 +104,10 @@ function render(){
   document.getElementById('app').dataset.screen = state.screen;
   document.getElementById('mode-basic').classList.toggle('on', state.mode==='basic');
   document.getElementById('mode-pro').classList.toggle('on', state.mode==='pro');
-  document.getElementById('engine-name').textContent =
-    ENGINES.find(e=>e.id===state.ui.engineId)?.name || 'Motor';
+  const selectedEngine=ENGINES.find(e=>e.id===state.ui.engineId)?.name || 'Motor';
+  document.getElementById('engine-name').textContent=selectedEngine;
+  $('engine-btn').setAttribute('aria-label','Cambiar motor. Actual: '+selectedEngine);
+  $('engine-btn').title='Cambiar motor · '+selectedEngine;
   scr.focus({preventScroll:true});
 }
 function renderNav(){
