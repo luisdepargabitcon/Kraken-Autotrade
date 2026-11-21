@@ -1,0 +1,30 @@
+# PLANTILLA. NO ACTIVAR ANTES DE AUDITORÍA DE PUERTOS Y CERTIFICADO IP VÁLIDO.
+# Exclusiva 443; preservar servicios, webs y rutas existentes.
+server {
+    listen 443 ssl;
+    server_name 5.250.184.18;
+    ssl_certificate /etc/letsencrypt/live/5.250.184.18/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/5.250.184.18/privkey.pem;
+    root /srv/nexa-v2/web;
+    index index.html;
+    client_max_body_size 64k;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    # No exponer la emisión de códigos al público, ni siquiera si alguien conoce el secreto.
+    location = /api/v2/pair/issue { return 404; }
+    location ^~ /api/ {
+        proxy_pass http://127.0.0.1:3101;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_hide_header Set-Cookie;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 12s;
+        proxy_buffering off;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
