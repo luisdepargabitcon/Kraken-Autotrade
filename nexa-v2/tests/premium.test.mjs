@@ -38,7 +38,7 @@ test('Básico es cartera y motores, no un terminal de trading con columnas',()=>
  const s=renderHomePremium(offline);
  assert.match(s,/nxp-mode-basic/);
  assert.match(s,/nxp-basic-balance/);
- assert.match(s,/Vincular mi bot/);
+ assert.match(s,/Conectar mi bot/);
  assert.equal((s.match(/class="nxp-engine-row"/g)||[]).length,4);
  assert.doesNotMatch(s,/nxp-terminal-grid/);
  assert.doesNotMatch(s,/No disponible/);
@@ -50,7 +50,7 @@ test('Pro tiene estructura de trading con terminal, gráficos, riesgo y herramie
  assert.match(s,/nxp-chartbox/);
  assert.match(s,/Riesgo y protección/);
  assert.match(s,/Actividad del bot/);
- assert.doesNotMatch(s,/Vincular mi bot/);
+ assert.doesNotMatch(s,/Conectar mi bot/);
 });
 test('Mercado cambia de composición, vela gráfica sólo si OHLCV válido',()=>{
  const basic=renderMarketPremium(ready);
@@ -65,7 +65,7 @@ test('Mercado cambia de composición, vela gráfica sólo si OHLCV válido',()=>
 test('Mercado desconectado no inventa precios o gráficos de datos reales',()=>{
  const s=renderMarketPremium(offline);
  assert.match(s,/Esperando el mercado/);
- assert.match(s,/Vincular NEXA/);
+ assert.match(s,/Conectar NEXA/);
  assert.doesNotMatch(s,/\$[0-9][0-9,.]*/);
 });
 test('Cada motor Pro utiliza visualización propia según su semántica',()=>{
@@ -92,7 +92,7 @@ test('El motor Básico no es la misma pantalla Pro recoloreada',()=>{
 });
 test('Motor sin sesión no indica LIVE, 0 ciclos o apagado',()=>{
  const a=renderEnginePremium(offline),b=renderEnginePremium({...offline,mode:'pro'});
- assert.match(a,/aún no está vinculado/);
+ assert.match(a,/Conecta tu móvil/);
  assert.match(b,/Sin lectura verificada/);
  assert.doesNotMatch(a,/Sin ciclos|LIVE|detenido/);
  assert.doesNotMatch(b,/Sin ciclos|LIVE|detenido/);
