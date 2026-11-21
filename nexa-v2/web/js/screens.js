@@ -475,7 +475,10 @@ export function spotHistory(ctx){
  };
  return '<div class="nx-idca-history nx-spot-history-refined">'+heading+
    (list.length?'<div class="nx-idca-history-list">'+list.map(row).join('')+'</div>':
-    '<div class="nx-idca-historical-empty"><strong>0 operaciones en esta página</strong><p>El endpoint respondió con una lista vacía; no se ha probado que el historial completo esté vacío.</p></div>')+'</div>';
+    '<div class="nx-idca-historical-empty"><strong>0 operaciones en esta página</strong><p>El endpoint respondió con una lista vacía; no se ha probado que el historial completo esté vacío.</p></div>')+
+   (list.length>=100&&(total===null||total>list.length)?
+     '<button type="button" class="nx-spot-load-more" data-app="spot-history-more">Ver más operaciones verificadas ↓</button>':'')+
+   '</div>';
 }
 export function spotProtections(ctx){
   const rows=(ctx.data.protections||[]).map(p=>[esc(p.type), badge(p.enabled?'ON':'off',p.enabled?'on':'off'),
