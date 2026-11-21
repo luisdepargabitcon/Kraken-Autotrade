@@ -1,17 +1,28 @@
+// Signing credentials are supplied locally or by CI secrets. Never commit them.
+def nexaSigning = [
+  file: System.getenv('NXV2_KEYSTORE_PATH'),
+  storePassword: System.getenv('NXV2_KEYSTORE_PASSWORD'),
+  keyAlias: System.getenv('NXV2_KEY_ALIAS'),
+  keyPassword: System.getenv('NXV2_KEY_PASSWORD'),
+]
+def nexaCanSignRelease = nexaSigning.values().every { it != null && it.trim() }
+
 apply plugin: 'com.android.application'
 
 android {
     signingConfigs {
         release {
-            storeFile file('../nexa-release.keystore')
-            storePassword 'nexa2026v2'
-            keyAlias 'nexa'
-            keyPassword 'nexa2026v2'
+            if (nexaCanSignRelease) {
+                storeFile file(nexaSigning.file)
+                storePassword nexaSigning.storePassword
+                keyAlias nexaSigning.keyAlias
+                keyPassword nexaSigning.keyPassword
+            }
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (nexaCanSignRelease) signingConfig signingConfigs.release
         }
     }
     namespace "com.nexa.autotrade.v2"
@@ -64,4 +75,10 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (!nexaCanSignRelease && graph.allTasks.any { it.name in ['assembleRelease', 'packageRelease', 'bundleRelease'] }) {
+        throw new GradleException('NEXA release signing: configure NXV2_KEYSTORE_PATH, NXV2_KEYSTORE_PASSWORD, NXV2_KEY_ALIAS and NXV2_KEY_PASSWORD in a secure local environment.')
+    }
 }
