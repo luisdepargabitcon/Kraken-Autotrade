@@ -9,7 +9,7 @@ import {
   microBar, signed, stateBanner, lineChart, candleChart, miniSpark,
 } from './ui.js';
 import { GRID_DISTINCTION } from './contracts.js';
-import { renderHomeExperience, renderMarketExperience, renderEngineExperience, renderPortfolioExperience } from './experience.js';
+import { renderHomePremium, renderMarketPremium, renderEnginePremium, renderPortfolioPremium, renderActivityPremium } from './premium.js';
 
 const P = (v, src, ts) => provenance(v, {source:src, ts});
 
@@ -604,9 +604,9 @@ function renderPortfolioLegacy(ctx){
 }
 
 // ==================== ACTIVIDAD ====================
-export function renderActivity(ctx){
+function renderActivityLegacy(ctx){
   const { mode, data } = ctx;
-  const list = data.activity?.data ?? [];
+  const list = data.activity?.data?.events ?? [];
   const filters = ctx.ui.activityFilter;
   const filtered = list.filter(e=>
     (filters.sev==='all'||e.severity===filters.sev) &&
@@ -676,7 +676,10 @@ export { evRow };
 
 // Rev9: public exports now use genuinely distinct mobile-first layouts.
 // Legacy detail renderers remain available INSIDE progressive disclosures for 100% field parity.
-export function renderHome(ctx){ return renderHomeExperience(ctx, renderHomeLegacy); }
-export function renderMarket(ctx){ return renderMarketExperience(ctx, renderMarketLegacy); }
-export function renderEngine(ctx){ return renderEngineExperience(ctx, renderEngineLegacy); }
-export function renderPortfolio(ctx){ return renderPortfolioExperience(ctx, renderPortfolioLegacy); }
+export function renderHome(ctx){ return renderHomePremium(ctx); }
+export function renderMarket(ctx){ return renderMarketPremium(ctx); }
+export function renderEngine(ctx){ return renderEnginePremium(ctx); }
+export function renderPortfolio(ctx){ return renderPortfolioPremium(ctx, renderPortfolioLegacy); }
+
+// Revisión 11: actividad usa experiencia propia con los filtros originales disponibles en Pro.
+export function renderActivity(ctx){return renderActivityPremium(ctx, renderActivityLegacy);}
