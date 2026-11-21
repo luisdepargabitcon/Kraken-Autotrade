@@ -1,0 +1,58 @@
+name: NEXA V2 - feature QA (no deploy)
+on:
+  push:
+    branches:
+      - feature/nexa-v2-transformacion-20261120
+    paths:
+      - 'nexa-v2/**'
+      - '.github/workflows/nexa-v2-feature-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexa-v2-feature-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node tests + UI/contract syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: nexa-v2
+    steps:
+      - name: Checkout exact feature commit
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nexa-v2/package-lock.json
+      - name: Install locked dependencies (non-executing)
+        run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+      - name: Syntax checks on source modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in web/js/dashboard.js web/js/app.js web/js/actions.js web/js/screens.js web/js/adapters.js web/js/inspector.js web/js/provider.js; do
+            node --check "$f"
+          done
+          echo 'ESM syntax checks OK'
+      - name: Execute all NEXA Node tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee nexa-feature-qa.log
+      - name: Upload test transcript (success or failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexa-v2-feature-qa-log
+          path: nexa-v2/nexa-feature-qa.log
+          if-no-files-found: ignore
+          retention-days: 14
+# This workflow never reads production secrets, calls the VPS, deploys, or trades.
