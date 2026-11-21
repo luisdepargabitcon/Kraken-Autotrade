@@ -67,3 +67,17 @@ E. Ninguna pantalla de móvil tiene tablas recortadas, submenús invisibles ni v
 F. No publicar hasta que Pro ofrezca la riqueza operacional del panel actual de cada motor y Básico sea una selección minimalista de las mismas cifras verificadas.
 
 **Nota:** en screenshots se detectan contradicciones pero NO se puede determinar la causa exacta sin inspeccionar los payloads auténticos. No asumir que el motor ganó/perdió ni que la API tenga todos los campos sin evidencia.
+
+
+## 6. Ampliación obligatoria — inspección universal de operaciones y salidas
+
+**21/11/2026:** el propietario exige que una sola pulsación en **cualquier operación o salida** abra un modal emergente de detalles completos, destacado y visualmente jerarquizado. Debe cubrir compras, ventas, salidas por TP/BE/trailing, cierres manuales, cancelaciones, órdenes parciales, ciclos/históricos, posiciones, niveles GRID, tranches AMA, decisiones y eventos. Básico y Pro deben permitir acceder a **la misma ficha completa**, aunque Basic reduzca el ruido del listado. `reserved` AMA no implica ejecución. Ver contrato de diseño, alcance y QA:
+
+[`UX_FICHA_UNIVERSAL_OPERACIONES_2026-11-21.md`](./UX_FICHA_UNIVERSAL_OPERACIONES_2026-11-21.md).
+
+Implementación inicial de frontend **en rama, sin desplegar**: `nexa-v2/web/js/inspector.js`, `app.js`, `screens.js`, `premium.js`, `ui.js` y `css/style.css`. La ficha usa objetos del read-model, no JSON embebido en atributos DOM; campos anidados, colores BUY/SELL, resultado/importe visible, motivo, precios, fees, estados, y órdenes vinculadas a ciclo IDCA cuando existen.
+
+- [ ] Completar QA de cada modal con fixtures de todos los motores, registros abiertos/cerrados, LIVE/SIM y campos faltantes.
+- [ ] Contrastar que el inspector accede a TODOS los campos reales necesarios; enriquecer vía GET de detalle si están publicados (sin POST ni VPS operativo).
+- [ ] Probar funcionamiento Android Back, scroll conservado, modo horizontal, focos y safe areas en Pixel 9.
+- [ ] Mantener SIN APROBAR hasta pruebas visuales y numéricas; esta capa **no resuelve todavía P01–P04** de integridad.
