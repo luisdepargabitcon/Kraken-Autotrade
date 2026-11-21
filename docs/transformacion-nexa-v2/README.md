@@ -19,3 +19,5 @@ El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización de
 - Cascade es responsable de checks C001–C102 y de compilar/probar nueva APK de verdad. Sin VPS/DB/trading/merge.
 
 - [Referencia visual Rev.10: Revolut X, Kraken Pro, Coinbase Advanced y especificación por pantalla](REFERENCIAS_UX_REV10_REVOLUT_KRAKEN_COINBASE.md). La experiencia Pro NO puede seguir siendo un acordeón del panel antiguo.
+
+- [Conexión autorizada de solo lectura NEXA → VPS, IP HTTPS, emparejamiento y rollback](CONEXION_VPS_SOLO_LECTURA_2026-11-21.md). Nunca habilitar acciones LIVE con esta pasarela.
