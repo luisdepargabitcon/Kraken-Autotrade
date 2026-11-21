@@ -8,6 +8,7 @@ import { device, enrollDevice, redeemPairCode, obtainSession, unpair } from './p
 import { ACTIONS, runAction, canDo, confirmText, needsDouble } from './actions.js';
 import { esc, fmtAge } from './util.js';
 import { clear, h, badge, openModal } from './ui.js';
+import { showRecordInspector } from './inspector.js';
 import * as S from './screens.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
@@ -498,6 +499,10 @@ function scheduleRefresh(){
 
 // ---------- Eventos globales ----------
 document.addEventListener('click', e=>{
+  // Ficha universal de lectura: selección de orden, venta, cierre, ciclo, nivel o evento.
+  // Usa el registro del read-model vigente; no genera acciones de trading.
+  const inspect = e.target.closest('[data-inspect]');
+  if(inspect){ e.preventDefault(); showRecordInspector(state,inspect.dataset.inspect); return; }
   const nav = e.target.closest('[data-nav]');
   if(nav){ e.preventDefault(); navTo(nav.dataset.nav); return; }
   const ui = e.target.closest('[data-ui]');
@@ -532,6 +537,11 @@ document.addEventListener('click', e=>{
     else if(k==='refresh'){ refreshVisibleData(true).catch(()=>render()); }
     return;
   }
+});
+document.addEventListener('keydown', e=>{
+  const target=e.target.closest?.('[data-inspect][role="button"]');
+  if(!target || (e.key!=='Enter'&&e.key!==' '))return;
+  e.preventDefault(); showRecordInspector(state,target.dataset.inspect);
 });
 $('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); render(); });
 $('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); render(); });
