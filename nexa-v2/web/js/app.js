@@ -326,7 +326,7 @@ async function afterUnlock(){
   openPairOverlay();
 }
 async function doPair(){
-  const code=$('pair-code').value.replace(/[\\s-]/g,'').toUpperCase();
+  const code=$('pair-code').value.replace(/[\s-]/g,'').toUpperCase();
   if(!/^[0-9A-F]{24}$/.test(code)){
     $('pair-err').textContent='Introduce el código completo de 24 caracteres (0-9, A-F).';
     $('pair-code').focus();
