@@ -25,6 +25,8 @@ const state = {
 
   common: {},          // market/portfolio/activity/fisco normalizados
   enginesData: {},     // { id: { state, data } }
+  spotExtraTrades: [], // páginas de historial GET autenticado ya leídas por el usuario
+  spotPageOffset: 100,
   refreshTimer: null,
   unlocked: false,             // PIN/biometría comprobados en esta apertura
   deviceEnrolled: false,       // Identidad persistente, independiente del token de 30 min
@@ -65,6 +67,19 @@ async function loadData(){
   ]);
   const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
   state.enginesData = { idca:pack(idca), spot:pack(spot), grid:pack(grid), ama:pack(ama) };
+  // El refresco de 30 s no debe tirar las páginas históricas ya consultadas.
+  // Se mezclan solo si el GET del historial sigue autorizado; si no, se limpian.
+  const sd=state.enginesData.spot.data;
+  if(sd.resourceStates?.trades==='ok'&&Array.isArray(sd.trades)&&state.spotExtraTrades.length){
+    const key=o=>String(o.id??o.tradeId??'')+'|'+String(o.ts??'');
+    const seen=new Set(sd.trades.map(key));
+    for(const t of state.spotExtraTrades){
+      const k=key(t);
+      if(!seen.has(k)){seen.add(k);sd.trades.push(t);}
+    }
+  }else if(sd.resourceStates?.trades!=='ok'){
+    state.spotExtraTrades=[];state.spotPageOffset=100;
+  }
   // Actividad global = feed de notificaciones + eventos reales de cada motor, sin duplicados.
   const feed=[...(activity.events?.data??[])];
   const seen=new Set(feed.map(e=>`${e.engine||'bot'}:${e.id??e.ts}`));
@@ -504,6 +519,36 @@ function scheduleRefresh(){
   },30000);
 }
 
+async function loadMoreSpotHistory(button){
+  if(!state.unlocked||!session.get()||!state.online)return;
+  const spot=state.enginesData.spot?.data;
+  if(!spot||spot.resourceStates?.trades!=='ok'||!Array.isArray(spot.trades))return;
+  if(typeof state.provider.spotTradesPage!=='function')return;
+  const offset=Math.max(100,state.spotPageOffset||100);
+  button.disabled=true;button.textContent='Cargando historial…';button.setAttribute('aria-busy','true');
+  try{
+    const page=await state.provider.spotTradesPage(offset);
+    if(page.state!=='ok')throw Error('lectura_denegada_o_no_disponible');
+    if(!Array.isArray(page.trades)||!page.trades.length){
+      button.textContent='No hay más operaciones confirmadas';
+      return;
+    }
+    const key=o=>String(o.id??o.tradeId??'')+'|'+String(o.ts??'');
+    const previous=new Set(spot.trades.map(key));
+    const unique=page.trades.filter(x=>!previous.has(key(x)));
+    for(const t of unique){previous.add(key(t));state.spotExtraTrades.push(t);spot.trades.push(t);}
+    state.spotPageOffset=offset+page.trades.length;
+    if(page.total!==null)spot.tradeTotal=page.total;
+    const scroll=window.scrollY;
+    render();
+    window.scrollTo?.(0,scroll);
+  }catch(e){
+    button.disabled=false;button.removeAttribute('aria-busy');
+    button.textContent='No se pudo cargar. Reintentar';
+    button.title='Historial no accesible mediante GET autenticado. No implica que falten operaciones.';
+  }
+}
+
 // ---------- Eventos globales ----------
 document.addEventListener('click', e=>{
   // Ficha universal de lectura: selección de orden, venta, cierre, ciclo, nivel o evento.
@@ -542,6 +587,7 @@ document.addEventListener('click', e=>{
     else if(k==='settings-api') openSettingsApi();
     else if(k==='logout'){ logout(); location.reload(); }
     else if(k==='refresh'){ refreshVisibleData(true).catch(()=>render()); }
+    else if(k==='spot-history-more'){ loadMoreSpotHistory(misc).catch(()=>{}); }
     return;
   }
 });
