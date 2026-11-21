@@ -12,7 +12,7 @@ assert.ok(start>0 && end>start,'Se requiere función de renovación antes del de
 const implementations=app.slice(start,end);
 
 function harness({online=true,linked=true,token=null,request,load=async()=>{}}={}){
- const state={unlocked:true,deviceEnrolled:linked,online,repairRequired:false};
+ const state={unlocked:true,deviceEnrolled:linked,online,repairRequired:false,enginesData:{},common:{}};
  let current=token, calls=0,renders=0,loads=0;
  const session={
    get(){return current && current.expiresAt>Date.now()?current:null},
@@ -22,7 +22,7 @@ function harness({online=true,linked=true,token=null,request,load=async()=>{}}={
  const obtainSession=async()=>{calls++;return request ? request() :
    {ok:true,token:'signed-session-'+calls,expiresAt:Date.now()+30*60*1000,roles:['read']};};
  const render=()=>{renders++};
- const loadData=async()=>{loads++;await load()};
+ const loadData=async()=>{loads++;await load(state,loads)};
  const fn=new Function('state','session','obtainSession','loadData','render',
    'let renewPromise=null;\n'+implementations+
    '\nreturn {ensureDeviceSession,refreshVisibleData};');
@@ -98,4 +98,20 @@ test('La pantalla conserva identidad, ofrece Reintentar y no pide un nuevo códi
  assert.ok(app.includes('visibilitychange'));
  assert.ok(ux.includes('Este dispositivo sigue vinculado'));
  assert.ok(ux.includes("ctx.deviceEnrolled?'refresh':'pair-device'"));
+});
+
+test('Backend reiniciado: API devuelve 401 y NEXA renueva por firma sin pedir código',async()=>{
+ let once=0;
+ const h=harness({
+  token:{token:'server-lost-token',expiresAt:Date.now()+600_000,roles:['read']},
+  load:async(state)=>{
+    once++;
+    state.enginesData={idca:{state:once===1?'auth_required':'ok',data:{}}};
+    state.common={portfolio:{state:once===1?'auth_required':'ok'}};
+  }
+ });
+ await h.actions.refreshVisibleData();
+ assert.equal(h.loads,2,'Debe volver a consultar tras renovar el token por challenge');
+ assert.equal(h.calls,1,'Un nuevo challenge, ningún código temporal');
+ assert.equal(h.session.get().roles[0],'read');
 });
