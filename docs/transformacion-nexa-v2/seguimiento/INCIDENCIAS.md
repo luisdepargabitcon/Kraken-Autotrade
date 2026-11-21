@@ -75,3 +75,12 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - Tests 51/51 tras corregir 4 regresiones: texto "detenido/sin ciclos/LIVE" en estado no verificado (premium.js), "Fuentes de datos" en Mercado Pro, ctx authenticated en tests render, filtro severidad en lista premium Actividad.
 - APK 0.4.0 (VC4) compilada, firmada cert R8, SHA-256 `d68025a53764921b62285a091630806ceb541b3e14fc55498c3947c7296d30d7`, 5.68 MB. Instalada emulador API34: setup PIN 6 dígitos + confirmación, overlay de vinculación, nav Motores→IDCA premium, subpestañas conservadas, estados honestos. Screenshot negro (headless). Pixel 9 físico no disponible.
 - Caché Gradle corrupta por disco lleno: borrado `caches/8.14.3` completo y rebuild online OK.
+
+## INC-015 — Primera conexión VPS read-only (2026-11-21)
+- Auditoría preflight: VPS OK (137G libre, Node 20.20, nginx 1.18, certbot 1.21). Bot REAL = `krakenbot-staging-app` puerto 3020 (integration/staging-spot-v4, IDCA live); puerto 3000 = main legacy (HTML).
+- Pasarela `read-only-server.mjs` en `/opt/nexa-ro/bff`, servicio `nexa-readonly` (usuario nexa-ro, solo 127.0.0.1:3101). Tests VPS 2/2. Estado dispositivos `/var/lib/nexa-ro` 0700, env `/etc/nexa-ro/env` 0600.
+- HTTPS: certbot 1.21 no soporta `--ip-address` → dominio `nexa-5-250-184-18.nip.io` con cert LE válido (plugin nginx, renovación automática). Vhost añadido sin tocar los 6 existentes.
+- Verificación externa: panel 200, session 401, dca 401, POST close-all/buy 405, pair/issue 404, TLS válido.
+- End-to-end QA: enrolamiento ECDSA P-256 + sesión + datos REALES (IDCA live $3000, GRID SHADOW, AMA OBSERVING, portfolio $5000, BTC $55862.70).
+- **RIESGO ABIERTO:** puerto 3020 expone API completa públicamente (0.0.0.0, UFW inactivo, curl externo 200). NO tocado — requiere autorización separada para firewall. Puerto 3000 no alcanzable externamente.
+- APK 0.5.0 (VC5): validación HTTPS obligatoria. SHA-256 `691669538a2058e6fbfc0a8bfbf2831340243a25a9252fb59c8cad0b55f27d3b`. Instalada en emulador, arranque OK.
