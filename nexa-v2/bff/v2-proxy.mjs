@@ -25,7 +25,7 @@ export function permFor(path, method){
       return method==='GET' ? perm+':read' : perm+':control';
     }
   }
-  return 'read';
+  return null; // DENY-by-default: rutas no listadas requieren entrada explícita en PERM_MAP
 }
 
 export function v2ProxyRouter(){
@@ -33,6 +33,7 @@ export function v2ProxyRouter(){
   r.use(authRequired, csrfGuard);
   r.use(async (req,res)=>{
     const perm = permFor(req.path, req.method);
+    if(!perm) return res.status(403).json({error:'route_not_allowed', path:req.path});
     requirePerm(perm)(req,res,async()=>{
       try{
         const u = new URL(req.originalUrl.replace(/^\/v2/, ''), UPSTREAM);

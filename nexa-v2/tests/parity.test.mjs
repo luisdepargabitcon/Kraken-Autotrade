@@ -89,14 +89,20 @@ test('seguridad: mutaciones SOLO vía actions/auth autenticadas; sin credenciale
   }
 });
 
-test('autenticación: sin PIN fijo; PBKDF2 local + sesión servidor', ()=>{
+test('autenticación rev8: sin PIN fijo, sin user/pass, pairing+challenge+PIN local', ()=>{
   const app = readFileSync(join(web,'js','app.js'),'utf8');
   const auth = readFileSync(join(web,'js','auth.js'),'utf8');
-  assert.ok(!/2468/.test(app+auth), 'PIN 2468 hardcodeado');
-  assert.ok(!/expected\s*[:=]\s*['"]\d+/.test(app+auth), 'PIN esperado hardcodeado');
+  const pair = readFileSync(join(web,'js','pairing.js'),'utf8');
+  const idx = readFileSync(join(web,'index.html'),'utf8');
+  const all = app+auth+pair;
+  assert.ok(!/2468/.test(all), 'PIN 2468 hardcodeado');
+  assert.ok(!/expected\s*[:=]\s*['"]\d+/.test(all), 'PIN esperado hardcodeado');
+  assert.ok(!/login-(user|pass)|type="password"/i.test(idx+app), 'formulario usuario/contraseña presente');
   assert.ok(/deriveBits|PBKDF2/i.test(auth), 'desbloqueo local debe usar PBKDF2');
-  assert.ok(/\/v2\/auth\/login/.test(auth), 'login de sesión servidor requerido');
-  assert.ok(!/fetch\([^)]*pin/i.test(app), 'PIN local nunca viaja por fetch');
+  assert.ok(/\/v2\/pair\/redeem|\/v2\/session\/challenge/.test(pair), 'flujo pairing/challenge requerido');
+  assert.ok(/ECDSA|P-256/.test(pair), 'clave asimétrica dispositivo requerida');
+  assert.ok(/BiometricAuth|BiometricPrompt/.test(auth), 'biometría nativa requerida');
+  assert.ok(!/fetch\([^)]*pin/i.test(all), 'PIN local nunca viaja por fetch');
 });
 
 test('grid: ciclos 1:1 BUY→SELL conservan cantidad exacta', ()=>{

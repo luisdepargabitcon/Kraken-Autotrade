@@ -3,7 +3,8 @@
 import { ENGINES, ENGINE_SUBTABS } from './contracts.js';
 import { createApiProvider } from './provider.js';
 import { CONFIG, setApiBase } from './config.js';
-import { session, login, logout, localLock } from './auth.js';
+import { session, logout, localLock, biometric } from './auth.js';
+import { device, enrollDevice, redeemPairCode, obtainSession, unpair } from './pairing.js';
 import { ACTIONS, runAction, canDo, confirmText, needsDouble } from './actions.js';
 import { esc, fmtAge } from './util.js';
 import { clear, h, badge, openModal } from './ui.js';
@@ -20,7 +21,7 @@ const state = {
     activityFilter:{ sev:'all', engine:'all' } },
   provider: createApiProvider(),
   online: navigator.onLine !== false,
-  unlocked: !localLock.isSet(),
+
   common: {},          // market/portfolio/activity/fisco normalizados
   enginesData: {},     // { id: { state, data } }
   refreshTimer: null,
@@ -198,33 +199,10 @@ function openAction(actionId, params){
   });
 }
 
-// ---------- Login de sesión ----------
-function showLogin(){
-  const ov = $('login-overlay');
-  ov.classList.remove('hidden');
-  $('login-err').textContent='';
-  $('login-api').textContent = CONFIG.apiBase;
-}
-async function doLogin(){
-  const user = $('login-user').value.trim(), pass = $('login-pass').value;
-  $('login-err').textContent='Conectando…';
-  const r = await login(user, pass);
-  if(r.ok){
-    $('login-overlay').classList.add('hidden');
-    await loadData(); render(); scheduleRefresh();
-  }else{
-    $('login-err').textContent = r.status===0 ? 'Backend inaccesible ('+CONFIG.apiBase+')'
-      : `Acceso denegado (${r.status}): ${r.error||'credenciales'}`;
-  }
-}
-function skipLogin(){
-  // Explorar sin sesión: la UI muestra estados honestos, ningún dato inventado.
-  $('login-overlay').classList.add('hidden');
-  loadData().then(render);
-}
+// ---------- Gate de acceso: PIN local + biometría nativa + vinculación ----------
+let pinBuf='', pinStage='unlock', pinFirst='';
+const PIN_LEN = 6;
 
-// ---------- Desbloqueo local (2ª capa, elegido por el usuario) ----------
-let pinBuf='';
 function pinInit(){
   const pad = $('pin-pad');
   const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
@@ -234,34 +212,106 @@ function pinInit(){
     if(k!==undefined) pinKey(k);
   });
   document.addEventListener('keydown', e=>{
-    if($('pin-overlay').classList.contains('hidden')) return;
+    if($('unlock-overlay').classList.contains('hidden')) return;
     if(/^[0-9]$/.test(e.key)) pinKey(e.key);
     if(e.key==='Backspace') pinKey('⌫');
   });
+  $('bio-btn').addEventListener('click', bioUnlock);
+  $('pair-btn').addEventListener('click', doPair);
+  $('pair-code').addEventListener('keydown', e=>{ if(e.key==='Enter') doPair(); });
+  $('pair-skip').addEventListener('click', ()=>{
+    $('pair-overlay').classList.add('hidden');
+    loadData().then(render);
+  });
 }
 function pinKey(k){
+  if(Date.now()<localLock.lockedUntil()){ $('pin-err').textContent='Demasiados intentos. Espera unos segundos…'; return; }
   if(k==='⌫'){ pinBuf=pinBuf.slice(0,-1); }
-  else if(pinBuf.length<8){ pinBuf+=k; }
+  else if(pinBuf.length<PIN_LEN){ pinBuf+=k; }
   pinDraw();
-  if(pinBuf.length>=4) pinCheck();
+  if(pinBuf.length===PIN_LEN) pinCheck();
 }
 function pinDraw(){
-  $('pin-dots').innerHTML = Array.from({length:Math.max(4,pinBuf.length||4)},(_,i)=>`<i class="${i<pinBuf.length?'on':''}"></i>`).join('');
+  $('pin-dots').innerHTML = Array.from({length:PIN_LEN},(_,i)=>`<i class="${i<pinBuf.length?'on':''}"></i>`).join('');
 }
 async function pinCheck(){
-  if(!localLock.isSet()){
-    // Primer uso: el usuario define su PIN de desbloqueo local (4–8 dígitos).
-    if(pinBuf.length>=4){ await localLock.setup(pinBuf); $('pin-overlay').classList.add('hidden'); pinBuf=''; pinDraw(); }
-    return;
+  if(pinStage==='setup'){
+    pinFirst = pinBuf; pinBuf=''; pinStage='confirm';
+    $('unlock-title').textContent='Confirma tu PIN';
+    $('unlock-note').textContent='Repite el mismo PIN de 6 dígitos.';
+    pinDraw(); return;
   }
+  if(pinStage==='confirm'){
+    if(pinBuf===pinFirst){ await localLock.setup(pinBuf); pinStage='unlock'; afterUnlock(); }
+    else{ pinStage='setup'; $('unlock-title').textContent='Crear PIN';
+      $('pin-err').textContent='No coinciden. Inténtalo de nuevo.'; }
+    pinBuf=''; pinDraw(); return;
+  }
+  // unlock
   const ok = await localLock.verify(pinBuf);
-  if(ok){ $('pin-overlay').classList.add('hidden'); pinBuf=''; pinDraw(); }
-  else{ pinBuf=''; pinDraw(); $('pin-err').textContent='PIN incorrecto'; }
+  pinBuf=''; pinDraw();
+  if(ok){ localLock.registerOk(); afterUnlock(); }
+  else{ const wait = localLock.registerFail();
+    $('pin-err').textContent = wait>0 ? `PIN incorrecto. Reintenta en ${Math.ceil(wait/1000)}s` : 'PIN incorrecto'; }
+}
+async function bioUnlock(){
+  const r = await biometric.prompt('Desbloquear NEXA');
+  if(r==='ok'){ afterUnlock(); }
+  else if(r==='cancelled'){ $('pin-err').textContent='Biometría cancelada — usa tu PIN.'; }
+  else if(r==='failed'){ $('pin-err').textContent='Biometría no reconocida — usa tu PIN.'; }
+  else{ $('pin-err').textContent='Sin sensor disponible — usa tu PIN.'; }
+}
+async function showUnlock(){
+  $('pin-err').textContent='';
+  const enrolled = await device.isEnrolled();
+  if(!localLock.isSet()){
+    pinStage='setup';
+    $('unlock-title').textContent='Crear PIN';
+    $('unlock-note').textContent='Elige un PIN de 6 dígitos. Es tu llave local; nunca sale del dispositivo.';
+  }else{
+    pinStage='unlock';
+    $('unlock-title').textContent='Desbloquear NEXA';
+    const bio = await biometric.available();
+    $('bio-btn').classList.toggle('hidden', !bio.ok);
+    $('unlock-note').textContent = bio.ok ? 'Verifícate con biometría o introduce tu PIN.'
+      : 'Introduce tu PIN de desbloqueo.';
+    $('unlock-alt').textContent = enrolled ? 'Dispositivo vinculado al bot' : 'Dispositivo sin vincular';
+    if(bio.ok) bioUnlock();
+  }
+  $('unlock-overlay').classList.remove('hidden');
+  pinBuf=''; pinDraw();
+}
+async function afterUnlock(){
+  $('unlock-overlay').classList.add('hidden');
+  if(await device.isEnrolled()){
+    const s = await obtainSession();
+    if(s.ok){ session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
+      await loadData(); render(); scheduleRefresh(); return; }
+    // enrolled pero backend no acepta la sesión → reintentar/vincular
+    $('pair-err').textContent = `Sesión rechazada (${s.status||s.error}). Comprueba el servidor o re-vincula.`;
+  }
+  $('pair-overlay').classList.remove('hidden');
+}
+async function doPair(){
+  const code = $('pair-code').value.trim();
+  const label = $('pair-label').value.trim();
+  $('pair-err').textContent='Vinculando…';
+  const r = await redeemPairCode(code, label);
+  if(r.ok){
+    $('pair-overlay').classList.add('hidden');
+    const s = await obtainSession();
+    if(s.ok){ session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf}); }
+    await loadData(); render(); scheduleRefresh();
+  }else{
+    $('pair-err').textContent = r.status===0 ? 'Backend inaccesible ('+CONFIG.apiBase+')'
+      : `Vinculación rechazada (${r.status}): ${r.error||'código inválido o caducado'}`;
+  }
 }
 function lockNow(){
-  if(!localLock.isSet()) return; // sin PIN local no hay nada que bloquear
-  pinBuf=''; pinDraw(); $('pin-err').textContent=''; $('pin-overlay').classList.remove('hidden');
+  if(!localLock.isSet()) return;
+  pinBuf=''; pinDraw(); showUnlock();
 }
+
 
 // ---------- Ajustes: backend y sesión ----------
 function openSettingsApi(){
@@ -310,9 +360,7 @@ $('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage
 $('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); render(); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
-$('login-btn').addEventListener('click', doLogin);
-$('login-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
-$('login-skip').addEventListener('click', skipLogin);
+
 window.addEventListener('online',  ()=>{ state.online=true; renderStatusline(); });
 window.addEventListener('offline', ()=>{ state.online=false; renderStatusline(); });
 
@@ -323,9 +371,6 @@ if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catc
 (async function boot(){
   pinInit();
   render();
-  if(localLock.isSet() && !state.unlocked){
-    $('pin-overlay').classList.remove('hidden');
-  }
-  if(!session.get()){ showLogin(); }
-  else{ await loadData(); render(); scheduleRefresh(); }
+  // Gate: PIN setup/unlock → sesión por challenge o pairing → app.
+  await showUnlock();
 })();

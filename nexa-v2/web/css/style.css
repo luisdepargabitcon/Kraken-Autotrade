@@ -346,3 +346,15 @@ html.nexa-native .topbar{
   height:auto;min-height:calc(54px + max(env(safe-area-inset-top,0px),28px));
   padding-top:max(env(safe-area-inset-top,0px),28px)
 }
+
+/* ---------- Rev8: acceso passwordless + indicadores agrupados ---------- */
+.bio-btn{width:100%;padding:13px;border-radius:12px;border:1px solid var(--blue);
+  background:#12387733;color:var(--blue2);font-weight:600;font-size:14px;margin:4px 0 10px}
+.code-inp{font-family:ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;text-align:center;font-size:18px}
+.ind-group{border-bottom:1px solid var(--line)}
+.ind-group summary{padding:10px 2px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--tx2);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+.ind-group summary::after{content:"▾";margin-left:auto;color:var(--blue);transition:transform .15s}
+.ind-group:not([open]) summary::after{transform:rotate(-90deg)}
+.ind-group .kv{padding-bottom:10px}
+#pair-overlay .inp,#unlock-overlay .inp{margin:8px 0}

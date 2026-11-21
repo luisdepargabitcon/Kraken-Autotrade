@@ -38,3 +38,18 @@ Revisión 7: evidencias reevaluadas tras la conversión a producto definitivo (p
 | C084 | PARCIAL | Web empaquetada estática + BFF proxy; runbook HTTPS en DESPLIEGUE.md; URL real pendiente autorización | 2026-11-21 |
 | C085 | VERIFICADA | Gate documentado: DESPLIEGUE.md runbook reversible; ninguna conexión VPS afirmada | 2026-11-21 |
 | C086 | VERIFICADA | Mapeo corregido: C041–C046 ahora evidencian GRID, C047–C051 AMA (antes APK/PIN — corregido en esta revisión) | 2026-11-21 |
+
+| C087 | PARCIAL | Referencias estudiadas (Revolut X/Kraken Pro/Coinbase); decisiones propias en CSS/cards/empty-states; sin assets ajenos | 2026-11-21 |
+| C088 | PARCIAL | `nexa-native` + env(safe-area-inset-top) en topbar; 0 solape verificado en emulador AOSP API34; Pixel9 físico pendiente | 2026-11-21 |
+| C089 | VERIFICADA | Header móvil compacto, motor en modal, tabbar con insets gestos; uiautomator emulador | 2026-11-21 |
+| C090–C092 | PARCIAL | connectionEmpty jerárquico, indicadores agrupados (Tendencia/Momentum/Volatilidad), acciones IDCA remapeadas a rutas reales | 2026-11-21 |
+| C093 | VERIFICADA | 0 formulario user/pass en app (grep+test); login-overlay eliminado | 2026-11-21 |
+| C094 | VERIFICADA | /v2/pair/issue (admin/bootstrap) → código un solo uso 10min; redeem registra clave pública; revocación /devices/:id/revoke; test funcional BFF 9/9 | 2026-11-21 |
+| C095 | VERIFICADA | PIN 6 dígitos elegido+confirmado, PBKDF2, backoff incremental; 0 PIN por red (test) | 2026-11-21 |
+| C096 | VERIFICADA | @aparajita/capacitor-biometric-auth 7.2.0 (BiometricPrompt nativo) + fallback PIN; estados ok/cancel/failed/unsupported | 2026-11-21 |
+| C097 | VERIFICADA | Sesión solo tras challenge ECDSA firmado; biometría/PIN no habilita trading (roles del servidor) | 2026-11-21 |
+| C098 | PARCIAL | Web usa mismo flujo pairing+WebCrypto ECDSA + WebAuthn platform si disponible; passkey completo pendiente | 2026-11-21 |
+| C099 | VERIFICADA | Acciones: permiso server + doble confirmación + idempotency-key + CSRF + rutas reales corregidas | 2026-11-21 |
+| C100 | VERIFICADA | tests/bff.test.mjs: servidor real localhost — issue/redeem/challenge/firma/nonce/revocación/401/403/deny-default/PIN-no-wire 9/9 | 2026-11-21 |
+| C101 | VERIFICADA | Nueva keystore (clave anterior comprometida→rotada); firma solo por env NXV2_*; SHA-256 e14e1468…; desinstalación requerida en upgrade (documentado) | 2026-11-21 |
+| C102 | PARCIAL | Emulador verificado (Crear PIN, sin user/pass, estados honestos); Pixel 9 físico y QA viewports pendientes | 2026-11-21 |

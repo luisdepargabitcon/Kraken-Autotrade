@@ -1,7 +1,7 @@
-// NEXA V2 — autenticación de sesión contra el backend + desbloqueo local opcional.
-// Reglas: la sesión la emite el servidor (token + caducidad + roles). El PIN local
-// es una segunda capa de desbloqueo elegida por el usuario (hash PBKDF2, nunca
-// texto plano ni PIN fijo). Ninguna credencial viaja en el bundle.
+// NEXA V2 — auth rev8: sesión por challenge firmado (vía pairing.js), PIN local
+// 6 dígitos con protección de intentos, y biometría nativa real cuando existe.
+// Ningún usuario/contraseña. El desbloqueo local solo habilita el uso de la
+// credencial del dispositivo; el servidor decide permisos.
 import { CONFIG } from './config.js';
 
 const enc = new TextEncoder();
@@ -48,21 +48,21 @@ export async function apiFetch(path, {method='GET', body, headers={}} = {}){
   try{ data = await res.json(); }catch{ /* cuerpo no JSON */ }
   return { status: res.status, ok: res.ok, data, headers: res.headers };
 }
-
-export async function login(user, pass){
-  const r = await apiFetch('/v2/auth/login', {method:'POST', body:{user, pass}});
-  if(!r.ok) return { ok:false, status:r.status, error:r.data?.error || 'auth_failed' };
-  const d = r.data||{};
-  if(!d.token || !d.expiresAt) return { ok:false, error:'invalid_response' };
-  session.set({ token:d.token, expiresAt:d.expiresAt, user:d.user||user, roles:d.roles||[], csrf:d.csrf||null });
-  return { ok:true };
-}
 export function logout(){ apiFetch('/v2/auth/logout',{method:'POST'}).catch(()=>{}); session.clear(); }
 
-// ---------- Desbloqueo local (2ª capa, la elige el usuario) ----------
-const LOCK_KEY = 'nexa.localunlock';
+// ---------- Desbloqueo local: PIN 6 dígitos + intentos + biometría nativa ----------
+const LOCK_KEY='nexa.localunlock', ATTEMPTS_KEY='nexa.pinAttempts';
 export const localLock = {
   isSet(){ return !!localStorage.getItem(LOCK_KEY); },
+  attempts(){ try{ return JSON.parse(localStorage.getItem(ATTEMPTS_KEY)||'{}'); }catch{ return {}; } },
+  lockedUntil(){ return this.attempts().lockUntil||0; },
+  registerFail(){
+    const a=this.attempts(); a.fails=(a.fails||0)+1;
+    if(a.fails>=5){ a.lockUntil=Date.now()+30000*(a.fails-4); } // backoff incremental
+    localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(a));
+    return a.lockUntil>Date.now() ? a.lockUntil-Date.now() : 0;
+  },
+  registerOk(){ localStorage.removeItem(ATTEMPTS_KEY); },
   async setup(pin){
     if(!/^\d{4,8}$/.test(pin)) return false;
     const {salt,hash} = await pbkdf2(pin);
@@ -71,8 +71,38 @@ export const localLock = {
   },
   async verify(pin){
     const rec = JSON.parse(localStorage.getItem(LOCK_KEY)||'null');
-    if(!rec) return true; // sin PIN local configurado
+    if(!rec) return true;
     const {hash} = await pbkdf2(pin, rec.salt);
     return hash === rec.hash;
+  },
+};
+
+// ---------- Biometría nativa real ----------
+// Android nativo: plugin @aparajita/capacitor-biometric-auth (BiometricPrompt).
+// Web: WebAuthn platform authenticator si existe. Nada de prompts HTML falsos.
+export const biometric = {
+  plugin(){
+    return window.Capacitor?.Plugins?.BiometricAuth || null;
+  },
+  async available(){
+    const p = this.plugin();
+    if(p){ try{ const r = await p.checkBiometry(); return { ok:!!r.isAvailable, type:r.biometryType||'native' }; }
+           catch{ return { ok:false }; } }
+    if(window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable){
+      try{ return { ok: await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(), type:'platform' }; }
+      catch{ /* noop */ }
+    }
+    return { ok:false };
+  },
+  // true solo si el sistema confirmó al usuario (o no hay sensor → devuelve 'unsupported').
+  async prompt(reason='Desbloquear NEXA'){
+    const p = this.plugin();
+    if(p){
+      try{ await p.authenticate({ reason, cancelTitle:'Usar PIN',
+             allowDeviceCredential:false, androidBiometryStrength:2 /*STRONG*/ });
+        return 'ok'; }
+      catch(e){ return e?.code===16||/cancel/i.test(String(e)) ? 'cancelled' : 'failed'; }
+    }
+    return 'unsupported';
   },
 };

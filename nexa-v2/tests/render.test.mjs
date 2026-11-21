@@ -63,7 +63,7 @@ test('Actividad filtra por severidad', ()=>{
 });
 
 test('FISCO es sección restringida sin datos personales', ()=>{
-  const html = S.renderFisco(ctxFor({fisco:{data:fixtures.DEMO_FISCO}},'pro'));
+  const html = S.renderFisco(ctxFor({fisco:{state:'ok',data:fixtures.DEMO_FISCO}},'pro'));
   assert.ok(html.includes('restringida'));
   assert.ok(html.includes('Agregados'));
 });

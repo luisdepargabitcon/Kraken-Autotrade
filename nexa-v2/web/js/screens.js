@@ -96,19 +96,23 @@ export function renderMarket(ctx){
     ['ATR%', fmtPct(ind.atrpPct)], ['Volumen×', fmtNum(ind.volume?.ratio,{dec:2})],
   ]));
   const indPro = card('Indicadores completos', `
-    ${kv([
+    <details class="ind-group" open><summary>Tendencia</summary>${kv([
+      ['EMA20', fmtUsd(ind.ema?.ema20)], ['EMA50', fmtUsd(ind.ema?.ema50)], ['EMA200', fmtUsd(ind.ema?.ema200)],
+      ['ADX', fmtNum(ind.adx,{dec:1}), ind.adx>25?'tendencia fuerte':'débil'],
+      ['Momentum 4h', signedPct(ind.momentum?.pct4h)], ['Momentum 24h', signedPct(ind.momentum?.pct24h)],
+    ])}</details>
+    <details class="ind-group"><summary>Momentum</summary>${kv([
       ['RSI(14)', fmtNum(ind.rsi,{dec:1}), ind.rsi<30?'sobreventa':ind.rsi>70?'sobrecompra':''],
       ['MACD', fmtNum(ind.macd?.macd,{dec:1}), `señal ${fmtNum(ind.macd?.signal,{dec:1})}`],
       ['MACD hist', fmtNum(ind.macd?.histogram,{dec:1})],
-      ['ADX', fmtNum(ind.adx,{dec:1}), ind.adx>25?'tendencia fuerte':'débil'],
+    ])}</details>
+    <details class="ind-group"><summary>Volatilidad y volumen</summary>${kv([
       ['ATR', fmtNum(ind.atr,{dec:1}), `ATRP ${fmtPct(ind.atrpPct)}`],
       ['BB %B', fmtNum(ind.bollinger?.pctB,{dec:2})],
       ['BB media', fmtUsd(ind.bollinger?.mid)],
       ['BB sup/inf', `${fmtUsd(ind.bollinger?.upper)} / ${fmtUsd(ind.bollinger?.lower)}`],
-      ['EMA20', fmtUsd(ind.ema?.ema20)], ['EMA50', fmtUsd(ind.ema?.ema50)], ['EMA200', fmtUsd(ind.ema?.ema200)],
       ['Volumen último', fmtNum(ind.volume?.last,{dec:1}), `media ${fmtNum(ind.volume?.avg24,{dec:1})}`],
-      ['Momentum 4h', signedPct(ind.momentum?.pct4h)], ['Momentum 24h', signedPct(ind.momentum?.pct24h)],
-    ])}
+    ])}</details>
     <div class="row"><span class="k">Régimen</span><span class="v">${esc(ind.regime??NA)}</span></div>
     ${provLine({source:'indicadores', ts:ind.computedAt, state:'fresh'})}`);
   const sources = card('Fuentes de datos', table(
@@ -236,11 +240,11 @@ export function idcaCycles(ctx){
         fmtUsd(o.price), fmtQty(o.quantity), fmtUsd(o.valueUsd), fmtUsd(o.feeUsd),
         fmtPct(o.slippagePct), `<small>${esc(o.reason)}</small>`]),{minWidth:760}));
     const actions = `<div class="btn-row">
-      <button class="btn prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Pausar ciclo</button>
+      <button class="btn prot" data-action="idca.cycleStatus" data-params='{"cycleId":"'+esc(c.id)+'","status":"paused"}'>Pausar ciclo</button>
       <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'"}'>Compra manual</button>
-      <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'","type":"schedule"}'>Programar salida</button>
+      <button class="btn prot" data-action="idca.soloSalida" data-params='{"cycleId":"'+esc(c.id)+'"}'>Solo salida</button>
       <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Cerrar posición</button>
-      <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'","delete":true}'>Eliminar ciclo</button></div>
+      <button class="btn danger prot" data-action="idca.deleteCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Eliminar ciclo</button></div>
       <div class="tiny">Acciones sujetas a permisos y comprobación del servidor.</div>`;
     return card(head+core+anchors+prot+(ctx.mode==='pro'?tp+orders+actions:expandable('Detalle completo (TP, órdenes, acciones)', tp+orders+actions)),{});
   }).join('');

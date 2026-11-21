@@ -9,8 +9,12 @@
     "apk": "cd android && gradlew assembleDebug"
   },
   "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "^7.2.0",
     "@capacitor/android": "^6.2.3",
     "@capacitor/cli": "^6.2.3",
     "@capacitor/core": "^6.2.3"
+  },
+  "devDependencies": {
+    "express": "^4.22.3"
   }
 }
