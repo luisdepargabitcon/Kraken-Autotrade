@@ -88,6 +88,7 @@ function render(){
   const ctx = {
     mode: state.mode, ui: state.ui, engineList: ENGINES,
     authenticated: !!session.get(),
+    deviceEnrolled: state.deviceEnrolled, repairRequired: state.repairRequired,
     enginesData: state.enginesData, data: state.common,
     dataTag: 'API', market: state.common.market,
     subtabs: ENGINE_SUBTABS[state.ui.engineId] || [],
