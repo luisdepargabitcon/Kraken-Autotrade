@@ -12,7 +12,7 @@ const ICON={
   shield:'<path d="M12 2 4 6v6c0 6 4 9 8 10 4-1 8-4 8-10V6z"/><path d="m8 12 3 3 5-6"/>'
 };
 const icon=(name)=>'<svg class="nx-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">'+(ICON[name]||ICON.signal)+'</svg>';
-const good = v => v!==null&&v!==undefined&&Number.isFinite(Number(v));
+const good = v => v!==null && v!==undefined && v!=='' && Number.isFinite(Number(v));
 const money=v=>good(v)?fmtUsd(Number(v)):NA;
 const signedMoney=v=>good(v)?signedUsd(Number(v)):NA;
 const safeStatus=s=>s===null||s===undefined||s===''?'Sin conexión':String(s);
@@ -47,7 +47,7 @@ const engineTile=(e,status,profit)=>{
   return `<button class="nx-engine-tile" data-nav="engine:${esc(e.id)}">
     <span class="nx-engine-mark">${icon(engineIcons[e.id]||'signal')}</span>
     <span class="nx-engine-copy"><strong>${esc(e.name)}</strong><small>${esc(engineDescriptions[e.id]||e.desc||'')}</small></span>
-    <span class="nx-engine-right"><b class="${good(profit)?(profit>=0?'pos':'neg'):''}">${signedMoney(profit)}</b><small>${esc(state?String(state):'Sin conectar')}</small></span>
+    <span class="nx-engine-right"><b class="${good(profit)?(profit>=0?'pos':'neg'):''}">${good(profit)?signedMoney(profit):'—'}</b><small>${esc(state?String(state):'Sin vincular')}</small></span>
     <span class="nx-chevron" aria-hidden="true">›</span>
   </button>`;
 };
@@ -119,9 +119,9 @@ export function renderEngineExperience(ctx, legacy){
   const subNav=`<div class="nx-engine-subnav" role="navigation" aria-label="Secciones de ${esc(title)}">${tabs.map(t=>`<button data-ui="subtab:${esc(t.id)}" class="${subtab===t.id?'active':''}">${esc(t.label)}</button>`).join('')}</div>`;
   if(notReady){
     return `<div class="nx-experience nx-engine-screen"><div class="nx-engine-intro"><span class="nx-eyebrow">MOTORES / ${esc(title)}</span><h1>${esc(title)}</h1><p>${esc(engineDescriptions[id]||'Estrategia del bot')}</p></div>
-      ${subNav}
+      ${ctx.mode==='pro'?subNav:''}
       ${connectNotice('el estado y las operaciones del motor '+title)}
-      <div class="nx-feature-preview"><span class="nx-eyebrow">INFORMACIÓN CONSERVADA</span><p>Al vincular, aquí aparecerán sus posiciones y ciclos, protección, señales, configuración efectiva, alertas, órdenes e histórico íntegro.</p></div>
+      ${ctx.mode==='pro'?'<div class="nx-feature-preview"><span class="nx-eyebrow">DATOS PROFESIONALES</span><p>La vista Pro conservará posiciones, ciclos, protecciones, scoring, configuración efectiva, alertas, órdenes y el histórico íntegro cuando el backend responda.</p></div>':''}
     </div>`;
   }
   if(subtab!=='panel')return `<div class="nx-experience nx-engine-screen"><div class="nx-engine-intro"><span class="nx-eyebrow">MOTORES / ${esc(title)}</span><h1>${esc(title)}</h1></div>${subNav}<div class="nx-legacy-detail">${ctx.renderEngineSub(id,subtab)}</div></div>`;
