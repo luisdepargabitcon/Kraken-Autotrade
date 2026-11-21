@@ -3,6 +3,7 @@
 // Source of truth: engine status/read-model, never labels inferred from missing values.
 import {esc,fmtUsd,signedUsd,signedPct,fmtNum,fmtPct,fmtTs,fmtAge,NA} from './util.js';
 import {candleChart,lineChart,modeBadge} from './ui.js';
+import {ohlcvChart} from './premium-chart.js';
 
 const NAMES={idca:'IDCA',spot:'SPOT / Swing',grid:'GRID aislado',ama:'AMA'};
 const DESCS={idca:'Acumulación inteligente por ciclos',spot:'Señales y gestión de posiciones',grid:'Órdenes por niveles BUY → SELL',ama:'Mandatos y acumulación macro'};
@@ -67,7 +68,7 @@ function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=
  return `<section class="nxp-chartbox ${compact?'nxp-chart-compact':''}">
    <div class="nxp-charthead"><div>${eyebrow(title)}<strong>${esc(pair)}</strong></div>
      <span class="nxp-timeframe" title="Temporalidad disponible del contrato">15m</span></div>
-   ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${candleChart(candles,{hh:compact?175:280,levels:levels.filter(x=>num(x.price))})}</div>`:
+   ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${ohlcvChart(candles,{height:compact?240:315,levels:levels.filter(x=>num(x.price)),label:pair+' · velas OHLCV'})}</div>`:
       noDataFrame(ready?'Sin velas válidas':'Esperando el mercado','Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias.')}
    <div class="nxp-chartfoot">${ready?`Origen: ${esc(m.provider||m.source||'API')} · ${m.ts?esc(fmtAge(m.ts)):'hora no verificada'}`:
      'Precio y velas pendientes de autenticación y fuente'}</div>
