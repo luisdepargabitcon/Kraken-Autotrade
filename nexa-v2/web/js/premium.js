@@ -87,7 +87,7 @@ function engineCard(ctx,e){
  return `<button class="nxp-engine-row" data-nav="engine:${esc(e.id)}">
  <span class="nxp-engine-glyph ${esc(e.id)}">${ico(e.id==='grid'?'grid':e.id==='ama'?'shield':'chart')}</span>
  <span class="nxp-engine-info"><b>${esc(NAMES[e.id]||e.name)}</b><small>${esc(DESCS[e.id]||e.desc||'')}</small></span>
- <span class="nxp-engine-balance ${moneyClass(result)}"><b>${pnl(result)}</b><small>${good?value(first(d.status,'mode','state')):'Sin vincular'}</small></span>
+ <span class="nxp-engine-balance ${moneyClass(result)}"><b>${pnl(result)}</b><small>${good?value(first(d.status,'mode','state')):(ctx.authenticated?'Sin datos':'Sin vincular')}</small></span>
  <span class="nxp-row-arrow">›</span></button>`;
 }
 function portfolioSummary(ctx){
@@ -461,8 +461,8 @@ export function renderEnginePremium(ctx){
   const head=engineHeader(ctx,id);
   if(ctx.mode==='basic')return wrap(`${head}<div class="nxp-basic-engine-unlinked">
     <div class="nxp-unlinked-symbol">${ico(id==='grid'?'grid':'chart')}</div>
-    <h2>Este motor aún no está vinculado</h2><p>Los ciclos, resultados y el estado real aparecerán tras autorizar el dispositivo. No se considera detenido ni vacío.</p>
-    <button class="nxp-primary" data-app="pair-device">Vincular dispositivo</button></div>`,'nxp-mode-basic nxp-engine');
+    <h2>${ctx.authenticated?'Sin datos verificados del motor':'Este motor aún no está vinculado'}</h2><p>${ctx.authenticated?'El servidor no ha devuelto un estado válido. No se interpreta como apagado, sin ciclos ni LIVE.':'Los ciclos, resultados y el estado real aparecerán tras autorizar el dispositivo. No se considera detenido ni vacío.'}</p>
+    <button class="nxp-primary" data-app="${ctx.authenticated?'refresh':'pair-device'}">${ctx.authenticated?'Reintentar lectura':'Vincular dispositivo'}</button></div>`,'nxp-mode-basic nxp-engine');
   return wrap(`${head}${engineNav(ctx)}
    <div class="nxp-engine-layout"><div class="nxp-main-column">
      ${candleSurface(ctx,{title:'Mercado del motor'})}
