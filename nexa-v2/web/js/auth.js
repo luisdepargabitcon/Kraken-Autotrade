@@ -32,10 +32,12 @@ export const session = {
   },
 };
 
-export async function apiFetch(path, {method='GET', body, headers={}} = {}){
+export async function apiFetch(path, {method='GET', body, headers={}, timeoutMs} = {}){
   const s = session.get();
+  const signal=Number.isFinite(timeoutMs)&&timeoutMs>0&&AbortSignal.timeout
+    ? AbortSignal.timeout(timeoutMs) : undefined;
   const res = await fetch(CONFIG.apiBase + path, {
-    method,
+    method, signal,
     headers: {
       'Accept':'application/json',
       ...(body!==undefined ? {'Content-Type':'application/json'} : {}),
