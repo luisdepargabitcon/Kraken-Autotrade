@@ -175,7 +175,6 @@ function linked(state,engine,path,rec){
  return all.filter(o=>o?.cycleId!=null&&String(o.cycleId)===String(rec?.id??rec?.cycleId))
   .slice().sort((a,b)=>dateSort(a)-dateSort(b));
 }
-const isCycle=path==='cycles'||path==='history'||(path==='cycles'&&['idca','grid','ama'].includes(path));
 const statusName=v=>translate(v,STATUS_ES);
 function financial(s,record,engine,path,orders){
  const closed=path==='history'||String(s.state||'').toLowerCase()==='closed'||record.closedAt!=null;
