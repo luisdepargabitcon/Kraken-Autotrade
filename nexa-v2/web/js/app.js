@@ -44,7 +44,7 @@ function navTarget(){
   return state.screen;
 }
 function navTo(target){
-  if(target.startsWith('engine:')){ state.ui.engineId = target.slice(7); state.screen='engines'; }
+  if(target.startsWith('engine:')){ state.ui.engineId = target.slice(7); state.ui.subtab = ENGINE_SUBTABS[state.ui.engineId]?.[0]?.id || 'panel'; state.screen='engines'; }
   else state.screen = target;
   render();
 }
@@ -82,6 +82,7 @@ function render(){
   const scr = $('screen');
   const ctx = {
     mode: state.mode, ui: state.ui, engineList: ENGINES,
+    authenticated: !!session.get(),
     enginesData: state.enginesData, data: state.common,
     dataTag: 'API', market: state.common.market,
     subtabs: ENGINE_SUBTABS[state.ui.engineId] || [],
@@ -99,6 +100,7 @@ function render(){
   scr.innerHTML = html;
   renderNav(); renderStatusline();
   document.getElementById('app').dataset.mode = state.mode;
+  document.getElementById('app').dataset.screen = state.screen;
   document.getElementById('mode-basic').classList.toggle('on', state.mode==='basic');
   document.getElementById('mode-pro').classList.toggle('on', state.mode==='pro');
   document.getElementById('engine-name').textContent =
@@ -118,18 +120,16 @@ function renderNav(){
   }).join('');
 }
 function renderStatusline(){
-  const s = session.get();
-  const states = Object.values(state.enginesData).map(e=>e.state);
-  const bad = states.includes('unavailable')||states.includes('unreachable')||states.includes('error');
-  const dotCls = !state.online ? 'err' : (s ? (bad?'warn':'') : 'warn');
-  const authTxt = s ? 'Sesión protegida' : 'Sin vincular';
+  const authed=!!session.get();
+  const states=Object.values(state.enginesData).map(e=>e.state);
+  const sourceError=states.some(x=>x==='unavailable'||x==='unreachable'||x==='error'||x==='auth_required');
+  const cls=!state.online?'err':(authed&& !sourceError?'':'warn');
+  const connection = !state.online?'Sin red':(!authed?'Dispositivo sin vincular':sourceError?'Datos pendientes':'Conectado');
   $('statusline').innerHTML =
-    `<span class="dot ${dotCls}"></span>`+
-    `<span>${s?'NEXA conectado':'NEXA · conexión pendiente'}</span>`+
-    `<span>·</span><span>${authTxt}</span>`+
-    `<span>·</span><span>vista ${state.mode==='basic'?'Básico':'Pro'}</span>`+
-    `<span>·</span><span>${state.online?'red disponible':'sin red'}</span>`+
-    (bad?`<span>·</span><span class="warn-tx">datos parciales/no disponibles</span>`:'');
+    `<span class="dot ${cls}"></span><span>${esc(connection)}</span>`+
+    (!authed?`<button data-app="pair-device" class="nx-status-link">Vincular ahora ›</button>`:
+      sourceError?`<button data-app="refresh" class="nx-status-link">Reintentar ↻</button>`:'')+
+    `<span class="nx-status-right">NEXA · ${state.mode==='basic'?'Básico':'Pro'}</span>`;
 }
 
 // ---------- Sub-renderer de motor ----------
@@ -350,7 +350,8 @@ document.addEventListener('click', e=>{
   const misc = e.target.closest('[data-app]');
   if(misc){
     const k = misc.dataset.app;
-    if(k==='settings-api') openSettingsApi();
+    if(k==='pair-device') $('pair-overlay').classList.remove('hidden');
+    else if(k==='settings-api') openSettingsApi();
     else if(k==='logout'){ logout(); location.reload(); }
     else if(k==='refresh'){ loadData().then(render); }
     return;
