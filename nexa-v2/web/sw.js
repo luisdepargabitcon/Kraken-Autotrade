@@ -1,10 +1,10 @@
 // NEXA premium rev11 — static shell only. Never cache API/auth responses.
-const CACHE='nexa-v2-premium-r11';
+const CACHE='nexa-v2-premium-r11b';
 const SHELL=[
  './','./index.html','./manifest.webmanifest','./assets/icon.svg',
  './css/style.css','./css/premium.css',
  './js/app.js','./js/ui.js','./js/util.js','./js/contracts.js',
- './js/provider.js','./js/screens.js','./js/premium.js',
+ './js/provider.js','./js/screens.js','./js/premium.js','./js/premium-chart.js',
  './js/config.js','./js/adapters.js','./js/auth.js','./js/actions.js','./js/pairing.js'
 ];
 self.addEventListener('install',event=>{
