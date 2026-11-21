@@ -572,3 +572,12 @@ html.nexa-native .topbar{
  .nx-inspect-fields{grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce){.nx-inspect-clickable{transition:none}}
+
+.nx-inspect-linked{margin-top:17px;border-top:1px solid #334966;padding-top:13px}
+.nx-inspect-linked h3{font-size:15px;letter-spacing:-.015em;margin:5px 0 11px;color:#dcecff}
+.nx-inspect-linked>.nx-inspect-fold{margin-bottom:8px}
+.nx-inspect-linked>.nx-inspect-fold summary{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.nx-inspect-linked>.nx-inspect-fold .nx-inspect-fields{margin-top:10px}
+.nx-inspect-absent{margin:10px 0 0;border:1px dashed #394d66;border-radius:11px;padding:10px 12px;color:#9aafcc;font-size:12px}
+.nx-inspect-absent summary{cursor:pointer;font-weight:700}
+.nx-inspect-absent p{line-height:1.7;overflow-wrap:anywhere;margin:7px 0 0}
