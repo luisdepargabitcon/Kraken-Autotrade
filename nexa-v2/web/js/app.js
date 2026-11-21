@@ -174,7 +174,7 @@ function renderStatusline(){
 // ---------- Sub-renderer de motor ----------
 function renderEngineSub(engineId, subtab){
   const eng = state.enginesData?.[engineId] ?? {state:'unavailable', data:{}};
-  if(eng.state && eng.state!=='ok'){
+  if(eng.state && !['ok','partial'].includes(eng.state)){
     return `<div class="banner ${eng.state==='auth_required'?'warn':'err'}">
       Motor ${esc(engineId)}: ${esc(stateLabel(eng.state))}.
       ${eng.state==='auth_required'?'Inicia sesión con permisos para verlo.':'Sin datos del backend.'}</div>`;
@@ -186,7 +186,8 @@ function renderEngineSub(engineId, subtab){
     grid: { panel:S.gridPanel, cycles:S.gridCycles, levels:S.gridLevels, monitor:S.gridMonitor, config:S.gridConfig },
     ama:  { panel:S.amaPanel, readiness:S.amaReadiness, mandate:S.amaMandate, trace:S.amaTrace, lab:S.amaLab, config:S.amaConfig },
   }[engineId]?.[subtab];
-  return fn ? fn(ctx) : `<div class="banner warn">Subvista no implementada: ${esc(engineId)}/${esc(subtab)}</div>`;
+  const partial=eng.state==='partial'?'<div class="nx-subview-partial">Lectura parcial: algunos endpoints pueden no estar autorizados o disponibles. Los datos confirmados sí se muestran; los ausentes no equivalen a cero.</div>':'';
+  return fn ? partial+fn(ctx) : `<div class="banner warn">Subvista no implementada: ${esc(engineId)}/${esc(subtab)}</div>`;
 }
 function stateLabel(s){
   return {unreachable:'backend inaccesible',unavailable:'no disponible',error:'error de API',
