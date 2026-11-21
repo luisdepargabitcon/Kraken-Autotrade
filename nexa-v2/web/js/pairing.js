@@ -37,14 +37,27 @@ export async function enrollDevice(){
 
 // Canjea el código de un solo uso emitido por el administrador.
 export async function redeemPairCode(code, label=''){
-  const publicKey = await enrollDevice();
-  const r = await apiFetch('/v2/pair/redeem', {method:'POST', body:{
-    code: String(code||'').trim(), deviceId: device.id, publicKey,
-    platform: window.Capacitor?.isNativePlatform?.() ? 'android' : 'web', label,
-  }});
-  if(!r.ok) return { ok:false, status:r.status, error:r.data?.error||'pair_failed' };
-  if(label) localStorage.setItem('nexa.deviceLabel', label);
-  return { ok:true, roles:r.data?.roles||[] };
+  // No perder una credencial anterior si el servidor rechaza el código o falla la red.
+  const previousPriv=await idbGet('priv');
+  const previousPub=await idbGet('pub');
+  const restore=async()=>{
+    if(previousPriv)await idbSet('priv',previousPriv); else await idbDel('priv');
+    if(previousPub)await idbSet('pub',previousPub); else await idbDel('pub');
+  };
+  const publicKey=await enrollDevice();
+  let r;
+  try{
+    r=await apiFetch('/v2/pair/redeem', {method:'POST', timeoutMs:12000, body:{
+      code:String(code||'').trim(), deviceId:device.id, publicKey,
+      platform:window.Capacitor?.isNativePlatform?.()?'android':'web',label,
+    }});
+  }catch(err){await restore();throw err;}
+  if(!r.ok){
+    await restore();
+    return {ok:false,status:r.status,error:r.data?.error||'pair_failed'};
+  }
+  if(label)localStorage.setItem('nexa.deviceLabel',label);
+  return {ok:true,roles:r.data?.roles||[]};
 }
 
 async function signChallenge(nonce){
@@ -57,12 +70,12 @@ async function signChallenge(nonce){
 
 // Sesión real por challenge+firma — nada viaja en claro, la clave nunca sale.
 export async function obtainSession(){
-  const r1 = await apiFetch('/v2/session/challenge', {method:'POST', body:{deviceId:device.id}});
+  const r1 = await apiFetch('/v2/session/challenge', {method:'POST', timeoutMs:12000, body:{deviceId:device.id}});
   if(!r1.ok) return { ok:false, status:r1.status, error:r1.data?.error||'challenge_failed' };
   const nonce = r1.data?.nonce;
   const sig = nonce ? await signChallenge(nonce) : null;
   if(!sig) return { ok:false, error:'key_missing' };
-  const r2 = await apiFetch('/v2/session/redeem', {method:'POST', body:{
+  const r2 = await apiFetch('/v2/session/redeem', {method:'POST', timeoutMs:12000, body:{
     deviceId: device.id, nonce, signature: sig }});
   if(!r2.ok) return { ok:false, status:r2.status, error:r2.data?.error||'redeem_failed' };
   return { ok:true, token:r2.data.token, expiresAt:r2.data.expiresAt,
