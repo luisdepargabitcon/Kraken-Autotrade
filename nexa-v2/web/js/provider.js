@@ -4,7 +4,7 @@
 // inventa datos. Los fixtures SOLO se usan en tests (ver tests/*.mjs).
 import { CONFIG } from './config.js';
 import { apiFetch, session } from './auth.js';
-import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder,
+import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder, normSpotTrade,
          normGridCycle, normGridStatus, normAmaStatus, normAmaMandate,
          normPortfolioSummary, normMarket, normEvent,
          wrap, unwrap } from './adapters.js';
@@ -77,14 +77,25 @@ export function createApiProvider(){
       };
     },
     async spot(){
-      const pos = await get(ROUTES.spot.positions);
-      const diag = await get(ROUTES.spot.diagnostics);
+      // El backend original ofrece historial GLOBAL en /trades/closed.
+      // No atribuir toda esa actividad a SPOT sin un identificador de estrategia verificable.
+      // La pasarela deny-by-default requiere autorizar explícitamente este GET:
+      // si es 403, status del historial es forbidden, NO una lista vacía.
+      const [pos,diag,trades] = await Promise.all([
+        get(ROUTES.spot.positions), get(ROUTES.spot.diagnostics), get(ROUTES.spot.trades),
+      ]);
+      const tradeList=trades.state==='ok'?list(trades.data):null;
       return {
         state: pos.state==='ok'?'ok':st(pos.state),
-        status: wrap(diag.data, x=>x, {ts:Date.now()}),
-        positions: wrap(list(pos.data), x=>x, {ts:Date.now()}),
+        resourceStates:{
+          positions:st(pos.state), diagnostics:st(diag.state), trades:st(trades.state),
+        },
+        status: wrap(diag.state==='ok'?diag.data:null,x=>x,{ts:Date.now()}),
+        positions: wrap(pos.state==='ok'?list(pos.data):null,x=>x,{ts:Date.now()}),
+        trades: wrap(tradeList===null?null:tradeList.map(normSpotTrade).filter(Boolean),x=>x,{ts:Date.now()}),
+        tradeTotal:trades.state==='ok'&&Number.isInteger(trades.data?.total)?trades.data.total:null,
         diagnostics: diag.data ?? null,
-        latency: pos.latency,
+        latency: Math.max(pos.latency||0,diag.latency||0,trades.latency||0),
       };
     },
     async grid(){
