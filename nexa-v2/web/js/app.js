@@ -132,17 +132,19 @@ function renderStatusline(){
   const authed=!!session.get();
   const states=Object.values(state.enginesData).map(e=>e.state);
   const sourceError=states.some(x=>x==='unavailable'||x==='unreachable'||x==='error'||x==='auth_required');
-  const cls=!state.online?'err':(authed&& !sourceError?'':'warn');
+  const sourcesPartial=states.some(x=>x==='partial') ||
+    (authed && ['error','unavailable','partial','auth_required'].includes(state.common.portfolio?.state));
+  const cls=!state.online?'err':(authed&&!sourceError&&!sourcesPartial?'':'warn');
   const linked=state.deviceEnrolled&&!state.repairRequired;
   const connection = !state.online?'Sin red':
     state.repairRequired?'Dispositivo revocado':
     !authed?(linked?'Conexión pendiente':'Dispositivo sin vincular'):
-    sourceError?'Datos pendientes':'Conectado';
+    sourceError||sourcesPartial?'Conectado · datos parciales':'Conectado';
   $('statusline').innerHTML =
     `<span class="dot ${cls}"></span><span>${esc(connection)}</span>`+
     (!authed?(linked?`<button data-app="refresh" class="nx-status-link">Reintentar conexión ↻</button>`:
       `<button data-app="pair-device" class="nx-status-link">Vincular ahora ›</button>`):
-      sourceError?`<button data-app="refresh" class="nx-status-link">Reintentar ↻</button>`:'')+
+      sourceError||sourcesPartial?`<button data-app="refresh" class="nx-status-link">Reintentar ↻</button>`:'')+
     `<span class="nx-status-right">NEXA · ${state.mode==='basic'?'Básico':'Pro'}</span>`;
 }
 
