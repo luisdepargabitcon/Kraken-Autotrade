@@ -74,7 +74,7 @@ function entryContexts(raw){
  }));
 }
 const st = s => s==='ok'?'ok':(s==='unreachable'?'unavailable':s);
-const list = v => Array.isArray(v) ? v : (v?.items || v?.cycles || v?.orders || v?.rows || v?.data || []);
+const list = v => Array.isArray(v) ? v : (v?.items || v?.cycles || v?.orders || v?.trades || v?.rows || v?.data || []);
 
 export function createApiProvider(){
   return {
