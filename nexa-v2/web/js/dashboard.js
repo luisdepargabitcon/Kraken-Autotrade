@@ -97,6 +97,18 @@ export function renderDashboard(ctx){
  const nav=ctx.authenticated&&ctx.data?.portfolio?.state==='ok'?val(summary,'navUsd'):null;
  const corr=pearson(ctx);
  const events=ctx.data?.activity?.data?.events;
+ const verifiedPortfolio=ctx.authenticated&&ctx.data?.portfolio?.state==='ok';
+ const proExtras=ctx.mode==='pro'?
+  section('RIESGO Y CONTABILIDAD','Lectura profesional')+
+  '<div class="nxh-pro-grid">'+
+   metric('PnL realizado',verifiedPortfolio?pnl(summary.realizedPnlUsd):'—')+
+   metric('PnL no realizado',verifiedPortfolio?pnl(summary.unrealizedPnlUsd):'—')+
+   metric('Exposición consolidada',verifiedPortfolio?usd(summary.exposureUsd):'—')+
+   metric('HOLD separado',verifiedPortfolio?usd(summary.holdUsd):'—')+
+   metric('Ciclos IDCA',out(engine(ctx,'idca').summary?.activeCyclesCount))+
+   metric('Pausa global IDCA',typeof engine(ctx,'idca').status?.globalTradingPause==='boolean'?
+      (engine(ctx,'idca').status.globalTradingPause?'Activada':'Sin pausa'):'—')+
+  '</div>':'';
  return '<div class="nxh-root"><header class="nxh-title"><span>NEXA · VISIÓN GLOBAL</span><h1>Tu bot, de un vistazo</h1>'+
  '<p>Mercado, exposición y movimientos de todas tus estrategias.</p></header>'+
  '<section class="nxh-hero"><small>POSICIONES ABIERTAS CONFIRMADAS</small>'+
@@ -107,14 +119,14 @@ export function renderDashboard(ctx){
  section('MERCADOS','BTC y ETH',go('market','Mercados'))+
  '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+  '<div class="nxh-corr-mini"><span>Relación BTC ↔ ETH</span><strong>'+(n(corr.r)===null?'Pendiente':fmtNum(corr.r,{dec:2}))+'</strong><small>'+(corr.count<8?'Sin suficientes velas sincronizadas':corr.count+' intervalos de 15m')+'</small><button data-asset="BTC/USD">Analizar ↗</button></div>'+
  section('OPERATIVA','Posiciones abiertas',go('positions','Todas las posiciones'))+
- '<div class="nxh-position-list">'+(s.entries.length?s.entries.slice(0,3).map(positionRow).join(''):
+ '<div class="nxh-position-list">'+(s.entries.length?s.entries.slice(0,ctx.mode==='pro'?6:3).map(positionRow).join(''):
  '<p class="nxh-empty">Sin posiciones confirmadas en las fuentes recibidas.</p>')+'</div>'+
  (s.issues.length?'<p class="nxh-caution">Lectura parcial: '+out(s.issues.join(' · '))+'. No significa que no existan posiciones.</p>':'')+
  section('ACTIVIDAD','Últimos movimientos',go('activity','Monitor'))+
  '<div class="nxh-activity">'+(Array.isArray(events)&&events.length?events.slice(0,4).map(e=>
  '<div><b>'+out(val(e,'engine','source')||'BOT')+'</b><span>'+out(val(e,'msg','message','type')||'Evento')+'</span></div>').join(''):
  '<p class="nxh-empty">Sin eventos verificables en la respuesta actual.</p>')+'</div>'+
- section('ESTRATEGIAS','Motores')+engineLinks(ctx)+'</div>';
+ proExtras+section('ESTRATEGIAS','Motores')+engineLinks(ctx)+'</div>';
 }
 export function renderPositions(ctx){
  const s=collectPositions(ctx),f=ctx.ui?.positionFilter||'all',list=s.entries.filter(x=>f==='all'||x.pair===f||x.engine===f);
