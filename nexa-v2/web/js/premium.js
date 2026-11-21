@@ -581,22 +581,33 @@ export function renderFiscoPremium(ctx,legacy){
  </div>`,'nxp-mode-pro nxp-fisco');
 }
 export function renderSettingsPremium(ctx,legacy){
- const header=section('PREFERENCIAS Y SEGURIDAD','Ajustes','Acceso del dispositivo y conexión al bot.');
- const ready=goodCommon(ctx,'settings');
- const shell=`<div class="nxp-settings-grid">
-  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('key')}</div>
-    <h3>Dispositivos y acceso</h3><p>Desbloqueo por PIN o biometría. La vinculación con el servidor requiere una credencial segura.</p>
-    <button data-app="pair-device" class="nxp-secondary">Vincular dispositivo</button></section>
-  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('shield')}</div>
-    <h3>Conexión segura</h3><p>El panel solo utiliza una API autorizada. No se almacenan claves del exchange en la APK.</p>
-    <button data-app="settings-api" class="nxp-secondary">Configurar servidor</button></section>
-  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('activity')}</div>
-    <h3>Actualización y sesión</h3><p>Puedes volver a obtener los datos o cerrar la sesión del dispositivo.</p>
-    <div class="nxp-actions"><button data-app="refresh" class="nxp-secondary">Actualizar</button>
-      <button data-app="logout" class="nxp-secondary">Cerrar sesión</button></div></section>
-  </div>`;
- return wrap(`${header}${shell}
-   ${ctx.mode==='pro'&&ready?`<details class="nxp-audit"><summary>Configuración técnica efectiva <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
-   ${ctx.mode==='pro'&&!ready?`<p class="nxp-settings-note">Los parámetros efectivos del bot se mostrarán tras conectar el backend autorizado. Esta pantalla no modifica motores ni configuraciones LIVE por sí sola.</p>`:''}
- </div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
+ const authorized=!!ctx.authenticated;
+ const header=section('NEXA / PREFERENCIAS','Ajustes');
+ const option=(glyph,title,desc,action)=>`<button type="button" class="nxp-settings-option" data-app="${action}">
+   <span class="nxp-settings-option-icon">${ico(glyph)}</span>
+   <span class="nxp-settings-option-copy"><strong>${esc(title)}</strong><small>${esc(desc)}</small></span>
+   <span class="nxp-settings-option-arrow" aria-hidden="true">›</span>
+ </button>`;
+ const content=`<div class="nxp-settings-compact">
+  <div class="nxp-settings-status">
+   <div class="nxp-settings-status-mark">${ico('shield')}</div>
+   <div><strong>${authorized?'Dispositivo autorizado':'Conecta tu móvil'}</strong>
+     <span>${authorized?'Sesión protegida · solo lectura':'Sin usuario ni contraseña. Solo necesitas un código temporal.'}</span></div>
+   ${chip(authorized?'Vinculado':'Pendiente',authorized?'good':'warn')}
+  </div>
+  <div class="nxp-settings-options">
+   ${option('shield','Servidor','Conexión HTTPS segura','settings-api')}
+   ${option('key',authorized?'Volver a vincular':'Conectar este móvil','Código temporal de un solo uso','pair-device')}
+   <div class="nxp-settings-option nxp-settings-static">
+    <span class="nxp-settings-option-icon">${ico('key')}</span>
+    <span class="nxp-settings-option-copy"><strong>PIN y biometría</strong><small>Desbloqueo local del dispositivo</small></span>
+    <span class="nxp-settings-option-arrow nxp-settings-ready">${ico('shield')}</span>
+   </div>
+   ${option('activity','Actualizar datos','Consultar de nuevo el estado del bot','refresh')}
+   ${authorized?option('key','Cerrar sesión','Desconectar sin borrar tu PIN','logout'):''}
+  </div>
+  ${ctx.mode==='pro'&&goodCommon(ctx,'settings')?`<details class="nxp-audit"><summary>Configuración técnica <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
+  <p class="nxp-settings-footnote">La vinculación no autoriza compras, ventas ni cambios en el bot.</p>
+ </div>`;
+ return wrap(`${header}${content}</div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
 }
