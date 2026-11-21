@@ -9,6 +9,7 @@ import {
   microBar, signed, stateBanner, lineChart, candleChart, miniSpark,
 } from './ui.js';
 import { GRID_DISTINCTION } from './contracts.js';
+import { renderHomeExperience, renderMarketExperience, renderEngineExperience, renderPortfolioExperience } from './experience.js';
 
 const P = (v, src, ts) => provenance(v, {source:src, ts});
 
@@ -26,7 +27,7 @@ function connectionEmpty(title, detail, {icon='↗', action='Configurar conexió
 
 
 // ==================== INICIO ====================
-export function renderHome(ctx){
+function renderHomeLegacy(ctx){
   const { mode, data } = ctx;
   const port = data.portfolio?.data ?? {};
   const sum = port.summary ?? {};
@@ -66,7 +67,7 @@ export function renderHome(ctx){
 }
 
 // ==================== MERCADO ====================
-export function renderMarket(ctx){
+function renderMarketLegacy(ctx){
   const { mode, data } = ctx;
   const m = data.market?.data ?? {};
   const pair = ctx.ui.marketPair;
@@ -123,7 +124,7 @@ export function renderMarket(ctx){
 }
 
 // ==================== MOTOR (selector de subvista) ====================
-export function renderEngine(ctx){
+function renderEngineLegacy(ctx){
   const { engineId, subtab } = ctx.ui;
   const eng = ctx.engineList.find(e=>e.id===engineId);
   const d = ctx.enginesData?.[engineId]?.data;
@@ -555,7 +556,7 @@ export function amaConfig(ctx){
 }
 
 // ==================== CARTERA ====================
-export function renderPortfolio(ctx){
+function renderPortfolioLegacy(ctx){
   if(ctx.data.portfolio?.state!=='ok') return connectionEmpty(
     'Cartera pendiente de vinculación',
     'El patrimonio, las posiciones y el PnL aparecerán cuando exista una sesión segura con el backend. No mostramos ceros ni balances ficticios.',
@@ -671,3 +672,11 @@ function ctxMarketCandles(){
   return (globalThis.__nexa?.ctx?.market?.data?.candles?.['BTC/USD'])||[];
 }
 export { evRow };
+
+
+// Rev9: public exports now use genuinely distinct mobile-first layouts.
+// Legacy detail renderers remain available INSIDE progressive disclosures for 100% field parity.
+export function renderHome(ctx){ return renderHomeExperience(ctx, renderHomeLegacy); }
+export function renderMarket(ctx){ return renderMarketExperience(ctx, renderMarketLegacy); }
+export function renderEngine(ctx){ return renderEngineExperience(ctx, renderEngineLegacy); }
+export function renderPortfolio(ctx){ return renderPortfolioExperience(ctx, renderPortfolioLegacy); }
