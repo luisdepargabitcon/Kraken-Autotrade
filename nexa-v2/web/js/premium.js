@@ -539,3 +539,59 @@ export function renderActivityPremium(ctx,legacy){
    ${ready?`<details class="nxp-audit"><summary>Eventos con filtros y detalles de auditoría <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
  </div>`,'nxp-mode-pro nxp-activity');
 }
+
+
+// ----- FISCO & security/settings — same design system, no invented tax numbers -----
+export function renderFiscoPremium(ctx,legacy){
+ const ready=goodCommon(ctx,'fisco');
+ const f=raw(ctx,'fisco'),s=f.summary||{};
+ const header=section('FISCALIDAD PRIVADA','FISCO / AEAT','Información fiscal con permisos independientes.');
+ if(!ready){
+  return wrap(`${header}<div class="nxp-privacy-head">${ico('shield')}
+    <div><h3>Tus datos fiscales permanecen protegidos</h3><p>Solo se mostrarán tras autorizar el dispositivo y obtener el permiso fiscal correspondiente. No se generan cálculos fiscales de ejemplo.</p>
+      <button data-app="pair-device" class="nxp-primary">Vincular acceso</button></div></div>
+    <div class="nxp-privacy-steps">${meta('1 · Identidad','Dispositivo autorizado')}
+      ${meta('2 · Acceso','Permiso FISCO')}${meta('3 · Informes','Datos verificados')}</div>
+   </div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-fisco':'nxp-mode-pro nxp-fisco');
+ }
+ const figures=twoValueGrid([
+ ['Ejercicio',value(s.year)],['Lotes',value(s.lotsCount)],
+ ['Operaciones',value(s.operationsCount)],['Disposiciones',value(s.disposalsCount)]
+ ]);
+ if(ctx.mode==='basic')return wrap(`${header}<section class="nxp-simple-card">${figures}
+   <div class="nxp-privacy-note">La reserva fiscal no es una comisión.</div>
+   ${link('portfolio','Volver a cartera')}</section></div>`,'nxp-mode-basic nxp-fisco');
+ return wrap(`${header}<div class="nxp-terminal-grid"><div class="nxp-main-column">
+   <section class="nxp-terminal-panel">${section('RESUMEN','Ejercicio y eventos')}${figures}</section>
+   <section class="nxp-terminal-panel">${section('INFORMES','Documentación disponible')}
+    ${Array.isArray(s.reportsAvailable)&&s.reportsAvailable.length?
+      s.reportsAvailable.map(x=>`<div class="nxp-legal-row">${ico('shield')}${value(x)}</div>`).join(''):
+      `<p class="nxp-panel-empty">No se han recibido informes disponibles.</p>`}</section>
+ </div><aside class="nxp-side-column"><section class="nxp-terminal-panel">
+   ${section('CONTROLES','Origen y sincronización')}
+   ${block('Exchange',value(s.exchange))}${block('Sincronización',value(s.syncStatus))}
+   <p class="nxp-safety-note">Los datos fiscales requieren autorización específica y reconciliación con los registros originales.</p>
+ </section></aside></div>
+ <details class="nxp-audit"><summary>Desglose fiscal íntegro <span>⌄</span></summary>${legacy(ctx)}</details>
+ </div>`,'nxp-mode-pro nxp-fisco');
+}
+export function renderSettingsPremium(ctx,legacy){
+ const header=section('PREFERENCIAS Y SEGURIDAD','Ajustes','Acceso del dispositivo y conexión al bot.');
+ const ready=goodCommon(ctx,'settings');
+ const shell=`<div class="nxp-settings-grid">
+  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('key')}</div>
+    <h3>Dispositivos y acceso</h3><p>Desbloqueo por PIN o biometría. La vinculación con el servidor requiere una credencial segura.</p>
+    <button data-app="pair-device" class="nxp-secondary">Vincular dispositivo</button></section>
+  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('shield')}</div>
+    <h3>Conexión segura</h3><p>El panel solo utiliza una API autorizada. No se almacenan claves del exchange en la APK.</p>
+    <button data-app="settings-api" class="nxp-secondary">Configurar servidor</button></section>
+  <section class="nxp-setting-tile"><div class="nxp-setting-symbol">${ico('activity')}</div>
+    <h3>Actualización y sesión</h3><p>Puedes volver a obtener los datos o cerrar la sesión del dispositivo.</p>
+    <div class="nxp-actions"><button data-app="refresh" class="nxp-secondary">Actualizar</button>
+      <button data-app="logout" class="nxp-secondary">Cerrar sesión</button></div></section>
+  </div>`;
+ return wrap(`${header}${shell}
+   ${ctx.mode==='pro'&&ready?`<details class="nxp-audit"><summary>Configuración técnica efectiva <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
+   ${ctx.mode==='pro'&&!ready?`<p class="nxp-settings-note">Los parámetros efectivos del bot se mostrarán tras conectar el backend autorizado. Esta pantalla no modifica motores ni configuraciones LIVE por sí sola.</p>`:''}
+ </div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
+}
