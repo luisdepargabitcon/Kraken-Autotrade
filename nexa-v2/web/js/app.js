@@ -372,6 +372,27 @@ $('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.set
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
 
+// Inspección de velas: tooltip táctil/ratón/teclado, solo datos OHLCV del proveedor.
+function showCandleTip(event){
+  const mark=event.target?.closest?.('[data-candle-tip]');
+  if(!mark)return;
+  const box=mark.closest('[data-nxp-chart]');
+  const tip=box?.querySelector('.nxp-chart-tooltip');
+  if(!tip)return;
+  tip.textContent=mark.dataset.candleTip||'';
+  tip.hidden=false;
+}
+document.addEventListener('pointerdown',showCandleTip);
+document.addEventListener('pointermove',event=>{if(event.pointerType==='mouse')showCandleTip(event);});
+document.addEventListener('focusin',showCandleTip);
+document.addEventListener('pointerout',event=>{
+  const box=event.target?.closest?.('[data-nxp-chart]');
+  if(box&&!box.contains(event.relatedTarget)){
+    const tip=box.querySelector('.nxp-chart-tooltip');
+    if(tip)tip.hidden=true;
+  }
+});
+
 window.addEventListener('online',  ()=>{ state.online=true; renderStatusline(); });
 window.addEventListener('offline', ()=>{ state.online=false; renderStatusline(); });
 
