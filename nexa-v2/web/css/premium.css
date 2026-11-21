@@ -468,3 +468,72 @@ body #screen{min-height:calc(100dvh - 145px)}
   #pair-overlay .code-inp{font-size:14px;letter-spacing:.04em}
   #pair-overlay .pair-settings-btn{min-width:74px;font-size:11px}
 }
+
+
+/* Rev13 UX simplificada: Ajustes discreto y PERMANENTE en cabecera.
+   Solo cinco destinos en la barra inferior; conectar con UN campo. */
+.nx-header-settings{
+  flex:0 0 38px;width:38px;height:38px;min-width:38px;display:grid;
+  place-items:center;border:1px solid transparent;border-radius:12px;
+  background:transparent;color:#8ba5c9;cursor:pointer;
+}
+.nx-header-settings:hover,
+.nx-header-settings:focus-visible{background:#17263e;border-color:#39597f;color:#dfedff}
+.nx-header-settings[aria-current="page"]{color:#84b8ff}
+.nx-header-settings svg{display:block;width:20px;height:20px}
+.nxp .nxp-header-actions{display:flex;align-items:center;gap:8px}
+#pair-overlay .pin-card.nx-pair-simple{
+  max-width:370px;padding:24px 24px 22px;text-align:left;
+  border-radius:25px;max-height:calc(100dvh - 34px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));
+  background:linear-gradient(145deg,#162844 0%,#101a2c 70%,#0b1423 100%);
+}
+#pair-overlay .nx-pair-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+#pair-overlay .nx-pair-mark{
+  display:grid;place-items:center;width:36px;height:36px;border-radius:10px;
+  background:#1e559b;color:#a6d1ff;font-weight:900;font-size:22px;font-style:italic;
+}
+#pair-overlay .nx-pair-gear{
+  width:38px;height:38px;display:grid;place-items:center;border-radius:11px;
+  border:1px solid transparent;background:transparent;color:#a4b9d6;
+}
+#pair-overlay .nx-pair-gear:hover,#pair-overlay .nx-pair-gear:focus-visible,
+#pair-overlay .nx-pair-gear[aria-expanded="true"]{
+  border-color:#3c5b81;color:#e6f3ff;background:#1b2c45;
+}
+#pair-overlay .nx-pair-simple>h2{font-size:24px;font-weight:780;letter-spacing:-.035em;
+  line-height:1.2;color:#f2f7ff;margin:0 0 8px;text-align:left}
+#pair-overlay .nx-pair-simple>.pin-note{font-size:13px;color:#b0c3dd;
+ line-height:1.55;text-align:left;margin:0 0 21px}
+#pair-overlay .nx-pair-simple>.pair-field-label{font-size:12px;margin:0 0 7px;
+ font-weight:700;color:#c4d8f2}
+#pair-overlay .nx-pair-simple>.code-inp{
+  text-align:left;font-family:inherit;font-size:16px;letter-spacing:.025em;
+  height:54px;border-radius:13px;margin:0 0 7px;padding-left:16px;
+}
+#pair-overlay .nx-pair-simple>.code-inp::placeholder{color:#7188ab;letter-spacing:0}
+#pair-overlay .nx-pair-simple>.pair-help{color:#879fbf;margin:0 0 13px;
+ font-size:11px;line-height:1.5}
+#pair-overlay .nx-pair-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:15px 0 7px}
+#pair-overlay .nx-pair-actions>.btn{min-height:47px;border-radius:12px;font-size:13px;
+ padding:11px 12px;white-space:nowrap;font-weight:730}
+#pair-overlay .nx-pair-actions>.btn.primary{background:linear-gradient(145deg,#3b81e5,#2a62bc)}
+#pair-overlay .nx-pair-actions>.btn:not(.primary){color:#b6c8df}
+#pair-overlay .nx-pair-simple>.pin-err{min-height:0;text-align:left;font-size:12px;
+ line-height:1.5;margin:12px 0 0;color:#ff9cae}
+#pair-overlay .nx-pair-advanced{border-top:1px solid #2b415e;
+ padding:14px 0 3px;margin:13px 0;background:none}
+#pair-overlay .nx-pair-advanced>.inp{height:44px;letter-spacing:0;text-align:left;font-size:12px}
+#pair-overlay .nx-pair-advanced>button{min-height:45px}
+@media(max-width:820px){
+ .nx-header-settings{width:36px;height:38px;min-width:36px;flex-basis:36px;border-radius:11px}
+ .nx-header-settings svg{width:19px;height:19px}
+ .top-ctl{gap:4px}
+ #bottomnav a{font-size:10.5px;min-width:0}
+ #bottomnav a svg{width:22px;height:22px}
+}
+@media(max-width:385px){
+ .nx-header-settings{width:33px;min-width:33px;flex-basis:33px}
+ .top-ctl .seg button{min-width:50px;padding-inline:5px}
+ .brand-tx b{font-size:12px}
+ #pair-overlay .pin-card.nx-pair-simple{padding:22px 18px}
+}
