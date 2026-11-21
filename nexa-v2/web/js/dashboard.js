@@ -30,7 +30,7 @@ export function collectPositions(ctx){
      if(!r||typeof r!=='object'||!filter(r))return;
      entries.push({
        pair:asset(val(r,'pair','symbol','asset')),engine:key,id:val(r,'id','cycleId','positionId'),
-       mode:val(r,'mode','executionMode'),title,ref:key+':'+path+':'+i,
+       mode:val(r,'mode','executionMode')??val(engine(ctx,key).status,'mode','executionMode'),title,ref:key+':'+path+':'+i,
        capital:val(r,'capitalUsedUsd','capitalUsed','investedUsd','valueUsd'),
        gain:val(r,'unrealizedPnlUsd','unrealizedPnl','pnlUsd'),
        pct:val(r,'unrealizedPnlPct','pnlPct'),entry:val(r,'avgEntryPrice','avgPrice','buyPrice','entryPrice'),
@@ -94,6 +94,11 @@ function engineLinks(ctx){
 }
 export function renderDashboard(ctx){
  const s=collectPositions(ctx),summary=ctx.data?.portfolio?.data?.summary||{};
+ const classify=x=>{const m=String(x.mode||'').toUpperCase();return ['LIVE','REAL','REAL_LIMITED','REAL_FULL'].includes(m)?'live':
+  ['SIM','SIMULATION','SHADOW','DRY_RUN','LAB','REPLAY'].includes(m)?'sim':'unknown'};
+ const liveCount=s.entries.filter(x=>classify(x)==='live').length,
+  simCount=s.entries.filter(x=>classify(x)==='sim').length,
+  unknownCount=s.entries.filter(x=>classify(x)==='unknown').length;
  const nav=ctx.authenticated&&ctx.data?.portfolio?.state==='ok'?val(summary,'navUsd'):null;
  const corr=pearson(ctx);
  const events=ctx.data?.activity?.data?.events;
@@ -113,8 +118,8 @@ export function renderDashboard(ctx){
  '<p>Mercado, exposición y movimientos de todas tus estrategias.</p></header>'+
  '<section class="nxh-hero"><small>POSICIONES ABIERTAS CONFIRMADAS</small>'+
  '<div class="nxh-bigline"><strong>'+s.entries.length+'</strong>'+go('positions','Ver todas')+'</div>'+
- '<p>'+(s.complete?'Estado verificado en todos los motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+
- '<div class="nxh-hero-stats">'+metric('Patrimonio',usd(nav))+metric('Motores','4')+
+ '<p>'+(s.complete?'Lectura disponible de los cuatro motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+  '<div class="nxh-mode-breakdown"><span>LIVE '+liveCount+'</span><span>SIM / SHADOW '+simCount+'</span>'+(unknownCount?'<span>Modo no verificado '+unknownCount+'</span>':'')+'</div>'+
+ '<div class="nxh-hero-stats">'+metric('NAV informado',usd(nav))+metric('Motores','4')+
  metric('Estado',ctx.authenticated?'Conectado':'Sin sesión')+'</div></section>'+
  section('MERCADOS','BTC y ETH',go('market','Mercados'))+
  '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+  '<div class="nxh-corr-mini"><span>Relación BTC ↔ ETH</span><strong>'+(n(corr.r)===null?'Pendiente':fmtNum(corr.r,{dec:2}))+'</strong><small>'+(corr.count<8?'Sin suficientes velas sincronizadas':corr.count+' intervalos de 15m')+'</small><button data-asset="BTC/USD">Analizar ↗</button></div>'+
