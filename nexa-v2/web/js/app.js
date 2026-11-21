@@ -252,9 +252,9 @@ function syncPairServer(){
   $('pair-server-current').textContent=CONFIG.apiBase;
   $('pair-api-base').value=CONFIG.apiBase;
 }
-function openPairOverlay(){
+function openPairOverlay(message=''){
   syncPairServer();
-  $('pair-err').textContent='';
+  $('pair-err').textContent=message;
   $('pair-overlay').classList.remove('hidden');
 }
 function pinKey(k){
@@ -316,14 +316,20 @@ async function showUnlock(){
 }
 async function afterUnlock(){
   $('unlock-overlay').classList.add('hidden');
+  let warning='';
   if(await device.isEnrolled()){
-    const s = await obtainSession();
-    if(s.ok){ session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
-      await loadData(); render(); scheduleRefresh(); return; }
-    // enrolled pero backend no acepta la sesión → reintentar/vincular
-    $('pair-err').textContent = `Sesión rechazada (${s.status||s.error}). Comprueba el servidor o re-vincula.`;
+    try{
+      const s=await obtainSession();
+      if(s.ok){
+        session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
+        await loadData();render();scheduleRefresh();return;
+      }
+      warning=`Sesión rechazada (${s.status||s.error}). Comprueba el servidor o re-vincula.`;
+    }catch{
+      warning='No se pudo abrir la sesión. Comprueba la dirección HTTPS del servidor.';
+    }
   }
-  openPairOverlay();
+  openPairOverlay(warning);
 }
 async function doPair(){
   const code=$('pair-code').value.replace(/[\s-]/g,'').toUpperCase();
