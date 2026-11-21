@@ -421,3 +421,50 @@ body #screen{min-height:calc(100dvh - 145px)}
  .nxp-chart-interactive{border-radius:10px}
  .nxp-chart-tooltip{font-size:10.5px;padding:9px 10px}
 }
+
+
+/* Rev12: Vinculación sin bloqueo de Ajustes + sexta sección móvil. */
+#pair-overlay .pin-card{
+  max-height:calc(100dvh - 40px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));
+  overflow-y:auto;overscroll-behavior:contain;text-align:left;
+}
+#pair-overlay .pin-card>svg{display:block;margin:0 auto}
+#pair-overlay .pin-card>h2,
+#pair-overlay .pin-card>.pin-note,
+#pair-overlay .pin-card>.pin-err{text-align:center}
+#pair-overlay .pair-field-label{display:block;margin:12px 0 5px;color:#d0e5ff;font-size:12px;font-weight:680}
+#pair-overlay .pair-help{color:#94aac9;font-size:11px;line-height:1.45;margin:0 0 9px}
+#pair-overlay .pair-server{
+  padding:13px 13px 11px;border:1px solid #35587b;background:#102238;
+  border-radius:16px;margin:14px 0 5px;
+}
+#pair-overlay .pair-server-row{display:flex;align-items:center;justify-content:space-between;gap:9px}
+#pair-overlay .pair-server-summary{display:flex;flex-direction:column;align-items:flex-start;min-width:0;gap:4px}
+#pair-overlay .pair-server-summary>span{color:#b9d2f2;font-weight:740;font-size:12px}
+#pair-overlay .pair-server-summary>small{color:#81b8ff;font-size:10px;line-height:1.45;
+  overflow-wrap:anywhere;word-break:break-word;text-align:left}
+#pair-overlay .pair-settings-btn{padding:9px 10px;border:1px solid #416995;background:#1b3e64;
+  color:#ecf6ff;border-radius:10px;min-width:86px;min-height:43px;flex:none;font-size:12px;font-weight:730}
+#pair-overlay .pair-settings-btn:focus-visible{outline:2px solid #91c5ff;outline-offset:2px}
+#pair-overlay .pair-config-form{display:flex;flex-direction:column;gap:9px;margin-top:13px;
+  border-top:1px solid #35587b;padding-top:12px}
+#pair-overlay .pair-config-form[hidden]{display:none!important}
+#pair-overlay .pair-config-form>label{font-size:12px;color:#c9dfff;text-align:left}
+#pair-overlay .pair-config-form>.inp{margin:0;font-size:12px;letter-spacing:0;text-align:left}
+#pair-overlay .pair-config-form>.btn{align-self:stretch}
+#pair-overlay .pair-config-form>small{font-size:10.5px;color:#c6a56b;line-height:1.4}
+#pair-overlay .code-inp{font-size:16px;letter-spacing:.06em}
+#pair-overlay .btn-row{justify-content:center}
+#pair-overlay .btn-row>.btn{flex:1;min-width:0}
+#pair-overlay .btn-row>.btn[disabled]{opacity:.55;cursor:progress}
+@media(max-width:820px){
+  #bottomnav a{min-width:0;flex:1 1 0;white-space:nowrap;padding-inline:0}
+  #bottomnav a svg{width:21px;height:21px}
+}
+@media(max-width:390px){
+  #bottomnav a{font-size:9px;gap:4px}
+  #bottomnav a svg{width:20px;height:20px}
+  #pair-overlay .pin-card{padding:21px 17px}
+  #pair-overlay .code-inp{font-size:14px;letter-spacing:.04em}
+  #pair-overlay .pair-settings-btn{min-width:74px;font-size:11px}
+}
