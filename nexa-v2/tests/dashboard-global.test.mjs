@@ -52,7 +52,7 @@ test('Posiciones: captura orígenes IDCA SPOT GRID AMA, sin contar reservas AMA'
  const html=renderPositions(connected);
  assert.match(html,/data-manage-cycle="55"/);
  assert.match(html,/data-ui="positionFilter:idca"/);
- assert.match(html,/Capital/);
+ assert.match(html,/data-inspect="idca:cycles:0"/);
 });
 test('Inicio sin conexión: no atribuir ganancias ni saldos no verificados',()=>{
  const disconnected={...connected,authenticated:false,data:{marketPairs:{},portfolio:{state:'unavailable',data:{summary:null}}},enginesData:{}};
