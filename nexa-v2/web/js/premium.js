@@ -332,11 +332,11 @@ function gridCards(d,mode){
  const visual=`<div class="nxp-grid-map">
     <div class="nxp-grid-scale"><span>Precio</span><span>Acción / estado</span></div>
     ${last.length?last.map(x=>`<div class="nxp-grid-level ${x.side==='BUY'?'buy':'sell'}">
-      <span>${money(x.price)}</span><i></i><strong>${value(x.side)}</strong><small>${value(x.state)}</small></div>`).join(''):
+      <span>${money(x.price)}</span><i></i><strong>${value(x.side)}</strong><small>${value(first(x,'state','status'))}</small></div>`).join(''):
     `<div class="nxp-grid-placeholder">Los niveles aparecerán aquí con sus precios, lados y objetivos reales.</div>`}
    </div>`;
- const blocks=twoValueGrid([['Capital previsto',money(first(st,'capitalBudgetUsd'))],
- ['Capital usado',money(first(st,'capitalUsedUsd'))],['Ciclos',num(st.activeCyclesCount)?st.activeCyclesCount:cycles.length],
+ const blocks=twoValueGrid([['Capital previsto',money(first(st,'capitalBudgetUsd','capitalAvailableUsd'))],
+ ['Capital usado',money(first(st,'capitalUsedUsd','capitalReservedUsd'))],['Ciclos',num(first(st,'activeCyclesCount','openCycles'))?first(st,'activeCyclesCount','openCycles'):cycles.length],
  ['Maker-only',st.makerOnly===true?'Sí':st.makerOnly===false?'No':'—']]);
  if(mode==='basic')return `${blocks}${visual}`;
  const open=cycles.filter(c=>c.status!=='closed');
@@ -347,7 +347,7 @@ function gridCards(d,mode){
   <section class="nxp-terminal-panel">${section('CICLOS','En seguimiento')}
    <div class="nxp-grid-cycles">${open.slice(0,8).map(c=>`<div class="nxp-grid-cycle">
      <span>${value(c.id)}</span><b>${money(first(c,'buyPrice'))} <i>→</i> ${money(first(c,'sellTargetPrice','sellTarget'))}</b>
-     <small>${value(c.status)} · ${value(first(c,'rangeVersionId','rangeVersion'))}</small></div>`).join('')||`<p class="nxp-panel-empty">No hay ciclos verificados en la respuesta.</p>`}</div>
+     <small>${value(first(c,'status','sellState'))} · ${value(first(c,'rangeVersionId','rangeVersion'))}</small></div>`).join('')||`<p class="nxp-panel-empty">No hay ciclos verificados en la respuesta.</p>`}</div>
    <div class="nxp-inline">Rangos anteriores con SELL: <b>${legacy.length||'0'}</b></div></section></div>`;
 }
 function spotCards(d,mode){
@@ -414,7 +414,7 @@ function engineSummary(ctx,id,d){
  idca:[['PnL',pnl(first(s,'realizedPnlUsd','realizedPnl'))],
  ['Ciclos',value(first(s,'activeCyclesCount','activeCycles'))],
  ['Capital',money(first(s,'capitalUsedUsd','capitalUsed'))]],
- grid:[['Capital',money(first(st,'capitalUsedUsd'))],['Ciclos',num(st.activeCyclesCount)?st.activeCyclesCount:Array.isArray(d.cycles)?d.cycles.length:'—'],['Par',value(st.pair)]],
+ grid:[['Capital',money(first(st,'capitalUsedUsd','capitalReservedUsd'))],['Ciclos',num(first(st,'activeCyclesCount','openCycles'))?first(st,'activeCyclesCount','openCycles'):Array.isArray(d.cycles)?d.cycles.length:'—'],['Par',value(st.pair)]],
  spot:[['Posiciones',Array.isArray(d.positions)?d.positions.length:'—'],['Estrategia',value(st.strategy)],['Fuente',value(st.dataExchange)]],
  ama:[['Presupuesto',money(d.portfolio?.budgetUsd)],['Reservado',money(d.portfolio?.reservedUsd)],['Mandato',value(d.mandate?.status)]]
  }[id]||[];

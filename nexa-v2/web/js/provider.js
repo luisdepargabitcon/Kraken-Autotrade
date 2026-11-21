@@ -5,7 +5,9 @@
 import { CONFIG } from './config.js';
 import { apiFetch, session } from './auth.js';
 import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder,
-         normGridCycle, normMarket, normEvent, wrap } from './adapters.js';
+         normGridCycle, normGridStatus, normAmaStatus, normAmaMandate,
+         normPortfolioSummary, normMarket, normEvent,
+         wrap, unwrap } from './adapters.js';
 import { freshness } from './util.js';
 
 function pathOf(route){
@@ -24,6 +26,7 @@ async function get(route, {params} = {}){
         ...(session.get()? {'Authorization':`Bearer ${session.get().token}`}:{}) },
     });
     let data=null; try{ data=await r.json(); }catch{}
+    data = unwrap(data);
     if(r.status===401) return { data:null, state:'auth_required', status:r.status, latency:Date.now()-t0 };
     if(r.status===403) return { data:null, state:'forbidden', status:r.status, latency:Date.now()-t0 };
     if(!r.ok) return { data:null, state:'error', status:r.status, latency:Date.now()-t0 };
@@ -40,14 +43,22 @@ export function createApiProvider(){
   return {
     kind:'api',
     async idca(){
-      const [summary, controls, cycles, orders, history] = await Promise.all([
+      const [summary, controls, cycles, orders, history, pairs] = await Promise.all([
         get(ROUTES.idca.summary), get(ROUTES.idca.controls),
         get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
+        get(ROUTES.idca.pairs),
       ]);
       const worst = [summary,controls].find(r=>r.state!=='ok');
+      const status = wrap(controls.data, normEngineStatus);
+      if(status.data){
+        // 'controls' no trae modo: el modo real del motor vive en summary.
+        if(status.data.mode==null) status.data.mode = summary.data?.mode || summary.data?.schedulerMode || null;
+        const cfgs = list(pairs.data);
+        if(cfgs.length) status.data.assetPairs = cfgs.map(x=>({pair:x.pair, enabled:x.enabled}));
+      }
       return {
         state: worst ? st(worst.state) : 'ok',
-        status: wrap(controls.data, normEngineStatus),
+        status,
         summary: wrap(summary.data, normIdcaSummary),
         cycles: wrap(list(cycles.data).map(normIdcaCycle).filter(Boolean), x=>x, {ts:Date.now()}),
         orders: wrap(list(orders.data).map(normOrder).filter(Boolean), x=>x, {ts:Date.now()}),
@@ -60,7 +71,7 @@ export function createApiProvider(){
       const diag = await get(ROUTES.spot.diagnostics);
       return {
         state: pos.state==='ok'?'ok':st(pos.state),
-        status: wrap(diag.data, normEngineStatus),
+        status: wrap(diag.data, x=>x, {ts:Date.now()}),
         positions: wrap(list(pos.data), x=>x, {ts:Date.now()}),
         diagnostics: diag.data ?? null,
         latency: pos.latency,
@@ -73,7 +84,7 @@ export function createApiProvider(){
       ]);
       return {
         state: status.state==='ok'?'ok':st(status.state),
-        status: wrap(status.data, normEngineStatus),
+        status: wrap(status.data, normGridStatus),
         levels: wrap(list(levels.data), x=>x, {ts:Date.now()}),
         cycles: wrap(list(cycles.data).map(normGridCycle).filter(Boolean), x=>x, {ts:Date.now()}),
         events: wrap(list(events.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}),
@@ -81,16 +92,19 @@ export function createApiProvider(){
       };
     },
     async ama(){
-      const [status, mandate, tranches, cycles] = await Promise.all([
+      const [status, mandate, tranches, cycles, readiness, portfolio] = await Promise.all([
         get(ROUTES.ama.status), get(ROUTES.ama.mandate),
         get(ROUTES.ama.tranches), get(ROUTES.ama.cycles),
+        get(ROUTES.ama.readiness), get(ROUTES.ama.portfolio),
       ]);
       return {
         state: status.state==='ok'?'ok':st(status.state),
-        status: wrap(status.data, normEngineStatus),
-        mandate: wrap(mandate.data, x=>x, {ts:Date.now()}),
+        status: wrap(status.data, normAmaStatus),
+        mandate: wrap(mandate.data, normAmaMandate, {ts:Date.now()}),
         tranches: wrap(list(tranches.data), x=>x, {ts:Date.now()}),
         cycles: wrap(list(cycles.data), x=>x, {ts:Date.now()}),
+        readiness: wrap(readiness.data, x=>x, {ts:Date.now()}),
+        portfolio: wrap(portfolio.data, x=>x, {ts:Date.now()}),
         latency: status.latency,
       };
     },
@@ -104,7 +118,7 @@ export function createApiProvider(){
       ]);
       return {
         state: summary.state==='ok'?'ok':st(summary.state),
-        summary: wrap(summary.data, x=>x, {ts:Date.now()}),
+        summary: wrap(summary.data, normPortfolioSummary, {ts:Date.now()}),
         holdings: wrap(list(holdings.data), x=>x, {ts:Date.now()}),
         latency: summary.latency,
       };

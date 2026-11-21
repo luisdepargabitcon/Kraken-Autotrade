@@ -53,7 +53,7 @@ export const ROUTES = {
     tranches:  'GET /ama/tranche-plan/current',
     cycles:    'GET /ama/cycles',
     portfolio: 'GET /ama/portfolio',
-    readiness: 'GET /ama/status.readiness',
+    readiness: 'GET /ama/readiness',
     actions: {
       setMode:    'POST /ama/mode {mode}',
       killSwitch: 'POST /ama/kill-switch',
@@ -90,14 +90,22 @@ export const ROUTES = {
 
 // ---------- Normalización defensiva ----------
 const pick = (o, ...keys) => { for(const k of keys){ const v = o?.[k]; if(v!==undefined && v!==null) return v; } return null; };
-const num = v => (typeof v==='number' && Number.isFinite(v)) ? v : null;
+// El bot devuelve importes como string decimal ("2400.00"): se parsean, nunca se inventan.
+const num = v => {
+  const n = typeof v==='string' && v.trim()!=='' ? Number(v) : v;
+  return (typeof n==='number' && Number.isFinite(n)) ? n : null;
+};
+// Respuestas del bot con envoltura {success,data,timestamp}: se desenvuelve el payload real.
+export const unwrap = raw =>
+  (raw && typeof raw==='object' && !Array.isArray(raw) && 'data' in raw && 'success' in raw)
+    ? raw.data : raw;
 
 export function normEngineStatus(raw){
   if(!raw || typeof raw!=='object') return null;
   return {
     mode: pick(raw,'mode','executionMode','state'),
-    enabled: pick(raw,'enabled','active','isEnabled'),
-    tickAt: pick(raw,'lastTickAt','tickAt','lastUpdate','updatedAt','timestamp'),
+    enabled: pick(raw,'enabled','active','isEnabled','institutionalDcaEnabled','normalBotEnabled'),
+    tickAt: pick(raw,'lastTickAt','tickAt','lastUpdate','updatedAt','timestamp','lastUpdated'),
     globalTradingPause: pick(raw,'globalTradingPause','paused','globalPause'),
     emergency: pick(raw,'emergency','emergencyActive'),
     source:'api', ts: Date.now(),
@@ -108,17 +116,18 @@ export function normIdcaSummary(raw){
   if(!raw || typeof raw!=='object') return null;
   return {
     pairs: raw.pairs || raw.assetConfigs || null,
-    capitalAllocated: num(pick(raw,'capitalAllocated','allocated','totalCapital')),
-    capitalUsed: num(pick(raw,'capitalUsed','used','capitalInUse')),
-    capitalFree: num(pick(raw,'capitalFree','free','available')),
-    realizedPnl: num(pick(raw,'realizedPnl','pnlRealized','realized')),
-    unrealizedPnl: num(pick(raw,'unrealizedPnl','pnlUnrealized','unrealized')),
-    activeCycles: pick(raw,'activeCycles','openCycles','cycles'),
+    mode: pick(raw,'mode','schedulerMode'),
+    capitalAllocated: num(pick(raw,'capitalAllocated','allocatedCapitalUsd','allocatedUsd','allocated','totalCapital')),
+    capitalUsed: num(pick(raw,'capitalUsed','capitalUsedUsd','used','capitalInUse')),
+    capitalFree: num(pick(raw,'capitalFree','capitalFreeUsd','free','available')),
+    realizedPnl: num(pick(raw,'realizedPnl','realizedPnlUsd','pnlRealized','realized')),
+    unrealizedPnl: num(pick(raw,'unrealizedPnl','unrealizedPnlUsd','pnlUnrealized','unrealized')),
+    activeCycles: pick(raw,'activeCyclesCount','activeCycles','liveCyclesCount','openCycles','cycles'),
     buysToday: num(pick(raw,'buysToday','purchasesToday')),
     sellsToday: num(pick(raw,'sellsToday','salesToday')),
     strategyScore: num(pick(raw,'strategyScore','score','entryScore')),
-    trailingActive: pick(raw,'trailingActive','trailing'),
-    smartMode: pick(raw,'smartMode','smart'),
+    trailingActive: pick(raw,'trailingActiveCount','trailingActive','trailing'),
+    smartMode: pick(raw,'smartModeEnabled','smartMode','smart'),
     ts: Date.now(),
   };
 }
@@ -128,23 +137,27 @@ export function normIdcaCycle(raw){
   return {
     id: pick(raw,'id','cycleId'),
     pair: pick(raw,'pair','symbol','asset'),
+    mode: pick(raw,'mode'),
     startedAt: pick(raw,'startedAt','openedAt','createdAt','startTs'),
-    buys: num(pick(raw,'buys','numBuys','purchases')),
+    buys: num(pick(raw,'buys','buyCount','numBuys','purchases')),
     anchor: num(pick(raw,'anchor','cycleAnchor','anchorPrice')),
     entryBase: num(pick(raw,'entryBase','baseEntry','base')),
-    avgPrice: num(pick(raw,'avgPrice','averagePrice','meanPrice')),
-    qty: num(pick(raw,'qty','quantity','amount')),
-    capitalUsed: num(pick(raw,'capitalUsed','capital','invested')),
+    avgPrice: num(pick(raw,'avgPrice','avgEntryPrice','averagePrice','meanPrice')),
+    qty: num(pick(raw,'qty','totalQuantity','quantity','amount')),
+    capitalUsed: num(pick(raw,'capitalUsed','capitalUsedUsd','capital','invested')),
+    capitalReserved: num(pick(raw,'capitalReservedUsd','capitalReserved')),
+    currentPrice: num(pick(raw,'currentPrice','lastPrice')),
     marketValue: num(pick(raw,'marketValue','value')),
-    pnlUsd: num(pick(raw,'pnlUsd','pnl','profitUsd')),
-    pnlPct: num(pick(raw,'pnlPct','pnlPercent','profitPct')),
-    pnlNet: num(pick(raw,'pnlNet','netPnl')),
+    pnlUsd: num(pick(raw,'pnlUsd','unrealizedPnlUsd','realizedPnlUsd','pnl','profitUsd')),
+    pnlPct: num(pick(raw,'pnlPct','unrealizedPnlPct','pnlPercent','profitPct')),
+    pnlNet: num(pick(raw,'pnlNet','realizedPnlUsd','netPnl')),
     drawdown: num(pick(raw,'drawdown','dd')),
-    tpTarget: num(pick(raw,'tpTarget','targetTp','tp')),
+    tpTarget: num(pick(raw,'tpTarget','tpTargetPrice','targetTp','tp')),
+    tpTargetPct: num(pick(raw,'tpTargetPct')),
     tpBase: pick(raw,'tpBase','tpRef'),
     nextEntry: num(pick(raw,'nextEntry','nextBuy','nextDca')),
     breakEven: pick(raw,'breakEven','be'),
-    trailing: pick(raw,'trailing','trailingStop'),
+    trailing: pick(raw,'trailing','trailingPct','trailingStop'),
     timeStop: pick(raw,'timeStop','timeStopRule'),
     status: pick(raw,'status','state'),
   };
@@ -158,13 +171,13 @@ export function normOrder(raw){
     ts: pick(raw,'ts','timestamp','executedAt','createdAt'),
     side: pick(raw,'side','type'),
     type: pick(raw,'orderType','execType','kind'),
-    price: num(pick(raw,'price','avgPrice','fillPrice')),
+    price: num(pick(raw,'price','avgPrice','fillPrice','avgFillPrice')),
     qty: num(pick(raw,'qty','quantity','volume','amount')),
-    value: num(pick(raw,'value','notional','cost')),
-    fee: num(pick(raw,'fee','commission')),
-    slippage: num(pick(raw,'slippage','slippagePct','slip')),
-    reason: pick(raw,'reason','motivo','cause','trigger'),
-    result: pick(raw,'result','outcome'),
+    value: num(pick(raw,'value','netValueUsd','grossValueUsd','notional','cost')),
+    fee: num(pick(raw,'fee','feesUsd','commission')),
+    slippage: num(pick(raw,'slippage','slippageUsd','slippagePct','slip')),
+    reason: pick(raw,'humanReason','reason','triggerReason','motivo','cause','trigger'),
+    result: pick(raw,'result','executionStatus','outcome'),
   };
 }
 
@@ -172,17 +185,63 @@ export function normGridCycle(raw){
   if(!raw || typeof raw!=='object') return null;
   return {
     id: pick(raw,'id','cycleId'),
+    cycleNumber: num(pick(raw,'cycleNumber')),
     pair: pick(raw,'pair','symbol'),
-    buyQty: num(pick(raw,'buyQty','qty','buyAmount')),
-    sellQty: num(pick(raw,'sellQty','targetQty')),
+    buyQty: num(pick(raw,'buyQty','quantity','qty','buyAmount')),
+    sellQty: num(pick(raw,'sellQty','targetSellQuantity','targetQty')),
     buyPrice: num(pick(raw,'buyPrice','fillPrice','entryPrice')),
-    sellTarget: num(pick(raw,'sellTarget','targetPrice','sellPrice')),
+    sellTarget: num(pick(raw,'sellTarget','targetSellPrice','targetPrice','sellPrice')),
     buyTs: pick(raw,'buyTs','buyAt','filledAt'),
     sellState: pick(raw,'sellState','state','status'),
-    fees: num(pick(raw,'fees','fee','commission')),
-    pnl: num(pick(raw,'pnl','profit')),
-    rangeVersion: pick(raw,'rangeVersion','range'),
+    fees: num(pick(raw,'fees','feeTotalUsd','fee','commission')),
+    pnl: num(pick(raw,'pnl','netPnlUsd','grossPnlUsd','profit')),
+    rangeVersion: pick(raw,'rangeVersion','rangeVersionId','range'),
   };
+}
+
+// Estado GRID: conserva los campos reales del bot y añade claves canónicas.
+export function normGridStatus(raw){
+  const s = normEngineStatus(raw);
+  if(!s) return null;
+  return { ...raw, ...s,
+    rangeStatus: pick(raw,'activeRangeStatus','rangeStatus'),
+    rangeVersion: num(pick(raw,'activeRangeVersionNumber')),
+    openLevels: num(pick(raw,'openLevels')),
+    plannedLevels: num(pick(raw,'plannedLevelsCount')),
+    openCycles: num(pick(raw,'openCycles','globalOpenCyclesCount')),
+    netPnl: num(pick(raw,'totalNetPnlUsd','netPnlUsd')),
+    capitalReserved: num(pick(raw,'capitalReservedUsd')),
+    capitalAvailable: num(pick(raw,'capitalAvailableUsd')),
+    pumpDump: pick(raw,'pumpDumpState'),
+    circuitBreaker: pick(raw,'circuitBreakerOpen'),
+  };
+}
+
+// Estado AMA: idéntica preservación; mode y state son reales y distintos.
+export function normAmaStatus(raw){
+  const s = normEngineStatus(raw);
+  if(!s) return null;
+  return { ...raw, ...s,
+    operationalState: pick(raw,'state'),
+    killSwitch: pick(raw,'killSwitchActive'),
+  };
+}
+
+// Cartera consolidada: claves canónicas calculadas desde la respuesta real.
+export function normPortfolioSummary(raw){
+  if(!raw || typeof raw!=='object') return null;
+  return { ...raw,
+    navUsd: num(pick(raw,'navUsd','totalValueUsd')),
+    exposureUsd: num(pick(raw,'exposureUsd','deployedUsd','totalDeployedUsd')),
+    realizedPnlUsd: num(pick(raw,'realizedPnlUsd','totalRealizedPnlUsd')),
+    unrealizedPnlUsd: num(pick(raw,'unrealizedPnlUsd','totalUnrealizedPnlUsd')),
+    holdUsd: num(pick(raw,'holdUsd')),
+  };
+}
+
+export function normAmaMandate(raw){
+  if(!raw || typeof raw!=='object') return null;
+  return { ...raw, id: pick(raw,'id','mandateId') };
 }
 
 export function normMarket(raw){
@@ -193,7 +252,7 @@ export function normMarket(raw){
     bid: num(pick(raw,'bid','bestBid')),
     ask: num(pick(raw,'ask','bestAsk')),
     change24h: num(pick(raw,'change24h','pct24h','change')),
-    volume: num(pick(raw,'volume','vol','vol24h')),
+    volume: num(pick(raw,'volume','volume24h','vol','vol24h')),
     candles: raw.candles || raw.ohlcv || null,
     indicators: raw.indicators || null,
     provider: pick(raw,'provider','source','exchange'),
@@ -207,7 +266,8 @@ export function normEvent(raw){
     ts: pick(raw,'ts','timestamp','createdAt'),
     level: pick(raw,'level','severity','sev'),
     engine: pick(raw,'engine','motor','source'),
-    msg: pick(raw,'msg','message','text','summary'),
+    type: pick(raw,'eventType','type'),
+    msg: pick(raw,'msg','naturalMessage','message','text','summary'),
     detail: pick(raw,'detail','details','payload'),
   };
 }

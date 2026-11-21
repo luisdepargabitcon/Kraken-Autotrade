@@ -18,6 +18,7 @@ const READ_ROUTES = [
   /^\/api\/ama\/cycles\/[0-9]+$/,
   /^\/api\/open-positions$/,
   /^\/api\/positions\/smart-exit-diagnostics$/,
+  /^\/api\/positions\/smart-exit-diagnostics$/,
   /^\/api\/portfolio\/(?:summary|holdings|ledger|reservations|inventory|budgets|health|snapshots)$/,
   /^\/api\/balances\/all$/,
   /^\/api\/prices\/portfolio$/,
