@@ -10,6 +10,7 @@ import { esc, fmtAge } from './util.js';
 import { clear, h, badge, openModal } from './ui.js';
 import { showRecordInspector } from './inspector.js';
 import * as S from './screens.js';
+import * as D from './dashboard.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
 if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.add('nexa-native');
@@ -18,7 +19,7 @@ if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.ad
 const state = {
   mode: localStorage.getItem('nexa.mode') || 'pro',      // basic | pro  (solo presentación)
   screen: 'home',
-  ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD',
+  ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all',
     activityFilter:{ sev:'all', engine:'all' } },
   provider: createApiProvider(),
   online: navigator.onLine !== false,
@@ -61,8 +62,8 @@ window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.has
 // ---------- Datos ----------
 async function loadData(){
   const p = state.provider;
-  const [idca, spot, grid, ama, market, portfolio, activity, fisco] = await Promise.all([
-    p.idca(), p.spot(), p.grid(), p.ama(), p.market(state.ui.marketPair),
+  const [idca, spot, grid, ama, btcMarket, ethMarket, portfolio, activity, fisco] = await Promise.all([
+    p.idca(), p.spot(), p.grid(), p.ama(), p.market('BTC/USD'), p.market('ETH/USD'),
     p.portfolio(), p.activity(), p.fisco(),
   ]);
   const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
@@ -87,8 +88,13 @@ async function loadData(){
   const gd=state.enginesData.grid.data,ad=state.enginesData.ama.data,id=state.enginesData.idca.data;
   push(gd?.events,'grid');push(ad?.trace?.decisions,'ama');push(id?.events,'idca');
   feed.sort((a,b)=>new Date(b.ts||0)-new Date(a.ts||0));
+  const marketPairs={
+    'BTC/USD':{state:btcMarket.state,data:btcMarket.market?.data??null},
+    'ETH/USD':{state:ethMarket.state,data:ethMarket.market?.data??null},
+  };
   state.common = {
-    market: { state: market.state, data: market.market?.data ?? null },
+    marketPairs,
+    market: marketPairs[state.ui.marketPair]||marketPairs['BTC/USD'],
     portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? [], ledger: portfolio.ledger?.data ?? [], reservations: portfolio.reservations?.data ?? [], budgets: portfolio.budgets?.data ?? null, inventory: portfolio.inventory?.data ?? [] } },
     activity: { state: activity.state, data: { events: feed } },
     fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note },
@@ -119,7 +125,10 @@ function render(){
   };
   ctx.ctxBridge();
   let html='';
-  if(state.screen==='home') html = S.renderHome(ctx);
+  if(state.screen==='home') html = D.renderDashboard(ctx);
+  else if(state.screen==='positions') html = D.renderPositions(ctx);
+  else if(state.screen==='asset') html = D.renderAsset(ctx);
+  else if(state.screen==='manage-idca') html = D.renderCycleManager(ctx);
   else if(state.screen==='market') html = S.renderMarket(ctx);
   else if(state.screen==='engines') html = S.renderEngine(ctx);
   else if(state.screen==='portfolio') html = S.renderPortfolio(ctx);
@@ -236,6 +245,48 @@ function openAction(actionId, params){
       ? `<span class="pos">Aceptada (HTTP ${r.status||200})</span>`
       : `<span class="neg">Rechazada: ${esc(r.error||'error')}${r.status?` (HTTP ${r.status})`:''}</span>`;
     if(r.ok) setTimeout(()=>{ modal.close(); loadData().then(render); }, 1200);
+  });
+}
+
+// Registro de una compra EXTERNA YA EJECUTADA. No coloca órdenes en el exchange.
+function openManualBuyForm(cycleId){
+  const cycle=state.enginesData.idca?.data?.cycles?.find(c=>String(c.id)===String(cycleId));
+  if(!cycle)return openModal('<h3>Ciclo no disponible</h3><p>No se ha verificado el ciclo en esta lectura.</p>');
+  if(!canDo('idca.manualBuy'))return openModal('<h3>Acceso restringido</h3><p>Se necesita autorización IDCA para registrar compras.</p>');
+  const modal=openModal('<div class="nx-manual-form"><h2>Registrar compra externa · #'+esc(cycleId)+'</h2>'+
+    '<p>Solo úsalo para una compra <b>ya ejecutada</b> en el exchange. No es una orden de compra.</p>'+
+    '<label>Precio ejecutado USD <input type="number" id="nm-price" min="0.00000001" step="any"></label>'+
+    '<label>Cantidad de cripto <input type="number" id="nm-qty" min="0.00000001" step="any"></label>'+
+    '<label>Importe ejecutado USD <input type="number" id="nm-value" min="0.01" step="any"></label>'+
+    '<label>Comisiones USD <input type="number" id="nm-fee" min="0" step="any"></label>'+
+    '<label>Fecha y hora de ejecución <input type="datetime-local" id="nm-date"></label>'+
+    '<label>Exchange <select id="nm-exchange"><option value="">Seleccionar…</option>'+
+    '<option value="kraken">Kraken</option><option value="revolut_x">Revolut X</option>'+
+    '<option value="bit2me">Bit2Me</option><option value="manual_external">Externo/manual</option>'+
+    '<option value="other">Otro</option></select></label>'+
+    '<label>Referencia externa (opcional) <input id="nm-ref" type="text" maxlength="120"></label>'+
+    '<label>Nota (opcional) <input id="nm-note" type="text" maxlength="400"></label>'+
+    '<label class="nx-manual-ack"><input type="checkbox" id="nm-ack"> Confirmo que esta compra YA se ejecutó externamente.</label>'+
+    '<button type="button" class="btn danger" id="nm-submit">Revisar registro</button>'+
+    '<p id="nm-error" role="status"></p></div>');
+  const el=id=>modal.root.querySelector('#'+id);
+  el('nm-submit').addEventListener('click',()=>{
+    const price=Number(el('nm-price').value),quantity=Number(el('nm-qty').value),
+      notionalUsd=Number(el('nm-value').value),feesUsd=Number(el('nm-fee').value);
+    const date=el('nm-date').value,exchange=el('nm-exchange').value;
+    if(!el('nm-ack').checked||!date||!exchange||!(price>0)||!(quantity>0)||
+       !(notionalUsd>0)||!el('nm-fee').value.trim()||!Number.isFinite(feesUsd)||feesUsd<0){
+      el('nm-error').textContent='Introduce los datos reales de la ejecución y marca la confirmación.';return;
+    }
+    const executedAt=new Date(date);
+    if(!Number.isFinite(executedAt.getTime())){
+      el('nm-error').textContent='Fecha y hora no válidas.';return;
+    }
+    const payload={cycleId,pair:cycle.pair,price,quantity,notionalUsd,feesUsd,
+      executedAt:executedAt.toISOString(),exchange,
+      externalOrderId:el('nm-ref').value.trim(),note:el('nm-note').value.trim(),
+      continueAutomaticManagement:false};
+    modal.close();openAction('idca.manualBuy',payload);
   });
 }
 
@@ -554,6 +605,23 @@ async function loadMoreSpotHistory(button){
 document.addEventListener('click', e=>{
   // Ficha universal de lectura: selección de orden, venta, cierre, ciclo, nivel o evento.
   // Usa el registro del read-model vigente; no genera acciones de trading.
+  const asset = e.target.closest('[data-asset]');
+  if(asset){
+    e.preventDefault();const pair=asset.dataset.asset;
+    if(pair!=='BTC/USD'&&pair!=='ETH/USD')return;
+    state.ui.marketPair=pair;state.screen='asset';render();window.scrollTo?.(0,0);return;
+  }
+  const manage=e.target.closest('[data-manage-cycle]');
+  if(manage){
+    e.preventDefault();state.ui.cycleId=manage.dataset.manageCycle;
+    state.ui.engineId='idca';state.screen='manage-idca';render();window.scrollTo?.(0,0);return;
+  }
+  const subFromManager=e.target.closest('[data-engine-sub]');
+  if(subFromManager){e.preventDefault();state.ui.engineId='idca';
+    state.ui.subtab=subFromManager.dataset.engineSub;state.screen='engines';
+    render();window.scrollTo?.(0,0);return;}
+  const manual=e.target.closest('[data-manual-buy]');
+  if(manual){e.preventDefault();openManualBuyForm(manual.dataset.manualBuy);return;}
   const inspect = e.target.closest('[data-inspect]');
   if(inspect){ e.preventDefault(); showRecordInspector(state,inspect.dataset.inspect); return; }
   const nav = e.target.closest('[data-nav]');
@@ -572,6 +640,7 @@ document.addEventListener('click', e=>{
       }).catch(()=>{ state.common.market={state:'error',data:null};render(); });
       return;
     }
+    else if(k==='positionFilter')state.ui.positionFilter=v;
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
     render(); return;
