@@ -17,3 +17,5 @@ El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización de
 ## Diseño y autenticación Rev. 8
 - [Rediseño UX de NEXA y acceso PIN/Huella/Rostro sin usuario o contraseña](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md)
 - Cascade es responsable de checks C001–C102 y de compilar/probar nueva APK de verdad. Sin VPS/DB/trading/merge.
+
+- [Referencia visual Rev.10: Revolut X, Kraken Pro, Coinbase Advanced y especificación por pantalla](REFERENCIAS_UX_REV10_REVOLUT_KRAKEN_COINBASE.md). La experiencia Pro NO puede seguir siendo un acordeón del panel antiguo.
