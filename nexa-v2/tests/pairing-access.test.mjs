@@ -38,8 +38,11 @@ test('Código admite 24 caracteres o pegado con separadores',()=>{
   assert.ok(app.includes("replace(/[\\s-]/g") || app.includes("replace(/[\\s-]/g"));
   assert.match(pairing,/timeoutMs:12000/);
 });
-test('Ajustes figura en la barra móvil y no exige sesión',()=>{
-  assert.match(app,/const BOTTOM_NAV = \[[^\]]*'settings'/);
+test('Engranaje Ajustes permanente en cabecera; cinco destinos en pie',()=>{
+  assert.match(html,/id="settings-shortcut"/);
+  assert.match(html,/id="pair-config-toggle"/);
+  assert.match(app,/const BOTTOM_NAV = \['home','market','engines','portfolio','activity'\]/);
+  assert.doesNotMatch(app,/const BOTTOM_NAV = \[[^\]]*'settings'/);
   assert.match(app,/function openPairOverlay/);
   assert.match(app,/function syncPairServer/);
   assert.match(app,/pair-config-form.*addEventListener\('submit'/);
@@ -60,4 +63,23 @@ test('URLs antiguas http quedan borradas y servidores no HTTPS rechazados',()=>{
   assert.throws(()=>result.validateApiBase('https://usuario:clave@host/api'));
   assert.equal(result.setApiBase('https://nexa-5-250-184-18.nip.io/api'),
     'https://nexa-5-250-184-18.nip.io/api');
+});
+
+test('Vinculación mínima: un campo visible, nombre automático y pegar código',()=>{
+  const overlay=html.slice(html.indexOf('id="pair-overlay"'),html.indexOf('id="modal-root"'));
+  assert.match(overlay,/<h2>Conectar mi bot<\/h2>/);
+  assert.match(overlay,/id="pair-code"/);
+  assert.match(overlay,/id="pair-paste-btn"/);
+  assert.match(overlay,/id="pair-label" type="hidden"/);
+  assert.match(overlay,/id="pair-config-form"[^>]*hidden/);
+  assert.match(overlay,/id="pair-btn">Conectar<\/button>/);
+  assert.match(overlay,/id="pair-skip">Ahora no<\/button>/);
+  assert.doesNotMatch(overlay,/Introduce el código de un solo uso generado por el administrador/);
+});
+test('Error 403 en lenguaje claro, nunca texto crudo API',()=>{
+  assert.ok(app.includes('El código no es válido o ha caducado. Pide uno nuevo a Cascade.'));
+  assert.ok(app.includes('No se puede conectar. Comprueba el servidor en ⚙ Ajustes.'));
+  assert.ok(app.includes("navigator.clipboard.readText()"));
+  assert.ok(app.includes('Comprobando código…'));
+  assert.doesNotMatch(app,/Vinculación rechazada \(\$\{r\.status/);
 });
