@@ -11,7 +11,10 @@ export function validateApiBase(input){
   }
   return u.href.replace(/\/+$/,'');
 }
-let initial='/api';
+// Servidor HTTPS ya desplegado para este bot. Solo se utiliza como valor inicial
+// en Android; en web se mantiene /api en el mismo origen.
+export const DEFAULT_NEXA_API='https://nexa-5-250-184-18.nip.io/api';
+let initial=native?DEFAULT_NEXA_API:'/api';
 try{
   const saved=localStorage.getItem('nexa.apiBase');
   if(saved)initial=validateApiBase(saved);
