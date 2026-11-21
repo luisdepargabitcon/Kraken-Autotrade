@@ -11,14 +11,23 @@ export function validateApiBase(input){
   }
   return u.href.replace(/\/+$/,'');
 }
-const initial=localStorage.getItem('nexa.apiBase') || '/api';
+let initial='/api';
+try{
+  const saved=localStorage.getItem('nexa.apiBase');
+  if(saved)initial=validateApiBase(saved);
+}catch{
+  localStorage.removeItem('nexa.apiBase'); // Purge insecure URLs saved by older APKs.
+}
 if(qp.has('api')){
-  try{ localStorage.setItem('nexa.apiBase',validateApiBase(qp.get('api'))); }catch{
+  try{
+    initial=validateApiBase(qp.get('api'));
+    localStorage.setItem('nexa.apiBase',initial);
+  }catch{
     // Never persist an insecure unvalidated URL from a link.
   }
 }
 export const CONFIG={
-  apiBase:localStorage.getItem('nexa.apiBase') || initial,
+  apiBase:initial,
   mode:qp.get('test')==='1'?'test':'api',
   appVersion:'0.4.0',
   sessionKey:'nexa.session'
