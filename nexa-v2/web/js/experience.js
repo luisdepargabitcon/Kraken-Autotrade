@@ -147,7 +147,7 @@ export function renderPortfolioExperience(ctx,legacy){
   const missing=unavailable(ctx,'portfolio') || (!good(s.navUsd)&&!good(s.exposureUsd));
   const byAsset=ctx.data?.portfolio?.data?.holdings||[];
   return `<div class="nx-experience nx-portfolio">
-    <div class="nx-section-title"><div><span class="nx-eyebrow">PATRIMONIO</span><h2>Mi cartera</h2></div><span class="nx-meta">Kraken · Revolut X</span></div>
+    <div class="nx-section-title"><div><span class="nx-eyebrow">PATRIMONIO</span><h2>Mi cartera</h2></div><span class="nx-meta">Por activo y motor</span></div>
     ${missing?`${connectNotice('balances, posiciones y PnL de tu cartera')}<div class="nx-feature-preview"><span class="nx-eyebrow">PRIVACIDAD</span><p>Los balances y resultados no se sustituyen por ceros. Tu cartera aparece cuando se verifica la conexión.</p></div>`:
       `<section class="nx-wealth-hero"><span class="nx-eyebrow">VALOR DE CARTERA</span><div class="nx-wealth-number">${money(s.navUsd)}</div>
         <div class="nx-hero-stats">${stat('PnL realizado',signedMoney(s.realizedPnlUsd))}${stat('PnL no realizado',signedMoney(s.unrealizedPnlUsd))}${stat('Exposición',money(s.exposureUsd))}</div></section>
