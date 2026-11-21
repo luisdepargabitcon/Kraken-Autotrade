@@ -18,7 +18,7 @@
 
 Devin entra en SSH en el entorno del propietario, **sin copiar contraseñas ni credenciales a informes o GitHub**. Comprobar sin cambios:
 
-- `ss -lntp` y `systemctl --type=service --state=running`: quién ocupa los puertos 80, 443, 3020, 3000 y 3101.
+- Ejecutar `bash nexa-v2/bff/preflight-readonly.sh` (no modifica nada); `ss -lntp` y `systemctl --type=service --state=running`: quién ocupa los puertos 80, 443, 3020, 3000 y 3101.
 - `command -v node; node -v; command -v nginx; nginx -v; command -v certbot; certbot --version` y estado de firewall.
 - `df -h / /var`; no instalar dependencias si no hay espacio suficiente.
 - Contrastar los endpoints GET loopback con `curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<puerto>/api/health` y `.../api/institutional-dca/summary`; verificar realmente el puerto upstream. **No hacer POST ni llamadas de modificación al bot.**
@@ -94,3 +94,7 @@ Por HTTPS real:
 - El provider `web/js/provider.js` ya solicita FISCO real **solo** si el rol contiene `fisco:read`, que no se concede automáticamente.
 - Los tests `read-only-server.test.mjs` comprueban 405 a órdenes, 403 a rutas no autorizadas, challenge ECDSA, clave pública persistida y CORS, pero **no se ha demostrado su ejecución en VPS desde esta sesión**.
 - Recompilar APK después de cambios de `config.js` / `provider.js` si se quiere la protección HTTPS incorporada en el binario distribuido. La APK 0.4.0 existente NO contiene necesariamente estos parches posteriores.
+
+
+## 8. Riesgo independiente: acceso directo a la API antigua
+La nueva pasarela solo protege las peticiones que llegan por `https://5.250.184.18/api`. **NO protege automáticamente** la API que pudiera estar expuesta directamente por `http://5.250.184.18:3020`, `:3000` u otros puertos. Cascade debe comprobar desde una red externa si existen rutas mutables accesibles por esos puertos y reportar la exposición (sin ejecutarlas). No cerrar puertos ni modificar reglas de firewall del bot por esta orden sin autorización separada. Mantener la pasarela READ-ONLY no equivale a certificar que el backend antiguo sea seguro.
