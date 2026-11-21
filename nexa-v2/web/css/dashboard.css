@@ -146,3 +146,8 @@
 .nxh-global-idca button.danger{background:#4b2433;color:#ffbdc7;border-color:#99546a}
 .nxh-global-idca button:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:600px){.nxh-market-tile>.nxh-sparkline{height:37px}.nxh-corr-mini{gap:7px}.nxh-corr-mini>small{flex:0 0 100%;order:3}}
+
+.nxh-pro-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.nxh-pro-grid .nxh-metric{background:#12283f;border-color:#30577a}
+.nxh-pro-grid .nxh-metric strong{font-size:18px}
+@media(max-width:690px){.nxh-pro-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nxh-pro-grid .nxh-metric strong{font-size:15px}}
