@@ -176,8 +176,8 @@ export function idcaPanel(ctx){
     ]))}
     ${card('Controles del motor (protegidos)', `
       <div class="btn-row">
-        <button class="btn prot" data-action="idca.pauseGlobal" data-params="{&quot;pause&quot;:true}">Pausar / reanudar</button>
-        <button class="btn prot" data-action="idca.togglePair" data-params="{&quot;pair&quot;:&quot;BTC/USD&quot;,&quot;enabled&quot;:true}">Activar par</button>
+        ${typeof st.globalTradingPause==='boolean'?`<button class="btn prot" data-action="idca.pauseGlobal" data-params="${esc(JSON.stringify({pause:!st.globalTradingPause}))}">${st.globalTradingPause?'Reanudar IDCA':'Pausar IDCA'}</button>`:'<span class="tiny">Pausa global sin verificar</span>'}
+        ${(st.assetPairs||[]).filter(p=>typeof p.enabled==='boolean').map(p=>`<button class="btn prot" data-action="idca.togglePair" data-params="${esc(JSON.stringify({pair:p.pair,enabled:!p.enabled}))}">${p.enabled?'Desactivar':'Activar'} ${esc(p.pair)}</button>`).join('')}
         <button class="btn danger prot" data-action="idca.emergencyClose" data-params="{}">Cierre de emergencia</button>
       </div>
       <div class="tiny" style="margin-top:8px">Acciones protegidas: requieren una sesión autorizada y confirmación en el servidor.</div>`)}`;
@@ -242,10 +242,10 @@ export function idcaCycles(ctx){
         fmtPct(o.slippagePct), `<small>${esc(o.reason)}</small>`]),{minWidth:760}));
     const actions = `<div class="btn-row">
       <button class="btn prot" data-action="idca.cycleStatus" data-params='{"cycleId":"'+esc(c.id)+'","status":"paused"}'>Pausar ciclo</button>
-      <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'"}'>Compra manual</button>
-      <button class="btn prot" data-action="idca.soloSalida" data-params='{"cycleId":"'+esc(c.id)+'"}'>Solo salida</button>
+      <button class="btn prot" data-manual-buy="${esc(c.id)}">Registrar compra externa</button>
+      ${c.isImported===true ? `<button class="btn prot" data-action="idca.soloSalida" data-params="${esc(JSON.stringify({cycleId:c.id,soloSalida:!c.soloSalida}))}">${c.soloSalida?'Gestión completa':'Solo salida'}</button>` : ''}
       <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Cerrar posición</button>
-      <button class="btn danger prot" data-action="idca.deleteCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Eliminar ciclo</button></div>
+      ${c.isManualCycle===true ? `<button class="btn danger prot" data-action="idca.deleteCycle" data-params="${esc(JSON.stringify({cycleId:c.id}))}">Eliminar ciclo manual</button>` : ''}</div>
       <div class="tiny">Acciones sujetas a permisos y comprobación del servidor.</div>`;
     return card(head+core+anchors+prot+
       '<button class="btn nx-inspect-open" type="button" data-inspect="idca:cycles:'+index+'">Ver ficha completa del ciclo ↗</button>'+
