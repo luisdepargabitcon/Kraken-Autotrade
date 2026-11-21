@@ -30,7 +30,7 @@ const LABELS={
 };
 const TITLES={
  'idca:orders':'Orden IDCA','idca:history':'Ciclo cerrado IDCA','idca:cycles':'Ciclo IDCA',
- 'spot:trades':'Operación SPOT','spot:positions':'Posición SPOT',
+ 'spot:trades':'Operación del historial global (motor no atribuido)','spot:positions':'Posición SPOT',
  'grid:cycles':'Ciclo GRID','grid:levels.levels':'Nivel GRID',
  'grid:monitor.orderStates':'Orden GRID','grid:monitor.cancellations':'Cancelación GRID',
  'ama:trace.orders':'Orden AMA','ama:trace.tranches':'Tramo AMA',
