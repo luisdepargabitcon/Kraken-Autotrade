@@ -482,14 +482,16 @@ export function renderEnginePremium(ctx){
  return ctx.mode==='basic'?basicEngine(ctx,id,d):proEngine(ctx,id,d);
 }
 function allocationBars(rows,nameKey='asset'){
- if(!Array.isArray(rows)||!rows.length)return `<p class="nxp-panel-empty">No hay desglose disponible en esta lectura.</p>`;
- const sorted=rows.filter(x=>num(x.valueUsd??x.exposureUsd)).sort((a,b)=>(b.valueUsd??b.exposureUsd)-(a.valueUsd??a.exposureUsd)).slice(0,9);
- const sum=sorted.reduce((t,x)=>t+Math.max(0,x.valueUsd??x.exposureUsd),0);
+ if(!Array.isArray(rows)||!rows.length)return `<p class="nxp-panel-empty">No se han recibido valores por activo en esta lectura.</p>`;
+ const metric=x=>first(x,'valueUsd','currentValueUsd','exposureUsd');
+ const sorted=rows.filter(x=>num(metric(x))).sort((a,b)=>metric(b)-metric(a)).slice(0,9);
+ if(!sorted.length)return '<p class="nxp-panel-empty">Se recibieron activos, pero sin valoración en USD confirmada.</p>';
+ const sum=sorted.reduce((t,x)=>t+Math.max(0,metric(x)),0);
  return `<div class="nxp-allocation">${sorted.map(x=>{
-  const val=x.valueUsd??x.exposureUsd;
-  const ratio=sum>0?Math.max(0,Math.min(100,val/sum*100)):0;
-  return `<div class="nxp-alloc-row"><div><b>${value(x[nameKey]||x.engine||x.asset)}</b><span>${money(val)}</span></div>
-  <div class="nxp-track"><i style="width:${ratio}%"></i></div></div>`;}).join('')}</div>`;
+  const val=metric(x),ratio=sum>0?Math.max(0,Math.min(100,val/sum*100)):0;
+  return `<div class="nxp-alloc-row"><div><b>${value(x[nameKey]||x.engine||x.asset||x.currency||x.pair)}</b>
+   <span>${money(val)}</span></div><div class="nxp-track"><i style="width:${ratio}%"></i></div></div>`;
+ }).join('')}</div>`;
 }
 function basicPortfolio(ctx){
  const s=raw(ctx,'portfolio').summary||{},ready=goodCommon(ctx,'portfolio');
