@@ -251,42 +251,81 @@ export function idcaCycles(ctx){
   }).join('');
   return `<div class="grid">${cards||'<div class="na">Sin ciclos</div>'}</div>`;
 }
+
+const idcaKnownNum=v=>typeof v==='number'&&Number.isFinite(v);
+const idcaPlain=v=>v===null||v===undefined||v===''?NA:esc(String(v));
+const idcaSide=s=>String(s||'').toUpperCase()==='BUY'?'Compra':String(s||'').toUpperCase()==='SELL'?'Venta':'Operación';
+
 export function idcaHistory(ctx){
-  const h = ctx.data.history ?? [];
-  const totPnl = h.reduce((a,c)=>a+(c.realizedPnlUsd||0),0);
-  const wins = h.filter(c=>c.realizedPnlUsd>0).length, losses=h.filter(c=>c.realizedPnlUsd<0).length, neutral=h.length-wins-losses;
-  const summary = card('Historial IDCA', kv([
-    ['Ciclos cerrados', h.length],['Wins / losses / neutros', `${wins} / ${losses} / ${neutral}`],
-    ['PnL histórico', signed(totPnl, signedUsd(totPnl))],
-  ]));
-  const list = h.map(c=>expandable(
-    `<b>${esc(c.pair)}</b> · ${esc(c.id)} · ${badge(c.exitType||c.closeReason,'sim')} · ${signed(c.realizedPnlUsd,signedUsd(c.realizedPnlUsd))}`,
-    kv([
-      ['Modo', esc(c.mode)],['Entrada', fmtTs(c.startedAt)],['Salida', fmtTs(c.closedAt)],
-      ['Duración', duration(c.startedAt,c.closedAt)],['Compras', c.buyCount],
-      ['Capital invertido', fmtUsd(c.capitalUsedUsd)],
-      ['PnL neto', `${signedUsd(c.realizedPnlUsd)} · ${signedPct(c.realizedPnlPct)}`],
-      ['Tipo de cierre', esc(c.closeReason)],
-    ]) + expandable('Órdenes', table(
-      [{label:'ID'}],[(c.orders||[]).map(o=>[`<span class="mono">${esc(o)}</span>`])],{minWidth:200})),
-  )).join('');
-  const exp = ctx.mode==='pro'?`<div class="btn-row"><button class="btn" data-app="export-idca">Exportar CSV</button>
-    <span class="tiny" style="align-self:center">Filtro modo: simulación y live separados — sin mezcla.</span></div>`:'';
-  return `<div class="grid">${summary}<div class="grid">${list}</div>${exp}</div>`;
+ const items=Array.isArray(ctx.data.history)?ctx.data.history:[];
+ const known=items.filter(c=>idcaKnownNum(c.realizedPnlUsd));
+ const wins=known.filter(c=>c.realizedPnlUsd>0).length;
+ const losses=known.filter(c=>c.realizedPnlUsd<0).length;
+ const even=known.filter(c=>c.realizedPnlUsd===0).length;
+ const unknown=items.length-known.length;
+ const sum=known.length?known.reduce((n,c)=>n+c.realizedPnlUsd,0):null;
+ const summary=card('Resumen de ciclos cerrados',
+   kv([['Cerrados',items.length],['Ganados / perdidos',wins+' / '+losses],
+       ['Neutros / sin PnL confirmado',even+' / '+unknown],
+       ['PnL de ciclos con dato',sum===null?NA:signed(sum,signedUsd(sum))]])+
+   (unknown?'<p class="nx-idca-hint">Falta PnL verificado en '+unknown+' ciclo(s); el resultado mostrado no representa el total definitivo.</p>':''));
+ const renderCycle=c=>{
+   const result=idcaKnownNum(c.realizedPnlUsd)?signed(c.realizedPnlUsd,signedUsd(c.realizedPnlUsd)):NA;
+   const orders=Array.isArray(c.orders)?c.orders:[];
+   const head='<span class="nx-idca-history-pair">'+idcaPlain(c.pair)+' <small>#'+idcaPlain(c.id)+'</small></span>'+
+      '<span class="nx-idca-history-result">'+result+'</span><small>'+idcaPlain(c.closeReason||c.exitType||'Cierre sin tipo')+'</small>';
+   return '<details class="nx-idca-history-row"><summary>'+head+'</summary><div class="nx-idca-history-body">'+
+      kv([['Modo',idcaPlain(c.mode)],['Inicio',esc(fmtTs(c.startedAt))],
+         ['Cierre',c.closedAt?esc(fmtTs(c.closedAt)):NA],
+         ['Duración',c.startedAt&&c.closedAt?duration(c.startedAt,c.closedAt):NA],
+         ['Compras',idcaPlain(c.buyCount)],['Capital utilizado',fmtUsd(c.capitalUsedUsd)],
+         ['PnL neto',result],['Motivo',idcaPlain(c.closeReason)]])+
+      (orders.length?'<details class="exp"><summary>Órdenes del ciclo ('+orders.length+')</summary><div class="exp-body">'+
+          orders.map(o=>'<div class="nx-idca-order-ref">'+idcaPlain(typeof o==='object'?(o.id||o.orderId):o)+'</div>').join('')+
+          '</div></details>':'')+'</div></details>';
+ };
+ const list=items.slice(0,12).map(renderCycle).join('');
+ const rest=items.length>12?'<details class="nx-idca-rest"><summary>Ver otros '+(items.length-12)+' ciclos del historial</summary><div class="nx-idca-history-list">'+
+    items.slice(12).map(renderCycle).join('')+'</div></details>':'';
+ return '<div class="nx-idca-history">'+summary+
+    (items.length?'<div class="nx-idca-history-list">'+list+'</div>'+rest:
+      '<p class="nx-idca-hint">No se recibieron ciclos cerrados en esta lectura. Esto no confirma que el histórico completo esté vacío.</p>')+
+    '</div>';
 }
 export function idcaOrders(ctx){
-  const rows=(ctx.data.orders||[]).map(o=>[
-    esc(fmtTs(o.ts)), `<span class="mono">${esc(o.id)}</span>`, esc(o.cycleId),
-    `<b class="${o.side==='BUY'?'pos':'neg'}">${esc(o.side)}</b>`, esc(o.type),
-    fmtUsd(o.price), fmtQty(o.quantity), fmtUsd(o.valueUsd), fmtUsd(o.feeUsd),
-    fmtPct(o.slippagePct), badge(o.mode,'sim'), `<small>${esc(o.reason)}</small>`]);
-  const totBuy = (ctx.data.orders||[]).filter(o=>o.side==='BUY').reduce((a,o)=>a+o.valueUsd,0);
-  const totSell = (ctx.data.orders||[]).filter(o=>o.side==='SELL').reduce((a,o)=>a+o.valueUsd,0);
-  return card('Órdenes IDCA', `
-    ${kv([['Total compras', fmtUsd(totBuy)],['Total ventas', fmtUsd(totSell)]])}
-    ${table(
-      [{label:'Fecha'},{label:'ID'},{label:'Ciclo'},{label:'Lado'},{label:'Tipo'},{label:'Precio',num:1},{label:'Cant.',num:1},{label:'Valor',num:1},{label:'Fee',num:1},{label:'Slip%',num:1},{label:'Modo'},{label:'Motivo'}],
-      rows,{minWidth:940})}`);
+ const all=Array.isArray(ctx.data.orders)?ctx.data.orders:[];
+ const usable=all.filter(o=>idcaKnownNum(o.valueUsd)&&['BUY','SELL'].includes(String(o.side).toUpperCase()));
+ const missing=all.length-usable.length;
+ const group=side=>{
+   const matches=usable.filter(o=>String(o.side).toUpperCase()===side);
+   return matches.length?fmtUsd(matches.reduce((n,o)=>n+o.valueUsd,0)):'—';
+ };
+ const item=o=>{
+   const side=String(o.side||'').toUpperCase(),buy=side==='BUY',sell=side==='SELL';
+   const amount=idcaKnownNum(o.valueUsd)?fmtUsd(o.valueUsd):'Importe sin verificar';
+   return '<details class="nx-idca-trade"><summary><span class="nx-idca-trade-kind '+(buy?'is-buy':sell?'is-sell':'')+'">'+
+     idcaSide(side)+'</span><span class="nx-idca-trade-main"><b>'+amount+'</b><small>'+
+     esc(fmtTs(o.ts))+' · Ciclo #'+idcaPlain(o.cycleId)+'</small></span><span class="nx-idca-trade-chevron">⌄</span></summary>'+
+     '<div class="nx-idca-trade-detail">'+
+     kv([['Par',idcaPlain(o.pair)],['Orden',idcaPlain(o.id)],['Tipo',idcaPlain(o.type)],
+       ['Modo',idcaPlain(o.mode)],['Precio',fmtUsd(o.price)],
+       ['Cantidad',fmtQty(o.quantity)],['Valor bruto',fmtUsd(o.grossValueUsd)],
+       ['Valor neto',fmtUsd(o.netValueUsd)],['Comisión',fmtUsd(o.feeUsd)],
+       ['Deslizamiento USD',fmtUsd(o.slippageUsd)],
+       ['Deslizamiento %',fmtPct(o.slippagePct)],
+       ['Motivo',idcaPlain(o.reason)],['Estado',idcaPlain(o.status)]])+
+     '</div></details>';
+ };
+ const warn=missing?'<p class="nx-idca-hint">En '+missing+' operación(es) falta lado o importe bruto confirmado; no se han sumado como cero.</p>':'';
+ return '<div class="nx-idca-orders">'+
+   '<section class="nx-idca-trade-totals"><div><span>Compras registradas</span><strong>'+group('BUY')+'</strong></div>'+
+      '<div><span>Ventas registradas</span><strong>'+group('SELL')+'</strong></div>'+
+      '<small>'+all.length+' operaciones recibidas · importes brutos USD confirmados</small></section>'+warn+
+   (all.length?'<div class="nx-idca-trade-list">'+all.slice(0,15).map(item).join('')+'</div>'+
+     (all.length>15?'<details class="nx-idca-rest"><summary>Ver '+(all.length-15)+' operaciones más</summary>'+
+       '<div class="nx-idca-trade-list">'+all.slice(15).map(item).join('')+'</div></details>':''):
+     '<p class="nx-idca-hint">La API no ha enviado órdenes en esta lectura. No se presupone un histórico vacío.</p>')+
+   '</div>';
 }
 export function idcaHybrid(ctx){
   const h = ctx.data.hybrid ?? {};
@@ -298,13 +337,20 @@ export function idcaHybrid(ctx){
     ])+`<div class="tiny">${esc(h.note||'')}</div>`);
 }
 export function idcaConfig(ctx){
-  const rows=(ctx.data.configParams||[]).map(p=>[
-    `<span class="mono">${esc(p.key)}</span>`, esc(p.group), esc(String(p.stored)),
-    `<b>${esc(String(p.effective))}</b>`, esc(String(p.def)), esc(p.scope),
-    p.legacy?badge('legacy','warn'):'', `<small>${esc(p.reason||p.appliesTo||'')}</small>`]);
-  return card('Configuración IDCA — guardado vs efectivo', `
-    <div class="tiny" style="margin-bottom:8px">Columna «efectivo» = valor que usa el motor en su decisión; no solo el guardado.</div>
-    ${table([{label:'Param'},{label:'Grupo'},{label:'Guardado'},{label:'Efectivo'},{label:'Default'},{label:'Ámbito'},{label:'Legacy'},{label:'Nota'}],rows,{minWidth:820})}`);
+ const rows=Array.isArray(ctx.data.configParams)?ctx.data.configParams:[];
+ if(!rows.length)return card('Configuración efectiva IDCA',
+  '<p class="nx-idca-hint">La API no ha facilitado parámetros comparables «guardado / efectivo» en esta lectura. No se muestran tablas vacías ni se inventan valores.</p>');
+ const list=rows.map(p=>{
+   const val=x=>x===null||x===undefined?NA:esc(String(x));
+   return '<details class="nx-idca-param"><summary><b>'+val(p.key)+'</b><span>'+val(p.effective)+'</span></summary>'+
+     '<div class="nx-idca-param-detail">'+kv([['Grupo',val(p.group)],
+       ['Guardado',val(p.stored)],['Efectivo',val(p.effective)],
+       ['Predeterminado',val(p.def)],['Ámbito',val(p.scope)],
+       ['Legacy',p.legacy?'Sí':'No'],['Nota',val(p.reason||p.appliesTo)]])+'</div></details>';
+ }).join('');
+ return card('Configuración IDCA · guardado y efectivo',
+  '<p class="nx-idca-hint">Efectivo = valor aplicado por el motor; Guardado = valor almacenado. Toca un parámetro para abrir su detalle.</p>'+
+  '<div class="nx-idca-param-list">'+list+'</div>');
 }
 export function idcaAlerts(ctx){
   const a = ctx.data.alerts ?? {};
