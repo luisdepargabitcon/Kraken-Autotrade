@@ -296,22 +296,53 @@ function eventList(events,limit=6,origin=events){
   <small>${e.ts?esc(fmtTs(e.ts)):'—'}</small>
  </div>`).join('')}</div>`;
 }
+
+function idcaEntryCards(contexts,basic=false){
+ if(!contexts.length)return '<p class="nxp-panel-empty">No se ha recibido el diagnóstico de entrada por par. Esto NO confirma que falten señales: la pasarela puede no tener habilitada la ruta de lectura.</p>';
+ const human=v=>String(v??'Sin evaluar').replaceAll('_',' ');
+ return '<div class="nxp-entry-cards">'+contexts.map(x=>{
+  if(x.error||x.unavailable)return '<article class="nxp-entry-card nxp-entry-pending"><b>'+esc(x.pair||'Par')+
+   '</b><p>Datos de entrada no disponibles: '+esc(x.error||'sin lectura confirmada')+'</p></article>';
+  const drop=first(x,'dipDetectedPct','drawdownFromReferencePct'),
+    required=first(x,'requiredDipPct','requiredDistancePct'),score=first(x,'entryScore','confidenceScore');
+  const progress=num(drop)&&num(required)&&required>0?Math.max(0,Math.min(100,drop/required*100)):null;
+  const label=x.hardBlocked===true?'Entrada bloqueada':human(first(x,'entryDecision','decisionClass'));
+  const col=x.hardBlocked===true?'is-blocked':progress!==null&&progress>=100?'is-watch':'is-pending';
+  const state=x.trailingBuy?.state||x.reboundSignal||null;
+  const scoreLabel=num(score)?fmtNum(score,{dec:Number.isInteger(score)?0:1}):'—';
+  const family=x.scoreBreakdown&&typeof x.scoreBreakdown==='object'?Object.entries(x.scoreBreakdown).slice(0,7):[];
+  const scoreDetails=family.length?'<div class="nxp-entry-factors">'+family.map(([k,v])=>
+   '<span><b>'+esc(k)+'</b>: '+(num(v)?esc(fmtNum(v,{dec:1})):v&&typeof v==='object'?esc(String(v.score??v.value??'—')):value(v))+'</span>').join('')+'</div>':'';
+  return '<article class="nxp-entry-card '+col+'"><div class="nxp-entry-top"><div><b>'+esc(x.pair||'Par')+
+   '</b><strong>'+money(x.currentPrice)+'</strong></div><span class="nxp-entry-decision">'+esc(label)+'</span></div>'+
+   '<div class="nxp-entry-context"><span>Confianza <b>'+scoreLabel+
+     (x.confidenceGrade?' ('+esc(x.confidenceGrade)+')':'')+'</b></span>'+
+   '<span>Mercado <b>'+esc(human(x.regime||x.marketRegime))+'</b></span>'+
+   '<span>ATRP <b>'+ (num(x.atrpPct)?fmtPct(x.atrpPct):'—')+'</b></span></div>'+
+   '<div class="nxp-entry-drop"><div><span>Caída desde referencia</span><b>'+
+     (num(drop)?fmtPct(drop):'—')+' / '+(num(required)?fmtPct(required):'—')+
+     '</b></div><div class="nxp-entry-track"><i style="width:'+(progress??0)+'%"></i></div></div>'+
+   (!basic?'<div class="nxp-entry-extra"><span>Rebote <b>'+esc(human(state))+'</b></span>'+
+    '<span>Referencia <b>'+money(x.referencePrice)+'</b></span>'+
+    '<span>Fuente <b>'+esc(human(x.reference))+'</b></span>'+
+    (x.hardBlockers?.length?'<p>Bloqueos: '+esc(x.hardBlockers.map(String).join(' · '))+'</p>':'')+
+    scoreDetails+'</div>':'')+
+   '<small class="nxp-entry-note">Diagnóstico API. No equivale a una orden o autorización de compra.</small></article>';
+ }).join('')+'</div>';
+}
 function idcaPanel(d,mode){
  const {s,contexts,cycles,st}=idcaData(d);
  if(mode==='basic')return `<div class="nxp-strategy-simple">
   ${twoValueGrid([['Ciclos activos',value(first(s,'activeCyclesCount','activeCycles'))],['Capital en ciclos',money(first(s,'capitalUsedUsd','capitalUsed'))],
     ['PnL realizado',pnl(first(s,'realizedPnlUsd','realizedPnl'))],['Disponible',money(first(s,'capitalFreeUsd','capitalFree'))]])}
+  <div class="nxp-section-row">${section('MERCADO','Estado de entrada por par')}</div>
+  ${idcaEntryCards(contexts,true)}
   <div class="nxp-section-row">${section('EN SEGUIMIENTO','Ciclos de inversión')}</div>
   ${idcaCycleCards(cycles,2)}
  </div>`;
  return `<div class="nxp-pro-workspace">
   <section class="nxp-terminal-panel">${section('ENTRADAS','Lectura por par')}
-   <div class="nxp-pair-cards">${contexts.length?contexts.map(x=>`<article class="nxp-pair-card">
-    <div><b>${esc(x.pair||'Par')}</b>${chip(x.regime||x.mode||'Estado no verificado')}</div>
-    ${scoreGauge('Score de entrada',first(x,'entryScore'),first(x,'entryThreshold'))}
-    <div class="nxp-compact-meta">${meta('Precio',money(x.currentPrice))}${meta('Caída',pct(x.dipDetectedPct))}
-    ${meta('ATR',num(x.atr)?fmtNum(x.atr):'—')}${meta('Rebote',value(x.reboundSignal))}</div></article>`).join(''):
-    `<p class="nxp-panel-empty">Los contextos por par aún no están incluidos en esta lectura; el motor conservará sus reglas originales.</p>`}</div>
+   ${idcaEntryCards(contexts,false)}
   </section>
   <section class="nxp-terminal-panel">${section('CICLOS','Posiciones y protecciones')}
     ${idcaCycleCards(cycles,3)}
