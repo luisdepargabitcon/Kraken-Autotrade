@@ -36,18 +36,22 @@ const block=(label,v,cls='')=>`<div class="nxp-figure ${cls}"><span>${esc(label)
 const link=(target,label,cls='')=>`<button class="nxp-navlink ${cls}" data-nav="${esc(target)}">${esc(label)}<span aria-hidden="true">↗</span></button>`;
 const section=(ey,title,sub='')=>`<div class="nxp-heading">${eyebrow(ey)}<h2>${esc(title)}</h2>${sub?`<p>${esc(sub)}</p>`:''}</div>`;
 const code=v=>`<code>${value(v)}</code>`;
-function notice(kind,details){
- const title=kind==='auth'?'Vincula tu dispositivo':'Datos temporalmente inaccesibles';
- const why=kind==='auth'?'El panel de gestión necesita una sesión de este dispositivo, autorizada por el servidor.':
- 'No se han podido verificar los datos del backend. Se mantiene el estado sin inventar cifras ni operaciones.';
+function notice(ctx,details){
+ const registered=ctx.deviceEnrolled&&!ctx.repairRequired;
+ const title=registered?'Conexión temporalmente interrumpida':
+   ctx.authenticated?'Datos temporalmente inaccesibles':'Conecta tu móvil';
+ const why=registered?
+   'Este teléfono sigue autorizado. NEXA recuperará la sesión cuando vuelva la conexión; no necesitas otro código.':
+   ctx.authenticated?'No se han podido verificar los datos del backend. No se inventan cifras ni operaciones.':
+   'Para conectar este dispositivo por primera vez, introduce el código temporal.';
  return `<section class="nxp-connect" role="status"><div class="nxp-connect-icon">${ico('shield')}</div><div class="nxp-connect-main">
    ${eyebrow('Conexión privada')}<h3>${title}</h3><p>${why}</p>
    ${details?`<p class="nxp-connect-detail">${esc(details)}</p>`:''}
-   <div class="nxp-actions"><button data-app="pair-device" class="nxp-primary">Vincular NEXA</button>
+   <div class="nxp-actions"><button data-app="${registered?'refresh':'pair-device'}" class="nxp-primary">${registered?'Reintentar conexión':'Conectar NEXA'}</button>
      <button data-app="settings-api" class="nxp-secondary">Servidor seguro</button></div>
  </div></section>`;
 }
-function offline(ctx,topic){return notice(ctx.authenticated?'api':'auth',topic);}
+function offline(ctx,topic){return notice(ctx,topic);}
 function noDataFrame(title,more=''){
  return `<div class="nxp-emptychart"><div class="nxp-graphline" aria-hidden="true">
   <span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -87,7 +91,7 @@ function engineCard(ctx,e){
  return `<button class="nxp-engine-row" data-nav="engine:${esc(e.id)}">
  <span class="nxp-engine-glyph ${esc(e.id)}">${ico(e.id==='grid'?'grid':e.id==='ama'?'shield':'chart')}</span>
  <span class="nxp-engine-info"><b>${esc(NAMES[e.id]||e.name)}</b><small>${esc(DESCS[e.id]||e.desc||'')}</small></span>
- <span class="nxp-engine-balance ${moneyClass(result)}"><b>${pnl(result)}</b><small>${good?value(first(d.status,'mode','state')):(ctx.authenticated?'Sin datos':'Sin vincular')}</small></span>
+ <span class="nxp-engine-balance ${moneyClass(result)}"><b>${pnl(result)}</b><small>${good?value(first(d.status,'mode','state')):(ctx.deviceEnrolled?'Conexión pendiente':ctx.authenticated?'Sin datos':'Sin vincular')}</small></span>
  <span class="nxp-row-arrow">›</span></button>`;
 }
 function portfolioSummary(ctx){
@@ -98,12 +102,12 @@ function basicHome(ctx){
  const {s,connected}=portfolioSummary(ctx);
  const rows=(ctx.engineList||[]).map(e=>engineCard(ctx,e)).join('');
  return wrap(`<div class="nxp-basic-home">
-   <div class="nxp-home-greeting">${eyebrow('NEXA · Inicio')}<span>${connected?chip('Datos verificados','good'):chip('Sin vincular','warn')}</span></div>
+   <div class="nxp-home-greeting">${eyebrow('NEXA · Inicio')}<span>${connected?chip('Datos verificados','good'):chip(ctx.deviceEnrolled?'Conexión pendiente':'Sin vincular','warn')}</span></div>
    <section class="nxp-basic-balance"><span>${connected?'Mi patrimonio':'Tu centro de control'}</span>
     <h1>${connected?money(s.navUsd):'Un vistazo a todo tu bot.'}</h1>
     <p>${connected?'Tu actividad consolidada, sin mezclar reservas con resultados.':'Cuatro estrategias, una cartera y un acceso protegido.'}</p>
     ${connected?`<div class="nxp-pnl-pair">${block('PnL realizado',pnl(s.realizedPnlUsd),moneyClass(s.realizedPnlUsd))}${block('Sin realizar',pnl(s.unrealizedPnlUsd),moneyClass(s.unrealizedPnlUsd))}</div>`:
-      `<div class="nxp-actions"><button class="nxp-primary" data-app="pair-device">Vincular mi bot <b>↗</b></button></div>`}
+      `<div class="nxp-actions"><button class="nxp-primary" data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar mi bot'} <b>↗</b></button></div>`}
    </section>
    ${section('Tus estrategias','Motores automáticos')}
    <div class="nxp-engine-list">${rows}</div>
@@ -137,9 +141,9 @@ function proHome(ctx){
         <div class="nxp-vertical-stats">
          ${block('Exposición total',connected?money(s.exposureUsd):'—')}
          ${block('HOLD separado',connected?money(s.holdUsd):'—')}
-         ${block('Estado de sesión',ctx.authenticated?'Autorizada':'Sin vincular')}
+         ${block('Estado de sesión',ctx.authenticated?'Autorizada':ctx.deviceEnrolled?'Conexión pendiente':'Sin vincular')}
         </div>
-        ${!ctx.authenticated?`<button class="nxp-primary nxp-full" data-app="pair-device">Vincular dispositivo</button>`:''}
+        ${!ctx.authenticated?`<button class="nxp-primary nxp-full" data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar dispositivo'}</button>`:''}
        </section>
        <section class="nxp-terminal-panel">${section('EVENTOS','Actividad del bot')}
         ${ctx.authenticated&&Array.isArray(events)&&events.length?eventList(events,5):
@@ -462,8 +466,8 @@ export function renderEnginePremium(ctx){
   const head=engineHeader(ctx,id);
   if(ctx.mode==='basic')return wrap(`${head}<div class="nxp-basic-engine-unlinked">
     <div class="nxp-unlinked-symbol">${ico(id==='grid'?'grid':'chart')}</div>
-    <h2>${ctx.authenticated?'Sin datos verificados del motor':'Este motor aún no está vinculado'}</h2><p>${ctx.authenticated?'El servidor no ha devuelto un estado válido. Nada se asume todavía: ni parado, ni vacío, ni operando.':'Los ciclos, resultados y el estado real aparecerán tras autorizar el dispositivo. Nada se asume todavía.'}</p>
-    <button class="nxp-primary" data-app="${ctx.authenticated?'refresh':'pair-device'}">${ctx.authenticated?'Reintentar lectura':'Vincular dispositivo'}</button></div>`,'nxp-mode-basic nxp-engine');
+    <h2>${ctx.deviceEnrolled?'Conexión pendiente':ctx.authenticated?'Sin datos verificados del motor':'Conecta tu móvil'}</h2><p>${ctx.deviceEnrolled?'Este dispositivo sigue vinculado. Al volver Internet, NEXA recuperará la sesión sin pedir otro código.':ctx.authenticated?'El servidor no ha devuelto un estado válido; no se inventan operaciones.':'Los datos de los motores aparecerán cuando vincules por primera vez este dispositivo.'}</p>
+    <button class="nxp-primary" data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar dispositivo'}</button></div>`,'nxp-mode-basic nxp-engine');
   return wrap(`${head}${engineNav(ctx)}
    <div class="nxp-engine-layout"><div class="nxp-main-column">
      ${candleSurface(ctx,{title:'Mercado del motor'})}
@@ -554,7 +558,7 @@ export function renderFiscoPremium(ctx,legacy){
  if(!ready){
   return wrap(`${header}<div class="nxp-privacy-head">${ico('shield')}
     <div><h3>Tus datos fiscales permanecen protegidos</h3><p>Solo se mostrarán tras autorizar el dispositivo y obtener el permiso fiscal correspondiente. No se generan cálculos fiscales de ejemplo.</p>
-      <button data-app="pair-device" class="nxp-primary">Vincular acceso</button></div></div>
+      <button data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}" class="nxp-primary">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar acceso'}</button></div></div>
     <div class="nxp-privacy-steps">${meta('1 · Identidad','Dispositivo autorizado')}
       ${meta('2 · Acceso','Permiso FISCO')}${meta('3 · Informes','Datos verificados')}</div>
    </div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-fisco':'nxp-mode-pro nxp-fisco');
@@ -591,13 +595,13 @@ export function renderSettingsPremium(ctx,legacy){
  const content=`<div class="nxp-settings-compact">
   <div class="nxp-settings-status">
    <div class="nxp-settings-status-mark">${ico('shield')}</div>
-   <div><strong>${authorized?'Dispositivo autorizado':'Conecta tu móvil'}</strong>
-     <span>${authorized?'Sesión protegida · solo lectura':'Sin usuario ni contraseña. Solo necesitas un código temporal.'}</span></div>
-   ${chip(authorized?'Vinculado':'Pendiente',authorized?'good':'warn')}
+   <div><strong>${authorized?'Dispositivo autorizado':ctx.deviceEnrolled?'Dispositivo registrado':'Conecta tu móvil'}</strong>
+     <span>${authorized?'Sesión protegida · solo lectura':ctx.deviceEnrolled?'La conexión se recuperará automáticamente; no necesitas otro código.':'Sin usuario ni contraseña. Un código únicamente la primera vez.'}</span></div>
+   ${chip(authorized?'Conectado':ctx.deviceEnrolled?'Sin conexión':'Pendiente',authorized?'good':'warn')}
   </div>
   <div class="nxp-settings-options">
    ${option('shield','Servidor','Conexión HTTPS segura','settings-api')}
-   ${option('key',authorized?'Volver a vincular':'Conectar este móvil','Código temporal de un solo uso','pair-device')}
+   ${option('key',ctx.deviceEnrolled?'Reintentar conexión':'Conectar este móvil',ctx.deviceEnrolled?'Este teléfono ya está registrado':'Código temporal solo para primera vinculación',ctx.deviceEnrolled?'refresh':'pair-device')}
    <div class="nxp-settings-option nxp-settings-static">
     <span class="nxp-settings-option-icon">${ico('key')}</span>
     <span class="nxp-settings-option-copy"><strong>PIN y biometría</strong><small>Desbloqueo local del dispositivo</small></span>
