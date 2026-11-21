@@ -114,9 +114,12 @@ export function createApiProvider(){
       return { state: st(r.state), events: wrap(list(r.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}) };
     },
     async fisco(){
-      // FISCO requiere permiso propio; sin sesión autorizada devuelve estado honesto.
-      return { state:'auth_required', data:null,
-        note:'Sección restringida: requiere sesión con permiso fisco:read.' };
+      const roles=session.get()?.roles||[];
+      if(!roles.includes('fisco:read'))return {state:'forbidden',data:null,
+        note:'Este dispositivo no tiene el permiso fiscal independiente.'};
+      const r=await get(ROUTES.common.fisco);
+      return {state:st(r.state),data:r.data?{summary:r.data}:null,
+        note:r.state!=='ok'?'Resumen fiscal no disponible en la API.':undefined};
     },
   };
 }
