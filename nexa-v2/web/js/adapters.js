@@ -11,6 +11,7 @@ export const ROUTES = {
     effective:  'GET /institutional-dca/config/effective',
     pairs:      'GET /institutional-dca/asset-configs',
     summary:    'GET /institutional-dca/summary',
+    entryDiagnostics:'GET /institutional-dca/entry-diagnostics',
     cycles:     'GET /institutional-dca/cycles/active',
     cycleDetail:'GET /institutional-dca/cycles/:id',
     orders:     'GET /institutional-dca/orders',
