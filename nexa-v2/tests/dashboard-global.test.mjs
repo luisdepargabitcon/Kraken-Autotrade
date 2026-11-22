@@ -17,20 +17,20 @@ const {collectPositions,renderDashboard,renderPositions,renderAsset,renderCycleM
 const {ACTIONS}=await import('../web/js/actions.js');
 
 const connected={
- authenticated:true,ui:{marketPair:'BTC/USD',positionFilter:'all',engineId:'idca',cycleId:'55'},
+ authenticated:true,viewScope:'real',ui:{marketPair:'BTC/USD',positionFilter:'all',engineId:'idca',cycleId:'55'},
  data:{marketPairs:{},portfolio:{state:'ok',data:{summary:{navUsd:5000}}},
-  activity:{state:'ok',data:{events:[{engine:'idca',msg:'Compra abierta'}]}}},
+  activity:{state:'ok',data:{events:[{engine:'idca',msg:'Compra abierta',mode:'live'}]}}},
  enginesData:{
   idca:{state:'ok',data:{cycles:[{id:55,pair:'BTC/USD',status:'active',mode:'live',
     capitalUsedUsd:620,unrealizedPnlUsd:-8.48,avgEntryPrice:61055,tpTargetPrice:63600}],
-    orders:[{id:1,pair:'BTC/USD',cycleId:55,side:'BUY',valueUsd:200}],
+    orders:[{id:1,pair:'BTC/USD',cycleId:55,side:'BUY',mode:'live',valueUsd:200}],
     history:[{id:54,pair:'ETH/USD',status:'closed',realizedPnlUsd:5.65}]}},
-  spot:{state:'ok',data:{positions:[{id:9,pair:'ETH/USD',qty:0.1,avgPrice:1700}],
-    trades:[{id:18,pair:'BTC/USD',side:'SELL',strategy:'unknown',realizedPnlUsd:3}]}},
-  grid:{state:'ok',data:{cycles:[{id:1,pair:'BTC/USD',status:'open',buyQty:0.04,capitalUsedUsd:30},
-    {id:2,pair:'ETH/USD',status:'closed',buyQty:1}]}},
-  ama:{state:'ok',data:{cycles:[{id:3,pair:'BTC/USD',reservedUsd:2000,status:'open'},
-    {id:4,pair:'ETH/USD',filledQty:0.2,capitalUsedUsd:50,status:'active'}]}}
+  spot:{state:'ok',data:{positions:[{id:9,pair:'ETH/USD',qty:0.1,avgPrice:1700,mode:'live'}],
+    trades:[{id:18,pair:'BTC/USD',side:'SELL',mode:'live',strategy:'unknown',realizedPnlUsd:3}]}},
+  grid:{state:'ok',data:{cycles:[{id:1,pair:'BTC/USD',status:'open',mode:'shadow',buyQty:0.04,capitalUsedUsd:30},
+    {id:2,pair:'ETH/USD',status:'closed',mode:'shadow',buyQty:1}]}},
+  ama:{state:'ok',data:{cycles:[{id:3,pair:'BTC/USD',reservedUsd:2000,status:'open',mode:'shadow'},
+    {id:4,pair:'ETH/USD',filledQty:0.2,capitalUsedUsd:50,status:'active',mode:'shadow'}]}}
  }
 };
 test('Home: cotizaciones BTC ETH, acceso a posiciones consolidadas y actividad',()=>{
@@ -45,10 +45,13 @@ test('Home: cotizaciones BTC ETH, acceso a posiciones consolidadas y actividad',
 });
 test('Posiciones: captura orígenes IDCA SPOT GRID AMA, sin contar reservas AMA',()=>{
  const s=collectPositions(connected);
- assert.equal(s.entries.length,4);
- assert.deepEqual(s.entries.map(x=>x.engine),['idca','spot','grid','ama']);
- assert.equal(s.entries.find(x=>x.engine==='ama').id,4);
- assert.ok(!s.entries.some(x=>x.id===3));
+ assert.equal(s.entries.length,2);
+ assert.deepEqual(s.entries.map(x=>x.engine),['idca','spot']);
+ const sim=collectPositions({...connected,viewScope:'shadow'});
+ assert.deepEqual(sim.entries.map(x=>x.engine),['grid','ama']);
+ assert.equal(sim.entries.find(x=>x.engine==='ama').id,4);
+ assert.ok(!sim.entries.some(x=>x.id===3));
+ assert.ok(!s.entries.some(x=>['grid','ama'].includes(x.engine)));
  const html=renderPositions(connected);
  assert.match(html,/data-manage-cycle="55"/);
  assert.match(html,/data-ui="positionFilter:idca"/);
