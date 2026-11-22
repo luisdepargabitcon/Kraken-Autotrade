@@ -12,6 +12,7 @@ import { showRecordInspector } from './inspector.js';
 import * as S from './screens.js';
 import * as D from './dashboard.js';
 import {renderPortfolioView} from './portfolio-view.js';
+import {renderFiscalView} from './fisco-view.js';
 import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
@@ -136,7 +137,7 @@ function render(){
   else if(state.screen==='engines') html = S.renderEngine(ctx);
   else if(state.screen==='portfolio') html = renderPortfolioView(ctx);
   else if(state.screen==='activity') html = S.renderActivity(ctx);
-  else if(state.screen==='fisco') html = S.renderFisco(ctx);
+  else if(state.screen==='fisco') html = renderFiscalView(ctx);
   else if(state.screen==='settings') html = S.renderSettings(ctx);
   scr.innerHTML = html;
   renderNav(); renderStatusline();
