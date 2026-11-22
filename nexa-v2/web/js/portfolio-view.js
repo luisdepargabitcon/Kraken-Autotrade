@@ -18,6 +18,10 @@ function listRows(raw,keys){
  for(const k of keys){if(Array.isArray(raw[k]))return raw[k];}
  return null;
 }
+const canonicalAsset=s=>({
+ 'XXBT':'BTC','XBT':'BTC','XETH':'ETH','ZEUR':'EUR','ZUSD':'USD',
+ 'XXRP':'XRP','XXLM':'XLM','XLTC':'LTC','XXDG':'DOGE'
+})[String(s||'').toUpperCase()]||String(s||'').toUpperCase();
 function numericRow(row,exchangeFallback,assetFallback){
  if(row===null||row===undefined)return null;
  if(typeof row!=='object'){
@@ -32,7 +36,7 @@ function numericRow(row,exchangeFallback,assetFallback){
  const usdValue=n(one(row,'valueUsd','usdValue','totalUsd','marketValueUsd'));
  const usdPrice=n(one(row,'priceUsd','usdPrice','marketPriceUsd'));
  if(!asset||!exchange||[free,locked,total,usdValue].every(x=>x===null))return null;
- return {asset:String(asset).toUpperCase(),exchange:String(exchange),available:free,locked,total,
+ return {asset:canonicalAsset(asset),sourceAsset:String(asset).toUpperCase(),exchange:String(exchange),available:free,locked,total,
   valueUsd:usdValue,priceUsd:usdPrice,raw:row};
 }
 export function normalizeExchangeBalances(raw){
@@ -48,7 +52,15 @@ export function normalizeExchangeBalances(raw){
    for(const [ex,k] of Object.entries(exchanges)){
      if(['success','timestamp','updatedAt','meta','errors','summary','status','totalUsd'].includes(ex))continue;
      if(!k||typeof k!=='object')continue;
-     const r=listRows(k,['balances','assets','holdings','items']);
+     // Respuesta real: {kraken:{connected,balances:{XXBT:0.1}},revolutx:{connected,balances:{...}}}.
+   if(k.connected===false||k.error)continue;
+   if(k.balances&&typeof k.balances==='object'&&!Array.isArray(k.balances)){
+     for(const [asset,qty] of Object.entries(k.balances)){
+       const x=numericRow(qty,ex,asset);if(x)rows.push(x);
+     }
+     continue;
+   }
+   const r=listRows(k,['balances','assets','holdings','items']);
      if(r){for(const entry of r){const x=numericRow(entry,ex,null);if(x)rows.push(x);}continue;}
      for(const [asset,z] of Object.entries(k)){
        if(['available','locked','hold','total','valueUsd','balance','timestamp','state','success','status','message'].includes(asset))continue;
@@ -84,7 +96,7 @@ export function valueExchangeBalances(raw,prices){
  if(!parsed.rows)return {...parsed,priced:[],totalUsd:null,unpricedCount:null};
  const pm=priceMap(prices),out=parsed.rows.map(row=>{
    const amount=row.total!==null?row.total:(row.available!==null&&row.locked!==null?row.available+row.locked:null);
-   const p=row.priceUsd??pm[row.asset]??null;
+   const p=row.priceUsd??pm[row.asset]??pm[row.sourceAsset]??null;
    const valueUsd=row.valueUsd??(amount!==null&&p!==null?amount*p:null);
    return {...row,quantity:amount,verifiedPrice:p,marketValueUsd:valueUsd};
  });
@@ -113,9 +125,9 @@ function summaryReal(ctx){
  const exchangeState=p.resourceStates?.exchangeBalances||'unavailable',priceState=p.resourceStates?.prices||'unavailable';
  const valid=ctx.authenticated&&exchangeState==='ok'&&bal.priced.length>0;
  const exchangeValue=valid?bal.totalUsd:null;
- return '<div class="nxw-hero"><span>PATRIMONIO DEL EXCHANGE · REAL</span>'+
+ return '<div class="nxw-hero"><span>VALORACIÓN DE SALDOS DEL EXCHANGE · REAL</span>'+
  '<strong>'+asUSD(exchangeValue)+'</strong>'+
- '<p>'+(exchangeValue!==null?'Valoración de saldos de exchanges recibidos por API.':
+ '<p>'+(exchangeValue!==null?'Valoración indicativa de saldos recibidos por API y cotizaciones de fuente identificada.':
    'No hay valoración TOTAL verificable del exchange. El presupuesto del bot no sustituye este dato.')+'</p>'+
  '<div class="nxw-hero-line">'+
  stat('Saldos',valid?String(bal.priced.length):'—')+
