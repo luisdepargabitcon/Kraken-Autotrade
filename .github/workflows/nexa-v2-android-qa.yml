@@ -36,15 +36,22 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: nexa-v2/package-lock.json
-      - name: Install SDK 36 with runner preinstalled sdkmanager
+      - name: Install SDK 36 (locate sdkmanager, no fixed path)
         shell: bash
         run: |
           set -euo pipefail
-          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          export PATH="$ANDROID_HOME/cmdline-tools/16.0/bin:$PATH"
-          sdkmanager --version
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKM="$(command -v sdkmanager || true)"
+          if [ -z "$SDKM" ]; then
+            SDKM="$(find "$SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n1 || true)"
+          fi
+          [ -n "$SDKM" ] || { echo "sdkmanager not found under $SDK_ROOT"; exit 1; }
+          "$SDKM" --version
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: npm ci (locked)
         working-directory: nexa-v2
         run: npm ci --legacy-peer-deps --no-audit --no-fund
