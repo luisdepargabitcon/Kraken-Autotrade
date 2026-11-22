@@ -91,3 +91,46 @@
  .nxw-balance-value{grid-column:2;text-align:left}
 }
 @media(max-width:375px){.nx-scope-bar>small{display:none}.nxw-hero-line{grid-template-columns:1fr 1fr}}
+
+
+/* FISCO · private read-only tax explorer, no sample fiscal amounts. */
+.nxf-root{display:flex;flex-direction:column;gap:14px;max-width:1200px;width:100%;margin:0 auto;padding:8px 0 30px}
+.nxf-intro>span{font-size:10px;font-weight:800;letter-spacing:.13em;color:#9cc8f1}
+.nxf-intro h1{font-size:clamp(27px,5vw,38px);margin:8px 0 7px;letter-spacing:-.04em}
+.nxf-intro p{font-size:12px;color:#aac0de;line-height:1.6;max-width:750px}
+.nxf-sources{display:flex;flex-wrap:wrap;gap:7px}
+.nxf-sources span{padding:7px 10px;border:1px solid #3d5a76;border-radius:8px;color:#acc9e9;background:#162941;font-size:11px}
+.nxf-tabs{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid #314c66;padding:3px 0 12px}
+.nxf-tabs button{background:#152840;color:#abc7e5;border:1px solid #31516f;border-radius:9px;font-size:12px;font-weight:750;padding:10px 13px;white-space:nowrap}
+.nxf-tabs button.on{background:#2864a4;color:#f3faff;border-color:#649dd5}
+.nxf-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.nxf-stat{padding:13px;background:#132842;border:1px solid #335778;border-radius:13px;min-width:0}
+.nxf-stat small{display:block;color:#a4bcda;font-size:10px;line-height:1.4}
+.nxf-stat strong{display:block;font-size:clamp(14px,2.1vw,20px);margin-top:7px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.nxf-panel{padding:16px;border:1px solid #31506e;border-radius:17px;background:#11243c;display:flex;flex-direction:column;gap:12px}
+.nxf-panel h2{font-size:19px;margin:0 0 4px;letter-spacing:-.035em}
+.nxf-panel p{font-size:12px;color:#a7bbd9;line-height:1.6}
+.nxf-empty{padding:17px;border:1px dashed #446386;border-radius:12px;background:#152a43;color:#b5cae1;font-size:12px;line-height:1.65}
+.nxf-row{display:grid;grid-template-columns:minmax(0,1fr) auto 13px;gap:9px;width:100%;align-items:center;border:1px solid #2f4e6a;background:#192f49;color:#e8f3ff;border-radius:11px;text-align:left;padding:13px}
+.nxf-row>span:first-child{display:flex;flex-direction:column;gap:4px;min-width:0}
+.nxf-row b{font-size:12px}
+.nxf-row small{font-size:10px;color:#acc3db;overflow-wrap:anywhere}
+.nxf-row strong{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nxf-row>span:last-child{color:#95bbe7;font-size:18px}
+.nxf-year,.nxf-provenance>div{display:flex;gap:11px;align-items:center;justify-content:space-between;border:1px solid #35516f;border-radius:10px;background:#192d46;padding:12px}
+.nxf-year b{font-size:16px}
+.nxf-year>span,.nxf-year>small{font-size:11px;color:#bed2e8}
+.nxf-warning{border-left:3px solid #e9a967;border-radius:10px;padding:11px 12px;background:#3e2928}
+.nxf-warning b{font-size:12px;color:#ffce92}.nxf-warning p{font-size:11px}
+.nxf-provenance{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.nxf-provenance span{font-size:11px;color:#a9c5e3}
+.nxf-note{color:#dac397!important;font-size:11px!important}
+.nxf-technical{border:1px solid #355678;border-radius:12px;overflow:hidden}
+.nxf-technical summary{padding:12px;background:#203854;cursor:pointer;font-size:12px}
+.nxf-technical pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;font-size:11px;line-height:1.45;max-height:450px;overflow-y:auto;color:#b4cbe7}
+#app[data-scope=shadow] .nxf-intro>span{color:#d2acfb}
+#app[data-scope=shadow] .nxf-empty{background:#281936;border-color:#664480}
+@media(max-width:690px){.nxf-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .nxf-panel{padding:12px}.nxf-year{flex-direction:column;align-items:flex-start}
+ .nxf-row{padding:10px;gap:6px}.nxf-row strong{font-size:12px}
+ .nxf-provenance{grid-template-columns:1fr}}
