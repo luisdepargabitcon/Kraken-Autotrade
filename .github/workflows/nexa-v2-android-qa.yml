@@ -1,0 +1,79 @@
+name: NEXA V2 Android QA artifact (no release, no VPS)
+
+on:
+  push:
+    branches:
+      - feature/nexa-v2-transformacion-20261120
+    paths:
+      - 'nexa-v2/web/**'
+      - 'nexa-v2/android/**'
+      - 'nexa-v2/package*.json'
+      - '.github/workflows/nexa-v2-android-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexa-android-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code (branch-only, no deploy)
+        uses: actions/checkout@v4
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nexa-v2/package-lock.json
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install SDK 36 (compile SDK)
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: npm ci (locked)
+        working-directory: nexa-v2
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Validate web ESM files
+        working-directory: nexa-v2
+        run: |
+          for f in web/js/*.js; do node --check "$f"; done
+      - name: Sync current web into Capacitor Android
+        working-directory: nexa-v2
+        run: npx cap sync android
+      - name: Build Android debug APK (test-only signature)
+        working-directory: nexa-v2/android
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Generate digest and record exact commit
+        run: |
+          set -euo pipefail
+          apk="nexa-v2/android/app/build/outputs/apk/debug/app-debug.apk"
+          sha256sum "$apk" | tee nexa-v2-android-debug.sha256
+          echo "COMMIT=${GITHUB_SHA}" | tee nexa-v2-android-debug-source.txt
+      - name: Upload QA artifact (NOT SIGNED RELEASE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexa-v2-debug-qa
+          path: |
+            nexa-v2/android/app/build/outputs/apk/debug/app-debug.apk
+            nexa-v2-android-debug.sha256
+            nexa-v2-android-debug-source.txt
+          retention-days: 14
+# Debug artifact uses Android DEBUG signature; cannot install over signed 0.6.0.
+# To publish install-over APK, Cascade must use existing private NEXA signing key locally.
+# Never publish, deploy, trade, or access the VPS from this workflow.
