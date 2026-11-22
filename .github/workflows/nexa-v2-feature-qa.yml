@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for f in web/js/dashboard.js web/js/app.js web/js/actions.js web/js/screens.js web/js/adapters.js web/js/inspector.js web/js/provider.js; do
+          for f in web/js/*.js; do
             node --check "$f"
           done
           echo 'ESM syntax checks OK'
