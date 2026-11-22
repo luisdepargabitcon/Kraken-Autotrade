@@ -9,7 +9,7 @@ import net from 'node:net';
 
 const READ_ROUTES = [
   /^\/api\/health$/,
-  /^\/api\/institutional-dca\/(?:controls|config|config\/effective|asset-configs|summary|cycles|cycles\/active|orders|events|performance|exchange-fee-presets|simulation\/wallet|price-context|market-data-health|entry-diagnostics)$/,
+  /^\/api\/institutional-dca\/(?:controls|config|config\/effective|asset-configs|summary|cycles|cycles\/active|orders|events|performance|exchange-fee-presets|importable-status|simulation\/wallet|price-context|market-data-health|entry-diagnostics)$/,
   /^\/api\/institutional-dca\/cycles\/[0-9]+$/,
   /^\/api\/institutional-dca\/asset-configs\/[A-Z0-9._%-]+$/,
   /^\/api\/institutional-dca\/(?:price-context|market-data-health)\/[A-Z0-9._%-]+$/,
