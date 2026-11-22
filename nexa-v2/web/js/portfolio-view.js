@@ -26,7 +26,7 @@ function numericRow(row,exchangeFallback,assetFallback){
  if(row===null||row===undefined)return null;
  if(typeof row!=='object'){
   const q=n(row);
-  return q===null?null:{exchange:exchangeFallback,asset:assetFallback,available:null,locked:null,total:q,priceUsd:null,valueUsd:null,raw:row};
+  return q===null?null:{exchange:exchangeFallback,asset:canonicalAsset(assetFallback),sourceAsset:String(assetFallback||'').toUpperCase(),available:null,locked:null,total:q,priceUsd:null,valueUsd:null,raw:row};
  }
  const asset=one(row,'asset','currency','symbol','code','ticker')||assetFallback||null;
  const exchange=one(row,'exchange','venue','platform','source')||exchangeFallback||null;
