@@ -14,6 +14,7 @@ import * as D from './dashboard.js';
 import {renderPortfolioView} from './portfolio-view.js';
 import {renderFiscalView} from './fisco-view.js';
 import {openImportPositionPreview} from './import-position.js';
+import {renderScopedEngine,renderScopedActivity} from './scoped-pages.js';
 import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
@@ -135,12 +136,9 @@ function render(){
   else if(state.screen==='asset') html = D.renderAsset(ctx);
   else if(state.screen==='manage-idca') html = D.renderCycleManager(ctx);
   else if(state.screen==='market') html = S.renderMarket(ctx);
-  else if(state.screen==='engines') html =
-    (state.ui.engineId==='idca'?
-      '<div class="nx-idca-import-cta"><div><b>¿Ya tienes BTC o ETH comprados?</b><small>Importar una posición existente a IDCA · vista previa segura</small></div>'+
-      '<button data-idca-import type="button">Importar posición abierta ↗</button></div>':'')+S.renderEngine(ctx);
+  else if(state.screen==='engines') html = renderScopedEngine(ctx);
   else if(state.screen==='portfolio') html = renderPortfolioView(ctx);
-  else if(state.screen==='activity') html = S.renderActivity(ctx);
+  else if(state.screen==='activity') html = renderScopedActivity(ctx);
   else if(state.screen==='fisco') html = renderFiscalView(ctx);
   else if(state.screen==='settings') html = S.renderSettings(ctx);
   scr.innerHTML = html;
