@@ -20,6 +20,7 @@ export const ROUTES = {
     wallet:     'GET /institutional-dca/simulation/wallet',
     feePresets: 'GET /institutional-dca/exchange-fee-presets',
     importableStatus:'GET /institutional-dca/importable-status',
+    exitInstructions:'GET /institutional-dca/cycles/:id/exit-instructions',
     hybrid:     'GET /institutional-dca/hybrid/status',
     actions: {
       pauseGlobal:   'POST /institutional-dca/controls {globalTradingPause}',
