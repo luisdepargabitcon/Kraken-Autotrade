@@ -46,6 +46,29 @@ function recordCard(id,field,r,index,ctx){
  (id==='idca'&&field==='cycles'&&r.id!=null&&ctx.viewScope!=='shadow'?
  '<button data-manage-cycle="'+esc(String(r.id))+'">Gestionar ciclo ↗</button>':'')+'</div></article>';
 }
+const TECH_SECTIONS={
+  idca:[['summary','Resumen y capital'],['status','Estado, pausas y pares'],['pairContexts','Confianza, ATR y rebote por par'],
+     ['config','Configuración IDCA'],['configEffective','Configuración efectiva'],['hybrid','Hybrid/Grid interno']],
+  spot:[['status','Motor SPOT, estrategia y protecciones'],['diagnostics','Smart Exit: diagnósticos reales']],
+  grid:[['status','Modo, capital y rango'],['levels','Niveles y rangos originales'],
+     ['monitor','Monitor y bloqueos'],['config','Política de ejecución y configuración']],
+  ama:[['status','Modo y scheduler'],['readiness','Checks y límites'],
+     ['mandate','Mandato y límites'],['portfolio','Contabilidad AMA'],['trace','Ledger y decisiones']],
+};
+function technical(ctx,id){
+  const data=meta(ctx,id).data||{},fallback=modeFallback(ctx,id);
+  if(!inScope({mode:fallback},ctx.viewScope||'real'))
+    return '<section class="nxs-group"><h2>Diagnóstico técnico</h2><p class="nxs-empty">El entorno del motor no está confirmado para esta vista. Se omiten los agregados sin separar para no mezclar REAL y SHADOW.</p></section>';
+  const safe=(k,v)=>/token|secret|password|credential|private.?key|authorization|cookie|bearer/i.test(k)?'[OCULTO]':v;
+  return '<section class="nxs-group"><h2>Información técnica del motor</h2>'+
+   '<p class="nxs-foot">Los apartados mantienen todos los campos devueltos por la API. Reservas, objetivos, órdenes y ejecuciones no son intercambiables.</p>'+
+   '<div class="nxs-tech-list">'+(TECH_SECTIONS[id]||[]).map(([path,title])=>{
+     const raw=getPath(data,path);
+     if(raw===undefined||raw===null)return '<div class="nxs-tech-unavailable"><b>'+esc(title)+'</b><small>API no disponible para esta sección</small></div>';
+     return '<details class="nxs-technical"><summary>'+esc(title)+' <span>⌄</span></summary>'+
+       '<pre>'+esc(JSON.stringify(raw,safe,2))+'</pre></details>';
+   }).join('')+'</div></section>';
+}
 function facts(ctx,id){
  const d=meta(ctx,id).data||{},fallback=modeFallback(ctx,id);
  const state=meta(ctx,id).state||'unavailable',matching=inScope({mode:fallback},ctx.viewScope||'real');
@@ -84,14 +107,7 @@ export function renderScopedEngine(ctx){
   '<p class="nxs-empty">No se han recibido registros identificados de '+esc(scopeTitle(scope))+
    '. Se omiten '+got.unknown+' con modo desconocido y '+got.other+' del otro entorno.</p>')+'</section>';
  }
- if(ctx.mode==='pro'&&scope!==SCOPE_SHADOW&&inScope({mode:modeFallback(ctx,id)},scope)){
-  const d=info.data||{};
-  html+='<section class="nxs-group"><h2>Control y configuración del motor</h2>'+
-   '<details class="nxs-technical"><summary>Inspeccionar estado y configuración completos</summary>'+
-    '<pre>'+esc(JSON.stringify({status:d.status,config:d.config,summary:d.summary},(k,v)=>
-      /token|password|secret|api.?key|authorization|cookie/i.test(k)?'[OCULTO]':v,2))+'</pre></details>'+
-    '<p>El acceso a acciones reales exige permisos y confirmaciones. Los controles de IDCA están disponibles desde sus ciclos abiertos.</p></section>';
- }
+ if(ctx.mode==='pro')html+=technical(ctx,id);
  if(id==='idca'&&active==='panel')html+='<div class="nxs-import-hint"><b>Importar posición abierta</b>'+
    '<p>Replica el proceso de IDCA original con vista previa, comisiones y avisos de coexistencia.</p>'+
    '<button data-idca-import>Revisar importación ↗</button></div>';
