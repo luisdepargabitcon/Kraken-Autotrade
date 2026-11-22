@@ -4,6 +4,7 @@ import {esc,fmtUsd,signedUsd,signedPct,fmtNum,fmtTs} from './util.js';
 import {ohlcvChart} from './premium-chart.js';
 import {actionBtn} from './actions.js';
 import {classifyMode,inScope,SCOPE_SHADOW,scopeTitle} from './display-scope.js';
+import {valueExchangeBalances} from './portfolio-view.js';
 
 const val=(o,...keys)=>{for(const k of keys){if(o?.[k]!==null&&o?.[k]!==undefined&&o[k]!=='')return o[k]}return null};
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
@@ -107,7 +108,10 @@ export function renderDashboard(ctx){
   unknownCount=s.entries.filter(x=>classify(x)==='unknown').length;
  const isShadow=ctx.viewScope===SCOPE_SHADOW;
  const simWallet=engine(ctx,'idca').simWallet;
- const nav=null; // total del bot sin partición no debe mostrarse como dinero del exchange
+ const portfolio=ctx.data?.portfolio?.data||{};
+ const exchangeValuation=ctx.authenticated&&portfolio.resourceStates?.exchangeBalances==='ok'&&portfolio.resourceStates?.prices==='ok'?
+  valueExchangeBalances(portfolio.exchangeBalances,portfolio.prices).totalUsd:null;
+ const nav=null; // resumen presupuestario interno sin partición: jamás sumarlo
  const corr=pearson(ctx);
  const events=(ctx.data?.activity?.data?.events||[]).filter(e=>inScope(e,ctx.viewScope||'real'));
  const verifiedPortfolio=false; // no hay PnL global confirmado por entorno, no mezclar
@@ -127,7 +131,8 @@ export function renderDashboard(ctx){
  '<section class="nxh-hero"><small>POSICIONES ABIERTAS CONFIRMADAS</small>'+
  '<div class="nxh-bigline"><strong>'+s.entries.length+'</strong>'+go('positions','Ver todas')+'</div>'+
  '<p>'+(s.complete?'Lectura disponible de los cuatro motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+  '<div class="nxh-mode-breakdown"><span>LIVE '+liveCount+'</span><span>SIM / SHADOW '+simCount+'</span>'+(unknownCount?'<span>Modo no verificado '+unknownCount+'</span>':'')+'</div>'+
- '<div class="nxh-hero-stats">'+metric(isShadow?'Saldo virtual IDCA':'Patrimonio exchange',isShadow?usd(val(simWallet,'totalUsd','equityUsd','balanceUsd')):'Ver cartera')+metric('Motores','4')+
+ '<div class="nxh-hero-stats">'+metric(isShadow?'Saldo virtual IDCA':'Patrimonio exchange',isShadow?usd(val(simWallet,'totalUsd','equityUsd','balanceUsd')):
+   exchangeValuation!==null?usd(exchangeValuation):'No confirmado')+metric('Motores','4')+
  metric('Estado',ctx.authenticated?'Conectado':'Sin sesión')+'</div></section>'+
  section('MERCADOS','BTC y ETH',go('market','Mercados'))+
  '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+  '<div class="nxh-corr-mini"><span>Relación BTC ↔ ETH</span><strong>'+(n(corr.r)===null?'Pendiente':fmtNum(corr.r,{dec:2}))+'</strong><small>'+(corr.count<8?'Sin suficientes velas sincronizadas':corr.count+' intervalos de 15m')+'</small><button data-asset="BTC/USD">Analizar ↗</button></div>'+
