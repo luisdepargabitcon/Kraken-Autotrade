@@ -80,10 +80,10 @@ export function createApiProvider(){
   return {
     kind:'api',
     async idca(){
-      const [summary, controls, cycles, orders, history, pairs, events, entry, simWallet] = await Promise.all([
+      const [summary, controls, cycles, orders, history, pairs, events, entry, simWallet, feePresets, importableStatus] = await Promise.all([
         get(ROUTES.idca.summary), get(ROUTES.idca.controls),
         get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
-        get(ROUTES.idca.pairs), get(ROUTES.idca.events), readEntryDiagnostics(),get(ROUTES.idca.wallet),
+        get(ROUTES.idca.pairs), get(ROUTES.idca.events), readEntryDiagnostics(),get(ROUTES.idca.wallet),get(ROUTES.idca.feePresets),get(ROUTES.idca.importableStatus),
       ]);
       const worst = [summary,controls].find(r=>r.state!=='ok');
       const status = wrap(controls.data, normEngineStatus);
@@ -96,7 +96,7 @@ export function createApiProvider(){
       const resourceStates={
         summary:st(summary.state),controls:st(controls.state),
         cycles:st(cycles.state),orders:st(orders.state),
-        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state),simWallet:st(simWallet.state)
+        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state),simWallet:st(simWallet.state),feePresets:st(feePresets.state),importableStatus:st(importableStatus.state)
       };
       // Un GET secundario fallido es parcial, no «0 ciclos» ni histórico vacío.
       const partial=!worst && [cycles,orders,history,pairs].some(r=>r.state!=='ok');
@@ -107,6 +107,8 @@ export function createApiProvider(){
         summary: wrap(summary.data, normIdcaSummary),
         pairContexts: wrap(entry.state==='ok'?entryContexts(entry.data):null,x=>x,{ts:Date.now()}),
         simWallet:wrap(simWallet.state==='ok'?simWallet.data:null,x=>x,{ts:Date.now()}),
+        feePresets:wrap(feePresets.state==='ok'?feePresets.data:null,x=>x,{ts:Date.now()}),
+        importableStatus:wrap(importableStatus.state==='ok'?importableStatus.data:null,x=>x,{ts:Date.now()}),
         cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
         orders: wrap(orders.state==='ok'?list(orders.data).map(normOrder).filter(Boolean):null, x=>x, {ts:Date.now()}),
         history: wrap(history.state==='ok'?list(history.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
