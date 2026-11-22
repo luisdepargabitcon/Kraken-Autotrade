@@ -44,7 +44,7 @@ export function normalizeExchangeBalances(raw){
  // nested asset maps. Strict: uncertain shape yields null, never a zero balance.
  if(raw===null||raw===undefined)return {rows:null,shape:'no_response'};
  const top=listRows(raw,['balances','items','rows','assets','holdings']);
- let rows=[];
+ let rows=[],issues=[];
  if(top){rows=top.map(x=>numericRow(x,'Exchange sin verificar',null)).filter(Boolean);}
  else if(Array.isArray(raw)){rows=raw.map(x=>numericRow(x,'Exchange sin verificar',null)).filter(Boolean);}
  else if(typeof raw==='object'){
@@ -53,7 +53,7 @@ export function normalizeExchangeBalances(raw){
      if(['success','timestamp','updatedAt','meta','errors','summary','status','totalUsd'].includes(ex))continue;
      if(!k||typeof k!=='object')continue;
      // Respuesta real: {kraken:{connected,balances:{XXBT:0.1}},revolutx:{connected,balances:{...}}}.
-   if(k.connected===false||k.error)continue;
+   if(k.connected===false||k.error){issues.push(ex+': '+(k.error?'error de lectura':'no conectado'));continue;}
    if(k.balances&&typeof k.balances==='object'&&!Array.isArray(k.balances)){
      for(const [asset,qty] of Object.entries(k.balances)){
        const x=numericRow(qty,ex,asset);if(x)rows.push(x);
@@ -68,14 +68,14 @@ export function normalizeExchangeBalances(raw){
      }
    }
  }
- if(!rows.length)return {rows:null,shape:'not_recognized'};
+ if(!rows.length)return {rows:null,issues,shape:'not_recognized'};
  // Two identical exchange+asset rows are ambiguous; don't sum them silently.
  const seen=new Set();
  for(const r of rows){const key=r.exchange.toLowerCase()+'/'+r.asset.toUpperCase();
-  if(seen.has(key))return {rows:null,shape:'duplicate_exchange_asset'};
+  if(seen.has(key))return {rows:null,issues,shape:'duplicate_exchange_asset'};
   seen.add(key);
  }
- return {rows,shape:'ok'};
+ return {rows,issues,shape:issues.length?'partial':'ok'};
 }
 function priceMap(raw){
  const entries=raw&&typeof raw==='object'?(raw.prices||raw.assets||raw):{};
@@ -85,7 +85,8 @@ function priceMap(raw){
      if(asset&&price!==null)result[String(asset).toUpperCase()]=price;}
  }else if(entries&&typeof entries==='object'){
    for(const [k,v] of Object.entries(entries)){
-     const p=n(typeof v==='object'?one(v,'priceUsd','usd','price','last'):v);
+     const fixed=typeof v==='object'&&String(v?.source||'').toLowerCase()==='fixed';
+     const p=fixed&&k.toUpperCase()!=='USD'?null:n(typeof v==='object'?one(v,'priceUsd','usd','price','last'):v);
      if(p!==null)result[k.toUpperCase()]=p;
    }
  }
@@ -100,7 +101,7 @@ export function valueExchangeBalances(raw,prices){
    const valueUsd=row.valueUsd??(amount!==null&&p!==null?amount*p:null);
    return {...row,quantity:amount,verifiedPrice:p,marketValueUsd:valueUsd};
  });
- return {rows:parsed.rows,priced:out,totalUsd:out.length&&out.every(x=>x.marketValueUsd!==null)?
+ return {rows:parsed.rows,issues:parsed.issues,priced:out,totalUsd:!parsed.issues?.length&&out.length&&out.every(x=>x.marketValueUsd!==null)?
   out.reduce((s,x)=>s+x.marketValueUsd,0):null,
   unpricedCount:out.filter(x=>x.marketValueUsd===null).length,shape:parsed.shape};
 }
