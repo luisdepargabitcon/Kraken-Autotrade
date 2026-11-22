@@ -134,3 +134,32 @@
  .nxf-panel{padding:12px}.nxf-year{flex-direction:column;align-items:flex-start}
  .nxf-row{padding:10px;gap:6px}.nxf-row strong{font-size:12px}
  .nxf-provenance{grid-template-columns:1fr}}
+
+
+/* IDCA existing-position preview, no trading write route. */
+.nx-idca-import-cta{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid #4c6c8b;background:linear-gradient(112deg,#17314c,#142139);border-radius:14px;padding:13px 15px;margin:6px 0 13px}
+.nx-idca-import-cta>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.nx-idca-import-cta b{font-size:13px}.nx-idca-import-cta small{font-size:10px;color:#9fbddd;line-height:1.4}
+.nx-idca-import-cta button,.nx-import-preview-button{border:1px solid #5a99d7;border-radius:10px;padding:10px 14px;white-space:nowrap;background:#285e97;color:#eef7ff;font-size:12px;font-weight:800}
+.nx-import-position{max-height:calc(92dvh - 80px);overflow-y:auto;display:flex;flex-direction:column;gap:13px;padding:6px 4px 30px}
+.nx-import-kicker{font-size:10px;letter-spacing:.13em;font-weight:800;color:#a4c9ee}
+.nx-import-position h2{font-size:23px;letter-spacing:-.04em;margin:0}
+.nx-import-position>p{font-size:12px;line-height:1.6;color:#b1c9e6}
+.nx-import-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.nx-import-position label{display:flex;flex-direction:column;gap:7px;color:#bcd1e9;font-size:12px;font-weight:700;min-width:0}
+.nx-import-position input,.nx-import-position select,.nx-import-position textarea{background:#0d1c2e;color:#edf5ff;border:1px solid #385675;border-radius:10px;padding:10px 11px;min-height:43px;font:inherit;font-size:13px;width:100%;min-width:0}
+.nx-import-position textarea{min-height:72px;resize:vertical}
+.nx-import-position .nx-import-check{flex-direction:row;align-items:center;gap:10px;font-weight:500;line-height:1.5}
+.nx-import-check input{width:19px;min-height:19px;height:19px;accent-color:#5d9df0}
+.nx-import-status{font-size:11px;color:#e9b871!important}
+.nx-import-review{padding:15px;border:1px solid #5681a7;background:#162b44;border-radius:13px;display:flex;flex-direction:column;gap:9px}
+.nx-import-review h3{font-size:16px}
+.nx-import-review>div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #35516d;padding:6px 0;font-size:12px}
+.nx-import-review>div>b{font-size:13px}
+.nx-import-review p{font-size:11px;color:#c7d9ef;line-height:1.6}
+.nx-import-error{color:#ff9bad;font-size:12px;font-weight:650}
+.nx-import-blocked{font-size:11px;color:#f1c17e;background:#3a2a21;border:1px solid #725332;border-radius:9px;padding:12px;line-height:1.55}
+#app[data-scope=shadow] .nx-idca-import-cta{background:linear-gradient(125deg,#3f264d,#211829);border-color:#83569c}
+@media(max-width:580px){.nx-idca-import-cta{align-items:stretch;flex-direction:column}
+ .nx-idca-import-cta button{white-space:normal}
+ .nx-import-fields{grid-template-columns:1fr}}
