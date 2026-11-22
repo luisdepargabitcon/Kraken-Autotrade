@@ -80,10 +80,10 @@ export function createApiProvider(){
   return {
     kind:'api',
     async idca(){
-      const [summary, controls, cycles, orders, history, pairs, events, entry] = await Promise.all([
+      const [summary, controls, cycles, orders, history, pairs, events, entry, simWallet] = await Promise.all([
         get(ROUTES.idca.summary), get(ROUTES.idca.controls),
         get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
-        get(ROUTES.idca.pairs), get(ROUTES.idca.events), readEntryDiagnostics(),
+        get(ROUTES.idca.pairs), get(ROUTES.idca.events), readEntryDiagnostics(),get(ROUTES.idca.wallet),
       ]);
       const worst = [summary,controls].find(r=>r.state!=='ok');
       const status = wrap(controls.data, normEngineStatus);
@@ -96,7 +96,7 @@ export function createApiProvider(){
       const resourceStates={
         summary:st(summary.state),controls:st(controls.state),
         cycles:st(cycles.state),orders:st(orders.state),
-        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state)
+        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state),simWallet:st(simWallet.state)
       };
       // Un GET secundario fallido es parcial, no «0 ciclos» ni histórico vacío.
       const partial=!worst && [cycles,orders,history,pairs].some(r=>r.state!=='ok');
@@ -106,6 +106,7 @@ export function createApiProvider(){
         status,
         summary: wrap(summary.data, normIdcaSummary),
         pairContexts: wrap(entry.state==='ok'?entryContexts(entry.data):null,x=>x,{ts:Date.now()}),
+        simWallet:wrap(simWallet.state==='ok'?simWallet.data:null,x=>x,{ts:Date.now()}),
         cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
         orders: wrap(orders.state==='ok'?list(orders.data).map(normOrder).filter(Boolean):null, x=>x, {ts:Date.now()}),
         history: wrap(history.state==='ok'?list(history.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
@@ -207,20 +208,27 @@ export function createApiProvider(){
       return { state: st(r.state), market: wrap(r.data, normMarket), latency: r.latency };
     },
     async portfolio(){
-      const [summary, holdings, ledger, reservations, budgets, inventory] = await Promise.all([
-        get(ROUTES.common.portfolio), get(ROUTES.common.holdings),
-        get('GET /portfolio/ledger'), get('GET /portfolio/reservations'),
-        get('GET /portfolio/budgets'), get('GET /portfolio/inventory'),
-      ]);
+      // Saldos EXCHANGE y contabilidad BOT son fuentes diferentes.
+      const [summary,holdings,ledger,reservations,budgets,inventory,balances,prices]=await Promise.all([
+        get(ROUTES.common.portfolio),get(ROUTES.common.holdings),
+        get(ROUTES.common.ledger),get(ROUTES.common.reservations),
+        get(ROUTES.common.budgets),get(ROUTES.common.inventory),
+        get(ROUTES.common.balances),get(ROUTES.common.prices)]);
+      const reads={summary,holdings,ledger,reservations,budgets,inventory,exchangeBalances:balances,prices};
+      const resourceStates=Object.fromEntries(Object.entries(reads).map(([k,v])=>[k,st(v.state)]));
+      const all=Object.values(reads),ok=all.filter(x=>x.state==='ok').length;
       return {
-        state: summary.state==='ok'?'ok':st(summary.state),
-        summary: wrap(summary.data, normPortfolioSummary, {ts:Date.now()}),
-        holdings: wrap(list(holdings.data), x=>x, {ts:Date.now()}),
-        ledger: wrap(ledger.state==='ok'?list(ledger.data):[], x=>x, {ts:Date.now()}),
-        reservations: wrap(reservations.state==='ok'?list(reservations.data):[], x=>x, {ts:Date.now()}),
-        budgets: wrap(budgets.state==='ok'?{items:list(budgets.data)}:null, x=>x, {ts:Date.now()}),
-        inventory: wrap(inventory.state==='ok'?list(inventory.data):[], x=>x, {ts:Date.now()}),
-        latency: summary.latency,
+        state:ok===0?st(summary.state):ok===all.length?'ok':'partial',
+        resourceStates,
+        summary:wrap(summary.state==='ok'?summary.data:null,normPortfolioSummary,{ts:Date.now()}),
+        holdings:wrap(holdings.state==='ok'?list(holdings.data):null,x=>x,{ts:Date.now()}),
+        ledger:wrap(ledger.state==='ok'?list(ledger.data):null,x=>x,{ts:Date.now()}),
+        reservations:wrap(reservations.state==='ok'?list(reservations.data):null,x=>x,{ts:Date.now()}),
+        budgets:wrap(budgets.state==='ok'?{items:list(budgets.data)}:null,x=>x,{ts:Date.now()}),
+        inventory:wrap(inventory.state==='ok'?list(inventory.data):null,x=>x,{ts:Date.now()}),
+        exchangeBalances:wrap(balances.state==='ok'?balances.data:null,x=>x,{ts:Date.now()}),
+        prices:wrap(prices.state==='ok'?prices.data:null,x=>x,{ts:Date.now()}),
+        latency:Math.max(...all.map(x=>x.latency||0))
       };
     },
     async activity(){
@@ -228,12 +236,21 @@ export function createApiProvider(){
       return { state: st(r.state), events: wrap(list(r.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}) };
     },
     async fisco(){
+      // Seguridad: rol separado, GET exclusivo, sin credenciales fiscales en APK.
       const roles=session.get()?.roles||[];
-      if(!roles.includes('fisco:read'))return {state:'forbidden',data:null,
-        note:'Este dispositivo no tiene el permiso fiscal independiente.'};
-      const r=await get(ROUTES.common.fisco);
-      return {state:st(r.state),data:r.data?{summary:r.data}:null,
-        note:r.state!=='ok'?'Resumen fiscal no disponible en la API.':undefined};
+      if(!roles.includes('fisco:read')&&!roles.includes('admin')&&!roles.includes('*'))
+        return {state:'forbidden',data:null,resourceStates:null,note:'Falta permiso fisco:read.'};
+      const keys=['summary','operations','lots','disposals','annualReport','finalizationStatus','meta'];
+      const routes=[ROUTES.common.fisco,
+        'GET /fisco/operations?page=1&pageSize=100','GET /fisco/lots',
+        'GET /fisco/disposals','GET /fisco/annual-report',
+        'GET /fisco/finalization-status','GET /fisco/meta'];
+      const results=await Promise.all(routes.map(route=>get(route)));
+      const resourceStates=Object.fromEntries(results.map((r,i)=>[keys[i],st(r.state)]));
+      const data=Object.fromEntries(results.map((r,i)=>[keys[i],r.state==='ok'?r.data:null]));
+      const ok=results.filter(r=>r.state==='ok').length;
+      return {state:ok===0?st(results[0].state):ok===results.length?'ok':'partial',
+        data,resourceStates,note:ok===0?'Informe fiscal no disponible.':undefined};
     },
   };
 }
