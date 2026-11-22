@@ -3,6 +3,7 @@
 import {esc,fmtUsd,signedUsd,signedPct,fmtNum,fmtTs} from './util.js';
 import {ohlcvChart} from './premium-chart.js';
 import {actionBtn} from './actions.js';
+import {classifyMode,inScope,SCOPE_SHADOW,scopeTitle} from './display-scope.js';
 
 const val=(o,...keys)=>{for(const k of keys){if(o?.[k]!==null&&o?.[k]!==undefined&&o[k]!=='')return o[k]}return null};
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
@@ -28,6 +29,11 @@ export function collectPositions(ctx){
    if(!Array.isArray(records)){issues.push(key.toUpperCase()+': sin lista verificable');return;}
    records.forEach((r,i)=>{
      if(!r||typeof r!=='object'||!filter(r))return;
+     const fallback=val(engine(ctx,key).status,'mode','executionMode');
+     if(!inScope(r,ctx.viewScope||'real',fallback)){
+       if(classifyMode(r,fallback)==='unknown')issues.push(key.toUpperCase()+': posiciones con entorno desconocido');
+       return;
+     }
      entries.push({
        pair:asset(val(r,'pair','symbol','asset')),engine:key,id:val(r,'id','cycleId','positionId'),
        mode:val(r,'mode','executionMode')??val(engine(ctx,key).status,'mode','executionMode'),title,ref:key+':'+path+':'+i,
@@ -99,10 +105,12 @@ export function renderDashboard(ctx){
  const liveCount=s.entries.filter(x=>classify(x)==='live').length,
   simCount=s.entries.filter(x=>classify(x)==='sim').length,
   unknownCount=s.entries.filter(x=>classify(x)==='unknown').length;
- const nav=ctx.authenticated&&ctx.data?.portfolio?.state==='ok'?val(summary,'navUsd'):null;
+ const isShadow=ctx.viewScope===SCOPE_SHADOW;
+ const simWallet=engine(ctx,'idca').simWallet;
+ const nav=null; // total del bot sin partición no debe mostrarse como dinero del exchange
  const corr=pearson(ctx);
- const events=ctx.data?.activity?.data?.events;
- const verifiedPortfolio=ctx.authenticated&&ctx.data?.portfolio?.state==='ok';
+ const events=(ctx.data?.activity?.data?.events||[]).filter(e=>inScope(e,ctx.viewScope||'real'));
+ const verifiedPortfolio=false; // no hay PnL global confirmado por entorno, no mezclar
  const proExtras=ctx.mode==='pro'?
   section('RIESGO Y CONTABILIDAD','Lectura profesional')+
   '<div class="nxh-pro-grid">'+
@@ -114,12 +122,12 @@ export function renderDashboard(ctx){
    metric('Pausa global IDCA',typeof engine(ctx,'idca').status?.globalTradingPause==='boolean'?
       (engine(ctx,'idca').status.globalTradingPause?'Activada':'Sin pausa'):'—')+
   '</div>':'';
- return '<div class="nxh-root"><header class="nxh-title"><span>NEXA · VISIÓN GLOBAL</span><h1>Tu bot, de un vistazo</h1>'+
+ return '<div class="nxh-root"><header class="nxh-title"><span>'+esc(scopeTitle(ctx.viewScope))+' · VISIÓN GLOBAL</span><h1>Tu bot, de un vistazo</h1>'+
  '<p>Mercado, exposición y movimientos de todas tus estrategias.</p></header>'+
  '<section class="nxh-hero"><small>POSICIONES ABIERTAS CONFIRMADAS</small>'+
  '<div class="nxh-bigline"><strong>'+s.entries.length+'</strong>'+go('positions','Ver todas')+'</div>'+
  '<p>'+(s.complete?'Lectura disponible de los cuatro motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+  '<div class="nxh-mode-breakdown"><span>LIVE '+liveCount+'</span><span>SIM / SHADOW '+simCount+'</span>'+(unknownCount?'<span>Modo no verificado '+unknownCount+'</span>':'')+'</div>'+
- '<div class="nxh-hero-stats">'+metric('NAV informado',usd(nav))+metric('Motores','4')+
+ '<div class="nxh-hero-stats">'+metric(isShadow?'Saldo virtual IDCA':'Patrimonio exchange',isShadow?usd(val(simWallet,'totalUsd','equityUsd','balanceUsd')):'Ver cartera')+metric('Motores','4')+
  metric('Estado',ctx.authenticated?'Conectado':'Sin sesión')+'</div></section>'+
  section('MERCADOS','BTC y ETH',go('market','Mercados'))+
  '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+  '<div class="nxh-corr-mini"><span>Relación BTC ↔ ETH</span><strong>'+(n(corr.r)===null?'Pendiente':fmtNum(corr.r,{dec:2}))+'</strong><small>'+(corr.count<8?'Sin suficientes velas sincronizadas':corr.count+' intervalos de 15m')+'</small><button data-asset="BTC/USD">Analizar ↗</button></div>'+
@@ -135,7 +143,7 @@ export function renderDashboard(ctx){
 }
 export function renderPositions(ctx){
  const s=collectPositions(ctx),f=ctx.ui?.positionFilter||'all',list=s.entries.filter(x=>f==='all'||x.pair===f||x.engine===f);
- return '<div class="nxh-root"><header class="nxh-title"><span>TODOS LOS MOTORES</span><h1>Posiciones abiertas</h1>'+
+ return '<div class="nxh-root"><header class="nxh-title"><span>'+esc(scopeTitle(ctx.viewScope))+' · MOTORES</span><h1>Posiciones abiertas</h1>'+
  '<p>'+s.entries.length+' confirmadas · '+(s.complete?'lectura completa':'lectura parcial')+'</p></header>'+
  '<div class="nxh-filters">'+['all','BTC/USD','ETH/USD','idca','spot','grid','ama'].map(x=>
  '<button data-ui="positionFilter:'+x+'" class="'+(f===x?'on':'')+'">'+out(x==='all'?'Todas':x.toUpperCase())+'</button>').join('')+'</div>'+
@@ -147,7 +155,7 @@ function operations(ctx,pair){
  const outArr=[];
  function add(key,list,path,kind){
   if(!ready(ctx,key)||!Array.isArray(list))return;
-  list.forEach((r,i)=>{if(!matching(r,pair))return;outArr.push({
+  list.forEach((r,i)=>{if(!matching(r,pair)||!inScope(r,ctx.viewScope||'real',val(engine(ctx,key).status,'mode','executionMode')))return;outArr.push({
    key,kind,r,ref:key+':'+path+':'+i,ts:val(r,'ts','executedAt','closedAt','startedAt','createdAt','buyTs'),
    gain:val(r,'realizedPnlUsd','netPnlUsd','pnl'),amount:val(r,'valueUsd','grossValueUsd','capitalUsedUsd'),
    side:val(r,'side'),mode:val(r,'mode'),reason:val(r,'reason','closeReason','type')
@@ -193,7 +201,7 @@ export function renderAsset(ctx){
  const pair=ctx.ui?.marketPair==='ETH/USD'?'ETH/USD':'BTC/USD';
  const q=market(ctx,pair),c=candles(ctx,pair),s=collectPositions(ctx),open=s.entries.filter(x=>x.pair===pair),ops=operations(ctx,pair);
  const correlation=pearson(ctx),diag=engine(ctx,'idca').pairContexts?.[pair]||{};
- return '<div class="nxh-root"><header class="nxh-title"><span>ACTIVO · DETALLE COMPLETO</span><h1>'+pair+'</h1>'+
+ return '<div class="nxh-root"><header class="nxh-title"><span>'+esc(scopeTitle(ctx.viewScope))+' · ACTIVO</span><h1>'+pair+'</h1>'+
  '<p>Mercado, posiciones, operaciones y diagnóstico IDCA en un mismo lugar.</p></header>'+
  '<div class="nxh-asset-hero"><small>PRECIO API</small><strong>'+usd(q.price)+'</strong><b>'+percent(q.change)+' / 24h</b>'+
  '<small>'+out(q.valid?q.m.provider||'API de mercado':'Sin precio confirmado')+'</small></div>'+
@@ -228,7 +236,7 @@ export function renderAsset(ctx){
 }
 export function renderCycleManager(ctx){
  const d=engine(ctx,'idca'),arr=d.cycles,id0=String(ctx.ui?.cycleId||'');
- const c=Array.isArray(arr)?arr.find(x=>String(x.id)===id0):null;
+ const c=Array.isArray(arr)?arr.find(x=>String(x.id)===id0&&inScope(x,ctx.viewScope||'real',val(d.status,'mode','executionMode'))):null;
  if(!c)return '<div class="nxh-root"><h1>Ciclo no disponible</h1><p>No se ha recibido el ciclo en la API.</p>'+go('engine:idca','Volver a IDCA')+'</div>';
  const off=closed(c),idx=arr.indexOf(c),params={cycleId:id0};
  const act=(code,arg,label)=>actionBtn(code,arg,label,{cls:'nxh-manage-action'});
@@ -240,7 +248,7 @@ export function renderCycleManager(ctx){
  section('LECTURA','Ficha y órdenes')+
  '<div class="nxh-manager-actions"><button data-inspect="idca:cycles:'+idx+'">Ficha completa ↗</button>'+
  '<button data-engine-sub="orders">Órdenes IDCA ↗</button><button data-engine-sub="history">Historial IDCA ↗</button></div>'+
- (off?'<p class="nxh-caution">Ciclo cerrado: no se ofrecen acciones de gestión.</p>':
+ (ctx.viewScope===SCOPE_SHADOW?'<p class="nxh-caution">SHADOW: solo consulta, nunca operaciones reales desde esta vista.</p>':off?'<p class="nxh-caution">Ciclo cerrado: no se ofrecen acciones de gestión.</p>':
  section('CONTROL','Gestionar ciclo')+
  '<div class="nxh-manager-actions">'+
  act('idca.cycleStatus',{...params,status:String(c.status)==='paused'?'active':'paused'},String(c.status)==='paused'?'Reanudar':'Pausar')+
