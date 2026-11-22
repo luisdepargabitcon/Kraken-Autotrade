@@ -36,12 +36,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: nexa-v2/package-lock.json
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install SDK 36 (compile SDK)
+      - name: Install SDK 36 with runner preinstalled sdkmanager
+        shell: bash
         run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/16.0/bin:$PATH"
+          sdkmanager --version
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: npm ci (locked)
         working-directory: nexa-v2
         run: npm ci --legacy-peer-deps --no-audit --no-fund
