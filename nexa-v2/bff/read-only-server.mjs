@@ -11,6 +11,7 @@ const READ_ROUTES = [
   /^\/api\/health$/,
   /^\/api\/institutional-dca\/(?:controls|config|config\/effective|asset-configs|summary|cycles|cycles\/active|orders|events|performance|exchange-fee-presets|importable-status|simulation\/wallet|price-context|market-data-health|entry-diagnostics)$/,
   /^\/api\/institutional-dca\/cycles\/[0-9]+$/,
+  /^\/api\/institutional-dca\/cycles\/[0-9]+\/exit-instructions$/, // GET only, POST/DELETE remain blocked
   /^\/api\/institutional-dca\/asset-configs\/[A-Z0-9._%-]+$/,
   /^\/api\/institutional-dca\/(?:price-context|market-data-health)\/[A-Z0-9._%-]+$/,
   /^\/api\/grid-isolated\/(?:status|config|levels|cycles|events|pump-dump-state|unlock-status|monitor\/audit|reconciliation)$/,
