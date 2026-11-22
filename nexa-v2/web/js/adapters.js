@@ -19,6 +19,7 @@ export const ROUTES = {
     events:     'GET /institutional-dca/events',
     wallet:     'GET /institutional-dca/simulation/wallet',
     feePresets: 'GET /institutional-dca/exchange-fee-presets',
+    importableStatus:'GET /institutional-dca/importable-status',
     hybrid:     'GET /institutional-dca/hybrid/status',
     actions: {
       pauseGlobal:   'POST /institutional-dca/controls {globalTradingPause}',
