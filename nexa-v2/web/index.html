@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/premium.css">
 <link rel="stylesheet" href="css/dashboard.css">
+<link rel="stylesheet" href="css/scope-portfolio.css">
 </head>
 <body>
 <div id="app" class="app" data-mode="pro" data-online="1">
@@ -32,6 +33,12 @@
       </button>
     </div>
   </header>
+  <div class="nx-scope-bar" role="group" aria-label="Seleccionar datos reales o de simulación">
+    <span>Datos visibles:</span>
+    <button type="button" id="scope-real" data-scope="real" class="on" aria-pressed="true">REAL</button>
+    <button type="button" id="scope-shadow" data-scope="shadow" aria-pressed="false">SHADOW</button>
+    <small id="scope-warning">Selector de visualización, no cambia el motor</small>
+  </div>
   <div class="statusline" id="statusline" role="status"></div>
   <main id="screen" class="screen" tabindex="-1"></main>
   <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil"></nav>
