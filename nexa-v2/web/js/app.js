@@ -11,15 +11,18 @@ import { clear, h, badge, openModal } from './ui.js';
 import { showRecordInspector } from './inspector.js';
 import * as S from './screens.js';
 import * as D from './dashboard.js';
+import {renderPortfolioView} from './portfolio-view.js';
+import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
 if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.add('nexa-native');
 
 // ---------- Estado global ----------
 const state = {
-  mode: localStorage.getItem('nexa.mode') || 'pro',      // basic | pro  (solo presentación)
+  mode: localStorage.getItem('nexa.mode') || 'pro',
+  viewScope: localStorage.getItem('nexa.viewScope')==='shadow'?'shadow':'real', // solo pantalla, jamás modo del bot      // basic | pro  (solo presentación)
   screen: 'home',
-  ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all',
+  ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all', portfolioTab:'summary',fiscoTab:'summary',
     activityFilter:{ sev:'all', engine:'all' } },
   provider: createApiProvider(),
   online: navigator.onLine !== false,
@@ -95,9 +98,9 @@ async function loadData(){
   state.common = {
     marketPairs,
     market: marketPairs[state.ui.marketPair]||marketPairs['BTC/USD'],
-    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? [], ledger: portfolio.ledger?.data ?? [], reservations: portfolio.reservations?.data ?? [], budgets: portfolio.budgets?.data ?? null, inventory: portfolio.inventory?.data ?? [] } },
+    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? null, ledger: portfolio.ledger?.data ?? null, reservations: portfolio.reservations?.data ?? null, budgets: portfolio.budgets?.data ?? null, inventory: portfolio.inventory?.data ?? null, exchangeBalances:portfolio.exchangeBalances?.data??null, prices:portfolio.prices?.data??null,resourceStates:portfolio.resourceStates||{} } },
     activity: { state: activity.state, data: { events: feed } },
-    fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note },
+    fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note,resourceStates:fisco.resourceStates||{} },
   };
 }
 // Aplana los envoltorios {data,state} del provider a la forma que consumen las pantallas.
@@ -115,7 +118,7 @@ const $ = id => document.getElementById(id);
 function render(){
   const scr = $('screen');
   const ctx = {
-    mode: state.mode, ui: state.ui, engineList: ENGINES,
+    mode: state.mode, viewScope:state.viewScope, ui: state.ui, engineList: ENGINES,
     authenticated: !!session.get(),
     deviceEnrolled: state.deviceEnrolled, repairRequired: state.repairRequired,
     enginesData: state.enginesData, data: state.common,
@@ -131,13 +134,18 @@ function render(){
   else if(state.screen==='manage-idca') html = D.renderCycleManager(ctx);
   else if(state.screen==='market') html = S.renderMarket(ctx);
   else if(state.screen==='engines') html = S.renderEngine(ctx);
-  else if(state.screen==='portfolio') html = S.renderPortfolio(ctx);
+  else if(state.screen==='portfolio') html = renderPortfolioView(ctx);
   else if(state.screen==='activity') html = S.renderActivity(ctx);
   else if(state.screen==='fisco') html = S.renderFisco(ctx);
   else if(state.screen==='settings') html = S.renderSettings(ctx);
   scr.innerHTML = html;
   renderNav(); renderStatusline();
   document.getElementById('app').dataset.mode = state.mode;
+  document.getElementById('app').dataset.scope = state.viewScope;
+  $('scope-real').classList.toggle('on',state.viewScope==='real');
+  $('scope-shadow').classList.toggle('on',state.viewScope==='shadow');
+  $('scope-real').setAttribute('aria-pressed',String(state.viewScope==='real'));
+  $('scope-shadow').setAttribute('aria-pressed',String(state.viewScope==='shadow'));
   document.getElementById('app').dataset.screen = state.screen;
   document.getElementById('mode-basic').classList.toggle('on', state.mode==='basic');
   document.getElementById('mode-pro').classList.toggle('on', state.mode==='pro');
@@ -177,7 +185,7 @@ function renderStatusline(){
     (!authed?(linked?`<button data-app="refresh" class="nx-status-link">Reintentar conexión ↻</button>`:
       `<button data-app="pair-device" class="nx-status-link">Vincular ahora ›</button>`):
       sourceError||sourcesPartial?`<button data-app="refresh" class="nx-status-link">Reintentar ↻</button>`:'')+
-    `<span class="nx-status-right">NEXA · ${state.mode==='basic'?'Básico':'Pro'}</span>`;
+    `<span class="nx-status-right">NEXA · ${state.viewScope==='shadow'?'SHADOW':'REAL'} · ${state.mode==='basic'?'Básico':'Pro'}</span>`;
 }
 
 // ---------- Sub-renderer de motor ----------
@@ -220,6 +228,7 @@ function openEngineModal(){
 function openAction(actionId, params){
   const a = ACTIONS[actionId];
   if(!a) return;
+  if(state.viewScope==='shadow')return openModal('<h3>Modo SHADOW: sin órdenes reales</h3><p>Las acciones de trading están bloqueadas desde esta vista de simulación. Cambiar a REAL tampoco autoriza acciones sin permisos del servidor.</p>');
   if(!session.get()){
     return openModal(`<h3>Autenticación requerida</h3><p class="small">Inicia sesión para ejecutar acciones.</p>`);
   }
@@ -622,6 +631,14 @@ document.addEventListener('click', e=>{
     render();window.scrollTo?.(0,0);return;}
   const manual=e.target.closest('[data-manual-buy]');
   if(manual){e.preventDefault();openManualBuyForm(manual.dataset.manualBuy);return;}
+  const scope=e.target.closest('[data-scope]');
+  if(scope){
+    const next=scope.dataset.scope;
+    if(next!=='real'&&next!=='shadow')return;
+    state.viewScope=next;localStorage.setItem('nexa.viewScope',next);
+    state.ui.positionFilter='all';state.ui.portfolioTab='summary';
+    render();window.scrollTo?.(0,0);return;
+  }
   const inspect = e.target.closest('[data-inspect]');
   if(inspect){ e.preventDefault(); showRecordInspector(state,inspect.dataset.inspect); return; }
   const nav = e.target.closest('[data-nav]');
@@ -641,6 +658,8 @@ document.addEventListener('click', e=>{
       return;
     }
     else if(k==='positionFilter')state.ui.positionFilter=v;
+    else if(k==='portfolioTab')state.ui.portfolioTab=v;
+    else if(k==='fiscoTab')state.ui.fiscoTab=v;
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
     render(); return;
