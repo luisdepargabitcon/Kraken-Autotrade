@@ -100,7 +100,7 @@ test('Motores conservan índices originales en fichas y no mezclan los dos modos
  assert.match(shadow,/idca:cycles:1/);assert.doesNotMatch(shadow,/idca:cycles:0/);
  assert.match(shadow,/todos los controles de ejecución real permanecen bloqueados/);
 });
-test('Importación IDCA existente es distinta de compra manual, preview valida y no POST',()=>{
+test('Importación IDCA existente es distinta de compra manual, preview valida y no POST',async ()=>{
  const v={pair:'BTC/USD',exchangeSource:'kraken',quantity:0.1,avgEntryPrice:50000,
  capitalUsedUsd:5000,estimatedFeePct:0.25,sourceType:'manual',
  soloSalida:true,feesOverrideManual:true,isManualCycle:false,warningAcknowledged:false};
