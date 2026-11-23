@@ -128,3 +128,10 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - **Actividad**: categorías OPERACIÓN/RECHAZADA/DECISIÓN/EVENTO/ERROR + traducción de códigos GRID (código técnico solo en Pro).
 - **QA APK 0.8.0-qa24** (versionCode 12, `com.nexa.autotrade.v2.qa`, debug, sin clave expuesta): SHA-256 `5cc9e121c1af569f45260940f82e43f4d289304dacab5465579b34be829640e3`. Prerelease `nexa-v2-0.8.0-qa24` con APK+sha+6 capturas.
 - Pendiente: velas de la fuente interna del bot requieren endpoint nuevo en BFF desplegado (autorización); puerto 3020; rotación de clave; validación Pixel 9. SIN APROBAR.
+
+## Rev24b — «Aplicación no instalada» en Pixel 9 (2026-11-23)
+- **Causa raíz (auditada con apksigner)**: el `.qa` instalado desde el artefacto CI iba firmado con la debug-keystore efímera del runner (`bd2dd8ff…`); las builds locales usaban la debug-keystore del host (`153ecd2f…`). Mismo `com.nexa.autotrade.v2.qa`, firma distinta → `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+- **Solución**: `signingConfigs.qa` con keystore QA dedicada `android/keystore/nexa-qa.jks` (RSA-3072, 30 años, gitignored), credenciales en `android/local.properties` (gitignored) o `NXV2_QA_*`. Todas las QA futuras comparten firma `1b91108a…`.
+- **Coste único**: desinstalar cualquier `.qa` previa (firma antigua) antes de instalar 0.8.1; desde entonces las QA se actualizan encima.
+- **APK**: `nexa-v2-0.8.1-qa24b.apk` · versionCode 13 · `0.8.1-qa` · sello `e20da62` · SHA-256 `25030a63db3ed53bcde23ff220cfdff9a9e4be40941821b6f8b7c74422b24c1d` · minSdk 24 / targetSdk 36 · v2 OK.
+- **Pendiente**: evidencia de instalación en el Pixel 9 (sin dispositivo/emulador en el host — no verificable localmente).
