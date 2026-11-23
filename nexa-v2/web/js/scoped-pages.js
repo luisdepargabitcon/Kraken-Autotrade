@@ -92,8 +92,15 @@ function marketStatus(ctx,id){
   const cycles=chosen(ctx,id,'cycles').rows||[];
   const open=cycles.filter(x=>x.row.pair===pair);
   const target=first(c,'targetEntryPrice','entryTargetPrice','nextBuyPrice');
+  const cur=first(c,'currentPrice','price'),tgtN=Number(target);
+  const dist=cur&&tgtN?(((tgtN-cur)/cur)*100):null;
+  const zone=first(c,'regime','zone','band','marketZone');
+  const trail=first(c,'trailingBuy','trailing','trailingState');
   return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+esc(c.hardBlocked?'Entrada bloqueada por las condiciones del mercado.':c.reboundSignal||'Esperando confirmación de entrada.')+'</p>'+
-   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(c.currentPrice)+'</strong></div><div><small>Referencia de entrada</small><strong>'+amount(c.referencePrice)+'</strong></div><div><small>Objetivo de compra</small><strong>'+amount(target)+'</strong></div></div>'+
+   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(cur)+'</strong></div><div><small>Referencia (ancla)</small><strong>'+amount(c.referencePrice)+'</strong></div><div><small>Precio de activación</small><strong>'+amount(target)+'</strong></div>'+
+   '<div><small>Distancia</small><strong>'+(dist===null?'—':(dist>0?'+':'')+dist.toFixed(2)+' %')+'</strong></div>'+
+   (zone?'<div><small>Zona/régimen</small><strong>'+esc(String(zone))+'</strong></div>':'')+
+   (trail?'<div><small>Trailing</small><strong>'+esc(String(trail))+'</strong></div>':'')+'</div>'+
    open.map(x=>'<p>Objetivo de venta del ciclo #'+text(x.row.id)+': '+amount(first(x.row,'tpTargetPrice','sellTarget'))+'</p>').join('')+
    '<small>Los precios son referencias del bot; la ejecución depende de sus condiciones y protecciones.</small></article>';
  }).join('')+(Object.keys(contexts).length?'':'<p class="nxs-empty">Este modo todavía no entrega un contexto de entrada por activo.</p>')+'</section>';
@@ -147,12 +154,15 @@ export function renderScopedActivity(ctx){
  const scope=ctx.viewScope||'real',f=ctx.ui?.activityFilter||{};
  const visible=Array.isArray(all)?all.map((e,i)=>({e,i})).filter(x=>inScope(x.e,scope))
    .filter(x=>(f.engine==='all'||!f.engine||String(x.e.engine||'')===f.engine)&&
-    (f.sev==='all'||!f.sev||String(x.e.severity||x.e.level||'')===f.sev)):null;
+    (f.sev==='all'||!f.sev||String(x.e.severity||x.e.level||'')===f.sev)&&
+    (f.cat==='all'||!f.cat||eventCategory(x.e).id===f.cat)):null;
  const unknown=Array.isArray(all)?all.filter(x=>classifyMode(x)==='unknown').length:null;
  return '<div class="nxs-root"><div class="nxs-heading"><span>'+esc(scopeTitle(scope))+' · ACTIVIDAD</span>'+
  '<h1>Movimientos del bot</h1><p>Solo eventos identificados de este entorno. Los eventos de modo desconocido se excluyen de ambos modos.</p></div>'+
  '<div class="nxs-filters"><button data-ui="eng:all">Todos</button>'+['idca','spot','grid','ama'].map(x=>
  '<button data-ui="eng:'+x+'">'+x.toUpperCase()+'</button>').join('')+'</div>'+
+ '<div class="nxs-filters"><button data-ui="cat:all">Todas</button>'+[['executed','Ejecutadas'],['rejected','Rechazadas'],['decision','Decisiones'],['technical','Eventos'],['error','Errores']].map(([k,l])=>
+ '<button data-ui="cat:'+k+'" class="'+(f.cat===k?'on':'')+'">'+l+'</button>').join('')+'</div>'+
  (visible?dedupeEvents(visible.map(x=>({...x.e,_sourceIndex:x.i}))).slice(0,100).map(e=>recordCard(String(e.engine||'common'),'events',e,e._sourceIndex,ctx)
     .replace('data-inspect="'+esc(String(e.engine||'common')+':events:'+e._sourceIndex)+'"',
       'data-inspect="common:events:'+e._sourceIndex+'"')).join('')||

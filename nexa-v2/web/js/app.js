@@ -27,7 +27,7 @@ const state = {
   viewScope: localStorage.getItem('nexa.viewScope')==='shadow'?'shadow':'real', // solo pantalla, jamás modo del bot      // basic | pro  (solo presentación)
   screen: 'home',
   ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all', portfolioTab:'summary',fiscoTab:'summary',
-    activityFilter:{ sev:'all', engine:'all' } },
+    activityFilter:{ sev:'all', engine:'all', cat:'all' } },
   provider: createApiProvider(),
   online: navigator.onLine !== false,
 
@@ -681,6 +681,7 @@ document.addEventListener('click', e=>{
     else if(k==='fiscoTab')state.ui.fiscoTab=v;
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
+    else if(k==='cat') state.ui.activityFilter.cat=v;
     render(); return;
   }
   const act = e.target.closest('[data-action]');
