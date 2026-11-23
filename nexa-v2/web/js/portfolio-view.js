@@ -162,8 +162,9 @@ function balancesScreen(ctx,shadow){
  '</section>';
 }
 export function renderPortfolioView(ctx){
- const p=portfolioData(ctx),shadow=ctx.viewScope===SCOPE_SHADOW,tab=ctx.ui?.portfolioTab||'summary';
- const tabs=[['summary','Resumen'],['balances','Saldos'],['assets','Activos'],['ledger','Movimientos'],['reservations','Reservas'],['audit','Conciliación']];
+ const p=portfolioData(ctx),shadow=ctx.viewScope===SCOPE_SHADOW,tab=ctx.mode==='basic'&&!['summary','balances'].includes(ctx.ui?.portfolioTab)?'summary':ctx.ui?.portfolioTab||'summary';
+ const allTabs=[['summary','Resumen'],['balances','Saldos'],['assets','Activos'],['ledger','Movimientos'],['reservations','Reservas'],['audit','Conciliación']];
+ const tabs=ctx.mode==='basic'?allTabs.filter(([key])=>['summary','balances'].includes(key)):allTabs;
  const internal=p.summary||{},holds=p.holdings,ledger=p.ledger,reservations=p.reservations;
  const source=p.resourceStates||{};
  const top='<div class="nxw-title"><span>'+(shadow?'SHADOW / SIMULACIÓN':'CARTERA / REAL')+'</span>'+

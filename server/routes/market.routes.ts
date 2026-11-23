@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { MarketDataService, type Timeframe } from "../services/MarketDataService";
 import type { RegisterRoutes } from "./types";
 import { storage } from "../storage";
 import { krakenService } from "../services/kraken";
@@ -15,6 +16,25 @@ export const registerMarketRoutes: RegisterRoutes = (app, _deps) => {
   app.get("/api/market/:pair", async (req, res) => {
     try {
       const { pair } = req.params;
+      if (req.query.candles === "1") {
+        const frames: Record<string, Timeframe> = {"1":"1m","5":"5m","15":"15m","60":"1h","240":"4h","1440":"1d"};
+        const timeframe = String(req.query.timeframe || "15");
+        if (!frames[timeframe] || !/^[A-Z0-9]{2,12}\/[A-Z0-9]{2,8}$/.test(pair)) {
+          return res.status(400).json({error:"invalid_market_request"});
+        }
+        const [ticker, candles] = await Promise.all([
+          MarketDataService.getTicker(pair), MarketDataService.getCandles(pair, frames[timeframe]),
+        ]);
+        const candleCache=MarketDataService.getStats().entries.find(e=>e.key===`${pair}::${frames[timeframe]}`);
+        return res.json({pair, candleAgeMs:candleCache?.ageMs ?? null, candlesStale:candleCache?.stale ?? true,
+          lastCandleTs:candles.length?candles[candles.length-1].time:null,
+          price:ticker?.last ?? null, bid:ticker?.bid ?? null,
+          ask:ticker?.ask ?? null, volume24h:ticker?.volume24h ?? null,
+          source:"bot-market-data", provider:"MarketDataService · VPS", candleTimeframe:timeframe,
+          candlesSource:"bot-market-data", candles: candles.map(c=>({t:c.time < 1e12 ? c.time*1000 : c.time,
+            o:c.open,h:c.high,l:c.low,c:c.close,v:c.volume})),
+          dataState:ticker && candles.length>1 ? "ok" : "partial"});
+      }
       const ticker = await krakenService.getTickerRaw(pair);
       
       const tickerData: any = Object.values(ticker)[0] || {};

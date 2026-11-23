@@ -85,13 +85,30 @@ function facts(ctx,id){
  '<div><small>Modo del motor</small><strong>'+modeLabel+'</strong></div>'+
  '<div><small>Vista</small><strong>'+esc(scopeTitle(ctx.viewScope))+'</strong></div></div>';
 }
+function marketStatus(ctx,id){
+ const d=meta(ctx,id).data||{};
+ const contexts=d.pairContexts||{};
+ return '<section class="nxs-group"><h2>Qué está esperando el bot</h2>'+Object.entries(contexts).map(([pair,c])=>{
+  const cycles=chosen(ctx,id,'cycles').rows||[];
+  const open=cycles.filter(x=>x.row.pair===pair);
+  const target=first(c,'targetEntryPrice','entryTargetPrice','nextBuyPrice');
+  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+esc(c.hardBlocked?'Entrada bloqueada por las condiciones del mercado.':c.reboundSignal||'Esperando confirmación de entrada.')+'</p>'+
+   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(c.currentPrice)+'</strong></div><div><small>Referencia de entrada</small><strong>'+amount(c.referencePrice)+'</strong></div><div><small>Objetivo de compra</small><strong>'+amount(target)+'</strong></div></div>'+
+   open.map(x=>'<p>Objetivo de venta del ciclo #'+text(x.row.id)+': '+amount(first(x.row,'tpTargetPrice','sellTarget'))+'</p>').join('')+
+   '<small>Los precios son referencias del bot; la ejecución depende de sus condiciones y protecciones.</small></article>';
+ }).join('')+(Object.keys(contexts).length?'':'<p class="nxs-empty">Este modo todavía no entrega un contexto de entrada por activo.</p>')+'</section>';
+}
+export function renderModesOverview(ctx){
+ return '<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(ctx.viewScope))+'</span><h1>Tus modos de inversión</h1><p>Elige un modo para consultar su estado y sus próximas decisiones.</p></div><div class="nxs-overview">'+Object.entries(engines).map(([id,label])=>'<button class="nxs-mode-card" data-nav="engine:'+id+'"><strong>'+esc(label)+'</strong><span>'+esc(meta(ctx,id).state==='ok'?'Lectura disponible':'Lectura parcial o pendiente')+'</span><b>Abrir modo →</b></button>').join('')+'</div></div>';
+}
 export function renderScopedEngine(ctx){
  const id=ctx.ui?.engineId||'idca',info=meta(ctx,id),scope=ctx.viewScope||'real';
- const active=(ctx.ui?.subtab||'panel');
+ const active=ctx.mode==='basic'&&!['panel','cycles','positions'].includes(ctx.ui?.subtab)?'panel':(ctx.ui?.subtab||'panel');
  const sections=stream.filter(([engine])=>engine===id).map(([engine,path,label])=>({engine,path,label}));
  if(!sections.length)return '<div class="nxs-root"><h2>Motor no identificado</h2></div>';
  const sub=sections.find(x=>x.path===active);
- const selected=active==='panel'?sections:sub?[sub]:sections;
+ const basic=ctx.mode==='basic';
+ const selected=active==='panel'?sections.filter(x=>!basic||['cycles','positions'].includes(x.path)):sub?[sub]:[];
  let html='<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(scope))+'</span>'+
  '<h1>'+esc(engines[id]||id)+'</h1>'+
  '<p>Estado y actividad del modo en el entorno seleccionado.</p></div>'+
@@ -100,9 +117,10 @@ export function renderScopedEngine(ctx){
  facts(ctx,id)+
  '<nav class="nxs-tabs" aria-label="Secciones del motor">'+
  '<button data-ui="subtab:panel" class="'+(active==='panel'?'on':'')+'">Panel</button>'+
- sections.map(x=>'<button data-ui="subtab:'+esc(x.path)+'" class="'+(active===x.path?'on':'')+'">'+esc(x.label)+'</button>').join('')+
+ sections.filter(x=>!basic||['cycles','positions'].includes(x.path)).map(x=>'<button data-ui="subtab:'+esc(x.path)+'" class="'+(active===x.path?'on':'')+'">'+esc(x.label)+'</button>').join('')+
  '</nav>';
  if(info.state!=='ok'&&info.state!=='partial')html+='<p class="nxs-warning">El motor no está disponible desde la API. No se genera un estado ficticio.</p>';
+ if(active==='panel')html+=marketStatus(ctx,id);
  let globalUnknown=0,total=0;
  for(const x of selected){
   const got=chosen(ctx,id,x.path);globalUnknown+=got.unknown;

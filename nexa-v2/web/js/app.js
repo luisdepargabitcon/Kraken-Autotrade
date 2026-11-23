@@ -15,7 +15,7 @@ import {renderPortfolioView} from './portfolio-view.js';
 import { BUILD_INFO } from './build-info.js';
 import {renderFiscalView} from './fisco-view.js';
 import {openImportPositionPreview} from './import-position.js';
-import {renderScopedEngine,renderScopedActivity} from './scoped-pages.js';
+import {renderScopedEngine,renderScopedActivity,renderModesOverview} from './scoped-pages.js';
 import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
@@ -60,7 +60,7 @@ function navTarget(){
 }
 function navTo(target){
   if(target.startsWith('engine:')){ state.ui.engineId = target.slice(7); state.ui.subtab = ENGINE_SUBTABS[state.ui.engineId]?.[0]?.id || 'panel'; state.screen='engines'; }
-  else state.screen = target;
+  else {state.screen = target;if(target==='engines')state.ui.engineId='overview';}
   render();
   window.scrollTo?.(0,0);
 }
@@ -137,7 +137,7 @@ function render(){
   else if(state.screen==='asset') html = D.renderAsset(ctx);
   else if(state.screen==='manage-idca') html = D.renderCycleManager(ctx);
   else if(state.screen==='market') html = S.renderMarket(ctx);
-  else if(state.screen==='engines') html = renderScopedEngine(ctx);
+  else if(state.screen==='engines') html = state.ui.engineId==='overview'?renderModesOverview(ctx):renderScopedEngine(ctx);
   else if(state.screen==='portfolio') html = renderPortfolioView(ctx);
   else if(state.screen==='activity') html = renderScopedActivity(ctx);
   else if(state.screen==='fisco') html = renderFiscalView(ctx);

@@ -37,3 +37,7 @@
 .nxs-technical pre{overflow:auto;max-height:55vh;font-size:11px;line-height:1.5}
 #app[data-scope=shadow] .nxs-group,#app[data-scope=shadow] .nxs-record,#app[data-scope=shadow] .nxs-engine-facts>div{background:#291d3c;border-color:#71518a}
 @media(max-width:550px){.nxs-root{padding:14px 12px 26px;gap:12px}.nxs-engine-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.nxs-record-top{flex-direction:column}.nxs-record-money{max-width:100%;text-align:left}.nxs-group{padding:12px}}
+.nxs-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.nxs-mode-card{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:20px;text-align:left;border:1px solid #355371;border-radius:18px;background:linear-gradient(140deg,#193653,#101f34);color:#e8f3ff;min-height:160px}
+.nxs-mode-card strong{font-size:20px}.nxs-mode-card span{color:#a5bed9;font-size:13px}.nxs-mode-card b{color:#8ccaff;font-size:13px}
+@media(max-width:420px){.nxs-overview{grid-template-columns:1fr}}

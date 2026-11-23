@@ -8,7 +8,7 @@ import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder, no
          normGridCycle, normGridStatus, normAmaStatus, normAmaMandate,
          normPortfolioSummary, normMarket, normEvent, enrichMarket,
          wrap, unwrap } from './adapters.js';
-import { fetchKrakenCandles, computeIndicators } from './market-candles.js';
+import { computeIndicators } from './market-candles.js';
 import { freshness } from './util.js';
 
 function pathOf(route){
@@ -207,29 +207,28 @@ export function createApiProvider(){
       };
     },
     async market(pair='BTC/USD',timeframe='15'){
-      // Cuatro lecturas reales: ticker del bot, libro AMA (bid/ask), diagnósticos
-      // IDCA por par y velas OHLCV reales de la API pública de Kraken (fuente etiquetada).
-      const [r,mv,entry,cd] = await Promise.all([
-        get(ROUTES.common.market,{params:{pair}}),
+      // Una fuente de mercado: MarketDataService del bot, mediante el gateway autenticado.
+      // Contexto de decisión IDCA y libro de ejecución AMA siguen identificados.
+      const [r,mv,entry] = await Promise.all([
+        get(ROUTES.common.market+'?candles=1&timeframe='+encodeURIComponent(timeframe),{params:{pair}}),
         get(ROUTES.ama.marketView),
-        readEntryDiagnostics(),
-        fetchKrakenCandles(pair,timeframe)]);
+        readEntryDiagnostics()]);
       const ctxs=entry.state==='ok'?entryContexts(entry.data):null;
       const sources=[
         {name:'API /market/'+pair,state:st(r.state)},
         {name:'AMA market-view',state:st(mv.state)},
         {name:'IDCA entry-diagnostics',state:st(entry.state)},
-        {name:'Kraken OHLC público '+timeframe+'m',state:cd.state}];
+        {name:'Market Data del bot · '+timeframe+'m',state:st(r.state)}];
       const market=wrap(r.data,raw=>{
         const m=enrichMarket(normMarket(raw),{marketView:mv.data,entryCtx:ctxs?.[pair],sources});
-        if(cd.state==='ok'&&cd.candles.length>1){
-          m.candles=cd.candles;m.candlesSource='kraken-public';m.candleTimeframe=timeframe;
-          const ind=computeIndicators(cd.candles);
-          if(ind)m.indicators={...(m.indicators||{}),...ind,regime:m.indicators?.regime??ind.regime};
-        }else{m.candles=null;m.candlesError=cd.state;m.candlesSource='kraken-public';}
+        m.candlesSource=m.candlesSource||'bot-market-data';
+        if(Array.isArray(m.candles)&&m.candles.length>1){
+          const ind=computeIndicators(m.candles);
+          if(ind)m.indicators={...(m.indicators||{}),...ind};
+        }else{m.candlesError='Velas no disponibles desde Market Data del bot';}
         return m;
       });
-      return { state: st(r.state), market, latency: r.latency };
+      return { state: r.state==='ok'&&(!Array.isArray(market.data?.candles)||market.data.candles.length<2)?'partial':st(r.state), market, latency: r.latency };
     },
     async portfolio(){
       // Saldos EXCHANGE y contabilidad BOT son fuentes diferentes.

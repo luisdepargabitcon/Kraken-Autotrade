@@ -60,7 +60,8 @@ test('fetchKrakenCandles normaliza y rechaza filas corruptas', async () => {
 });
 test('el provider incorpora velas reales etiquetadas, nunca curvas fabricadas', () => {
   const p = read('js/provider.js');
-  assert.ok(p.includes('fetchKrakenCandles'), 'provider no consulta OHLCV real');
+  assert.ok(p.includes('?candles=1&timeframe='), 'provider no solicita las velas al bot');
+  assert.ok(!p.includes('fetchKrakenCandles'), 'el móvil no debe duplicar MarketDataService');
   assert.ok(p.includes('candlesSource'), 'provider no etiqueta la fuente de velas');
   assert.ok(!/makeCandles|fakeCandles|synthCandles/.test(p), 'posible fabricación de velas');
 });
