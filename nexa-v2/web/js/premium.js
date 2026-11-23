@@ -68,6 +68,23 @@ function getCandles(m,pair){
  return rawCandles.map(c=>({t:first(c,'t','ts','time','timestamp'),o:first(c,'o','open'),h:first(c,'h','high'),l:first(c,'l','low'),c:first(c,'c','close'),v:first(c,'v','volume')}))
  .filter(c=>[c.o,c.h,c.l,c.c].every(num)&&c.h>=c.l).slice(-100);
 }
+// Niveles etiquetados sobre la gráfica: EMA/Bollinger calculados sobre las
+// mismas velas (valores actuales, no series históricas) + contexto IDCA del par
+// vía m.marketContext (contrato de enrichMarket). La activación se deriva del
+// par referencia+caída requerida que emite el bot — etiquetada como derivada,
+// nunca presentada como nivel emitido directamente.
+export function chartLevels(m,pair){
+ const ind=m?.indicators||{},e=ind.ema||{},bb=ind.bollinger||{},mc=m?.marketContext||{};
+ const nn=v=>num(v)?v:num(Number(v))?Number(v):null;
+ const L=(price,label)=>nn(price)&&nn(price)>0?{price:nn(price),label}:null;
+ const ref=nn(mc.referencePrice),req=nn(mc.requiredDipPct);
+ return [
+   L(e.ema20,'EMA 20'),L(e.ema50,'EMA 50'),L(e.ema200,'EMA 200'),
+   L(bb.upper,'Bollinger sup.'),L(bb.mid,'Bollinger media'),L(bb.lower,'Bollinger inf.'),
+   L(ref,'Referencia IDCA'),
+   L(ref&&req?ref*(1-req/100):null,'Activación (ref. − caída requerida)'),
+ ].filter(Boolean);
+}
 function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=[]}={}){
  const m=raw(ctx,'market');const ready=goodCommon(ctx,'market');
  const candles=getCandles(m,pair);
@@ -76,17 +93,7 @@ function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=
  const tfBar=compact?'':'<div class="nxp-tfbar" role="group" aria-label="Intervalo de velas">'+
    [['1','1m'],['5','5m'],['15','15m'],['60','1h'],['240','4h'],['1440','1d']].map(([v,l])=>
    `<button data-ui="tf:${v}" class="${String(tf)===v?'on':''}">${l}</button>`).join('')+'</div>';
- // Niveles etiquetados sobre la gráfica: indicadores calculados sobre estas mismas
- // velas + referencias del contexto IDCA del par. Solo valores finitos; nada ficticio.
- if(!levels.length){
-   const ind=m.indicators||{},e=ind.ema||{},bb=ind.bollinger||{};
-   const L=(price,label,old)=>num(price)?{price:num(price),label,old}:null;
-   levels=[
-     L(e.ema20,'EMA 20'),L(e.ema50,'EMA 50'),L(e.ema200,'EMA 200'),
-     L(bb.upper,'Bollinger sup.'),L(bb.mid,'Bollinger media'),L(bb.lower,'Bollinger inf.'),
-     L(m.referencePrice,'Referencia IDCA'),L(m.targetEntryPrice||m.nextBuyPrice,'Activación IDCA'),
-   ].filter(Boolean);
- }
+ if(!levels.length) levels=chartLevels(m,pair);
  return `<section class="nxp-chartbox ${compact?'nxp-chart-compact':''}">
    <div class="nxp-charthead"><div>${eyebrow(title)}<strong>${esc(pair)}</strong></div>
      <span class="nxp-timeframe" title="Temporalidad de las velas mostradas">${esc(tfLabel)}</span></div>

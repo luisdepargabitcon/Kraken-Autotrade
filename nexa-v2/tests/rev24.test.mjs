@@ -129,3 +129,23 @@ test('marketStatus con precio 0 o sin target no muestra distancia inválida', as
   assert.ok(!html.includes('Infinity'), 'Infinity visible');
   assert.ok(html.includes('volumen insuficiente'), 'hardBlocker no traducido');
 });
+
+// ---------- R18f: niveles conectados por contrato adapter->vista ----------
+test('chartLevels conecta referencia/activación desde marketContext (contrato enrichMarket)', async () => {
+  const { enrichMarket } = await import(pathToFileURL(join(web, 'js', 'adapters.js')));
+  const { chartLevels } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
+  const m = enrichMarket({ pair:'BTC/USD', price:60000, indicators:{ema:{ema20:59800},bollinger:{upper:61000,mid:60000,lower:59000}} },
+    { entryCtx:{ referencePrice:61000, requiredDipPct:5, entryDecision:'watch' } });
+  const lv = chartLevels(m, 'BTC/USD');
+  const labels = lv.map(l=>l.label);
+  assert.ok(labels.includes('Referencia IDCA'), 'referencia no conectada a la gráfica');
+  const act = lv.find(l=>l.label.startsWith('Activación'));
+  assert.ok(act && act.price === 61000*(1-5/100), 'activación derivada incorrecta');
+  const bb = lv.find(l=>l.label==='Bollinger sup.');
+  assert.ok(bb && bb.price === 61000, 'Bollinger no conectada');
+});
+test('chartLevels no inventa niveles sin datos finitos', async () => {
+  const { chartLevels } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
+  assert.equal(chartLevels({indicators:{},marketContext:{}}).length, 0);
+  assert.equal(chartLevels({marketContext:{referencePrice:'x',requiredDipPct:5}}).length, 0);
+});
