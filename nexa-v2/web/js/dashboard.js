@@ -128,9 +128,17 @@ export function renderDashboard(ctx){
   '</div>':'';
  return '<div class="nxh-root"><header class="nxh-title"><span>'+esc(scopeTitle(ctx.viewScope))+' · VISIÓN GLOBAL</span><h1>Tu bot, de un vistazo</h1>'+
  '<p>Mercado, exposición y movimientos de todas tus estrategias.</p></header>'+
- '<section class="nxh-hero"><small>POSICIONES ABIERTAS CONFIRMADAS</small>'+
- '<div class="nxh-bigline"><strong>'+s.entries.length+'</strong>'+go('positions','Ver todas')+'</div>'+
- '<p>'+(s.complete?'Lectura disponible de los cuatro motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+  '<div class="nxh-mode-breakdown"><span>LIVE '+liveCount+'</span><span>SIM / SHADOW '+simCount+'</span>'+(unknownCount?'<span>Modo no verificado '+unknownCount+'</span>':'')+'</div>'+
+ '<section class="nxh-hero"><small>POSICIONES ABIERTAS · POR ENTORNO</small>'+
+ '<div class="nxh-env-grid">'+
+ '<div class="nxh-env nxh-env-real"><small>REAL · LIVE</small><strong>'+liveCount+' posiciones</strong>'+
+ '<span>Patrimonio: '+(exchangeValuation!==null?usd(exchangeValuation):'No confirmado')+'</span>'+
+ '<span>PnL real: '+(verifiedPortfolio?pnl(summary.realizedPnlUsd):'—')+'</span></div>'+
+ '<div class="nxh-env nxh-env-shadow"><small>SHADOW · SIM</small><strong>'+simCount+' posiciones</strong>'+
+ '<span>Capital virtual: '+usd(val(simWallet,'totalUsd','equityUsd','balanceUsd'))+'</span>'+
+ '<span>PnL simulado: —</span></div></div>'+
+ (unknownCount?'<p class="nxh-caution">'+unknownCount+' registros sin entorno verificado — pendientes de clasificación.</p>':'')+
+ '<div class="nxh-bigline" style="margin-top:8px">'+go('positions','Ver todas')+'</div>'+
+ '<p>'+(s.complete?'Lectura disponible de los cuatro motores':'Visión parcial: faltan lecturas de uno o más motores')+'</p>'+
  '<div class="nxh-hero-stats">'+metric(isShadow?'Saldo virtual IDCA':'Patrimonio exchange',isShadow?usd(val(simWallet,'totalUsd','equityUsd','balanceUsd')):
    exchangeValuation!==null?usd(exchangeValuation):'No confirmado')+metric('Motores','4')+
  metric('Estado',ctx.authenticated?'Conectado':'Sin sesión')+'</div></section>'+

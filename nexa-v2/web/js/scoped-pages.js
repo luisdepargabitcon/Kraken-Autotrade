@@ -1,6 +1,7 @@
 // NEXA: scope-aware motor and activity views. No REAL records inside SHADOW.
 import {esc,fmtUsd,fmtTs,signedUsd} from './util.js';
 import {classifyMode,inScope,scopeTitle,SCOPE_SHADOW} from './display-scope.js';
+import {eventCategory,describeEvent,eventCode} from './event-labels.js';
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
 const first=(o,...ks)=>{for(const k of ks){const x=o?.[k];if(x!==null&&x!==undefined&&x!=='')return x;}return null;};
 const text=v=>v==null||v===''?'—':esc(String(v));
@@ -28,15 +29,20 @@ function chosen(ctx,id,field){
  });
  return {rows:out,missing:false,unknown,other};
 }
-function eventText(r){return String(first(r,'reason','naturalMessage','message','msg','text','type','closeReason')||'Detalle no comunicado').replace(/_/g,' ');}
+function eventText(r){return describeEvent(r);}
 function recordCard(id,field,r,index,ctx){
  const title=first(r,'pair','symbol','asset')||id.toUpperCase();
  const pnl=first(r,'realizedPnlUsd','unrealizedPnlUsd','netPnlUsd');
  const type=first(r,'side','type','status','state');
  const when=first(r,'executedAt','ts','createdAt','closedAt','openedAt','startedAt');
  const tone=n(pnl)===null?'unknown':pnl<0?'loss':'profit';
+ const isEvent=field==='events'||field==='trace.decisions'||field.indexOf('events')===0;
+ const cat=isEvent?eventCategory(r):null;
+ const catTag=cat?'<span class="nxs-cat nxs-cat-'+cat.id+'">'+cat.label+'</span>':'';
+ const proCode=cat&&ctx.mode==='pro'&&eventCode(r)?' <code class="nxs-code">'+esc(eventCode(r))+'</code>':'';
  return '<article class="nxs-record nxs-'+tone+'"><div class="nxs-record-top">'+
- '<div><span class="nxs-record-kind">'+esc(id.toUpperCase())+' · '+text(type)+'</span>'+
+ '<div>'+catTag+'<span class="nxs-record-kind">'+esc(id.toUpperCase())+' · '+
+ (cat&&cat.id!=='executed'?esc(describeEvent(r)):text(type))+proCode+'</span>'+
  '<h3>'+text(title)+(r.id!=null?' · #'+text(r.id):'')+'</h3>'+
  '<small>'+ (when?esc(fmtTs(when)):'Sin fecha comprobada')+'</small></div>'+
  '<div class="nxs-record-money"><strong>'+ (n(pnl)!==null?profit(pnl):amount(first(r,'valueUsd','capitalUsedUsd','investedUsd','notionalUsd')))+'</strong>'+

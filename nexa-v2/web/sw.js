@@ -1,11 +1,16 @@
-// NEXA premium rev11 — static shell only. Never cache API/auth responses.
-const CACHE='nexa-v2-real-adapters-r14b';
+// NEXA rev24 — static shell only. Never cache API/auth responses.
+// CACHE is rewritten by scripts/stamp-build.mjs at every build so each APK/web
+// version invalidates the previous shell and never serves stale modules.
+const CACHE='nexa-v2-__BUILD_STAMP__';
 const SHELL=[
  './','./index.html','./manifest.webmanifest','./assets/icon.svg',
- './css/style.css','./css/premium.css',
- './js/app.js','./js/ui.js','./js/util.js','./js/contracts.js',
+ './css/style.css','./css/premium.css','./css/dashboard.css','./css/scope-portfolio.css',
+ './js/app.js','./js/ui.js','./js/util.js','./js/contracts.js','./js/config.js',
  './js/provider.js','./js/screens.js','./js/premium.js','./js/premium-chart.js',
- './js/config.js','./js/adapters.js','./js/auth.js','./js/actions.js','./js/pairing.js'
+ './js/adapters.js','./js/auth.js','./js/actions.js','./js/pairing.js',
+ './js/build-info.js','./js/dashboard.js','./js/display-scope.js','./js/experience.js',
+ './js/fisco-view.js','./js/import-position.js','./js/inspector.js',
+ './js/portfolio-view.js','./js/scoped-pages.js','./js/market-candles.js','./js/event-labels.js'
 ];
 self.addEventListener('install',event=>{
  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));

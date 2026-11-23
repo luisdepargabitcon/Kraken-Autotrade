@@ -8,6 +8,7 @@ import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder, no
          normGridCycle, normGridStatus, normAmaStatus, normAmaMandate,
          normPortfolioSummary, normMarket, normEvent, enrichMarket,
          wrap, unwrap } from './adapters.js';
+import { fetchKrakenCandles, computeIndicators } from './market-candles.js';
 import { freshness } from './util.js';
 
 function pathOf(route){
@@ -205,20 +206,29 @@ export function createApiProvider(){
         latency: status.latency,
       };
     },
-    async market(pair='BTC/USD'){
-      // Tres lecturas reales permitidas por la pasarela: ticker, libro AMA (bid/ask)
-      // y diagnósticos IDCA (régimen/ATRP/score por par). Sin velas OHLCV exportadas.
-      const [r,mv,entry] = await Promise.all([
+    async market(pair='BTC/USD',timeframe='15'){
+      // Cuatro lecturas reales: ticker del bot, libro AMA (bid/ask), diagnósticos
+      // IDCA por par y velas OHLCV reales de la API pública de Kraken (fuente etiquetada).
+      const [r,mv,entry,cd] = await Promise.all([
         get(ROUTES.common.market,{params:{pair}}),
         get(ROUTES.ama.marketView),
-        readEntryDiagnostics()]);
+        readEntryDiagnostics(),
+        fetchKrakenCandles(pair,timeframe)]);
       const ctxs=entry.state==='ok'?entryContexts(entry.data):null;
       const sources=[
         {name:'API /market/'+pair,state:st(r.state)},
         {name:'AMA market-view',state:st(mv.state)},
-        {name:'IDCA entry-diagnostics',state:st(entry.state)}];
-      const market=wrap(r.data,
-        raw=>enrichMarket(normMarket(raw),{marketView:mv.data,entryCtx:ctxs?.[pair],sources}));
+        {name:'IDCA entry-diagnostics',state:st(entry.state)},
+        {name:'Kraken OHLC público '+timeframe+'m',state:cd.state}];
+      const market=wrap(r.data,raw=>{
+        const m=enrichMarket(normMarket(raw),{marketView:mv.data,entryCtx:ctxs?.[pair],sources});
+        if(cd.state==='ok'&&cd.candles.length>1){
+          m.candles=cd.candles;m.candlesSource='kraken-public';m.candleTimeframe=timeframe;
+          const ind=computeIndicators(cd.candles);
+          if(ind)m.indicators={...(m.indicators||{}),...ind,regime:m.indicators?.regime??ind.regime};
+        }else{m.candles=null;m.candlesError=cd.state;m.candlesSource='kraken-public';}
+        return m;
+      });
       return { state: st(r.state), market, latency: r.latency };
     },
     async portfolio(){

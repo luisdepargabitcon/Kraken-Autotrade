@@ -12,6 +12,7 @@ import { showRecordInspector } from './inspector.js';
 import * as S from './screens.js';
 import * as D from './dashboard.js';
 import {renderPortfolioView} from './portfolio-view.js';
+import { BUILD_INFO } from './build-info.js';
 import {renderFiscalView} from './fisco-view.js';
 import {openImportPositionPreview} from './import-position.js';
 import {renderScopedEngine,renderScopedActivity} from './scoped-pages.js';
@@ -69,7 +70,7 @@ window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.has
 async function loadData(){
   const p = state.provider;
   const [idca, spot, grid, ama, btcMarket, ethMarket, portfolio, activity, fisco] = await Promise.all([
-    p.idca(), p.spot(), p.grid(), p.ama(), p.market('BTC/USD'), p.market('ETH/USD'),
+    p.idca(), p.spot(), p.grid(), p.ama(), p.market('BTC/USD',state.ui.marketTf||'15'), p.market('ETH/USD',state.ui.marketTf||'15'),
     p.portfolio(), p.activity(), p.fisco(),
   ]);
   const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
@@ -662,6 +663,19 @@ document.addEventListener('click', e=>{
       }).catch(()=>{ state.common.market={state:'error',data:null};render(); });
       return;
     }
+    else if(k==='tf'){
+      state.ui.marketTf=v;
+      render();
+      if(session.get()){const pair=state.ui.marketPair||'BTC/USD';
+        state.provider.market(pair,v).then(res=>{
+          if(state.ui.marketTf!==v)return;
+          const pack={state:res.state,data:res.market?.data??null};
+          if(state.common.marketPairs)state.common.marketPairs[pair]=pack;
+          state.common.market=pack;
+          render();
+        }).catch(()=>{ state.common.market={state:'error',data:null};render(); });}
+      return;
+    }
     else if(k==='positionFilter')state.ui.positionFilter=v;
     else if(k==='portfolioTab')state.ui.portfolioTab=v;
     else if(k==='fiscoTab')state.ui.fiscoTab=v;
@@ -694,6 +708,19 @@ $('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage
 $('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); render(); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
+// Insignia de versión permanente: generada en compilación, visible en todas las pantallas.
+(function(){
+  const b=$('ver-badge');if(!b)return;
+  b.textContent='v'+BUILD_INFO.version+' · '+String(BUILD_INFO.channel||'').toUpperCase();
+  b.addEventListener('click',()=>openModal(
+    '<h3>Compilación NEXA</h3><div class="nx-inspect-priority">'+
+    '<div class="nx-detail-metric"><span>Versión</span><strong>'+esc(BUILD_INFO.version)+'</strong></div>'+
+    '<div class="nx-detail-metric"><span>Commit</span><strong class="mono">'+esc(BUILD_INFO.commit)+'</strong></div>'+
+    '<div class="nx-detail-metric"><span>Canal</span><strong>'+esc(String(BUILD_INFO.channel).toUpperCase())+'</strong></div>'+
+    '<div class="nx-detail-metric"><span>Compilada</span><strong>'+esc(BUILD_INFO.builtAt?BUILD_INFO.builtAt.replace('T',' ').slice(0,16)+' UTC':'—')+'</strong></div>'+
+    '<div class="nx-detail-metric"><span>Tipo de APK</span><strong>'+esc(BUILD_INFO.apkType||'—')+'</strong></div>'+
+    '</div><p class="small" style="opacity:.75">El sello se genera automáticamente durante la compilación.</p>'));
+})();
 
 // Inspección de velas: tooltip táctil/ratón/teclado, solo datos OHLCV del proveedor.
 function showCandleTip(event){

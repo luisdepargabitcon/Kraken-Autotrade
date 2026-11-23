@@ -5,6 +5,7 @@ import {esc,fmtUsd,signedUsd,signedPct,fmtNum,fmtPct,fmtTs,fmtAge,NA} from './ut
 import {candleChart,lineChart,modeBadge} from './ui.js';
 import {ohlcvChart} from './premium-chart.js';
 import {BUILD_INFO} from './build-info.js';
+import {valueExchangeBalances} from './portfolio-view.js';
 
 const NAMES={idca:'IDCA',spot:'SPOT / Swing',grid:'GRID aislado',ama:'AMA'};
 const DESCS={idca:'Acumulación inteligente por ciclos',spot:'Señales y gestión de posiciones',grid:'Órdenes por niveles BUY → SELL',ama:'Mandatos y acumulación macro'};
@@ -70,12 +71,18 @@ function getCandles(m,pair){
 function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=[]}={}){
  const m=raw(ctx,'market');const ready=goodCommon(ctx,'market');
  const candles=getCandles(m,pair);
+ const tf=m.candleTimeframe||ctx.ui?.marketTf||'15';
+ const tfLabel={1:'1m',5:'5m',15:'15m',60:'1h',240:'4h',1440:'1d'}[String(tf)]||tf+'m';
+ const tfBar=compact?'':'<div class="nxp-tfbar" role="group" aria-label="Intervalo de velas">'+
+   [['1','1m'],['5','5m'],['15','15m'],['60','1h'],['240','4h'],['1440','1d']].map(([v,l])=>
+   `<button data-ui="tf:${v}" class="${String(tf)===v?'on':''}">${l}</button>`).join('')+'</div>';
  return `<section class="nxp-chartbox ${compact?'nxp-chart-compact':''}">
    <div class="nxp-charthead"><div>${eyebrow(title)}<strong>${esc(pair)}</strong></div>
-     <span class="nxp-timeframe" title="Temporalidad disponible del contrato">15m</span></div>
-   ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${ohlcvChart(candles,{height:compact?240:315,levels:levels.filter(x=>num(x.price)),label:pair+' · velas OHLCV'})}</div>`:
-      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado','Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias. El bot calcula velas internamente, pero la API de solo lectura no exporta la serie.')}
-   <div class="nxp-chartfoot">${ready?`Origen: ${esc(m.provider||m.source||'API')} · ${m.ts?esc(fmtAge(m.ts)):'hora no verificada'}`:
+     <span class="nxp-timeframe" title="Temporalidad de las velas mostradas">${esc(tfLabel)}</span></div>
+   ${tfBar}
+   ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${ohlcvChart(candles,{height:compact?240:315,levels:levels.filter(x=>num(x.price)),label:pair+' · velas OHLCV '+tfLabel})}</div>`:
+      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado',m.candlesError?('La fuente de velas respondió: '+esc(m.candlesError)+'. No se dibujan curvas ficticias.'):'Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias.')}
+   <div class="nxp-chartfoot">${ready?`Origen: ${esc(m.candlesSource==='kraken-public'?'Kraken OHLC público (fuente externa verificable)':(m.provider||m.source||'API'))} · ${m.ts?esc(fmtAge(m.ts)):'hora no verificada'}`:
      'Precio y velas pendientes de autenticación y fuente'}</div>
  </section>`;
 }
@@ -97,16 +104,21 @@ function engineCard(ctx,e){
 }
 function portfolioSummary(ctx){
  const s=raw(ctx,'portfolio').summary||{};
- return {s,connected:goodCommon(ctx,'portfolio')&&(num(s.navUsd)||num(s.exposureUsd))};
+ const p=raw(ctx,'portfolio'),rs=p.resourceStates||{};
+ // Patrimonio real = saldos de exchange × precios verificados. navUsd es el
+ // presupuesto interno del bot: nunca se presenta como patrimonio.
+ const exchangeUsd=(rs.exchangeBalances==='ok'&&rs.prices==='ok'&&p.exchangeBalances)?
+  valueExchangeBalances(p.exchangeBalances,p.prices).totalUsd:null;
+ return {s,connected:goodCommon(ctx,'portfolio')&&(num(s.navUsd)||num(s.exposureUsd)),exchangeUsd};
 }
 function basicHome(ctx){
- const {s,connected}=portfolioSummary(ctx);
+ const {s,connected,exchangeUsd}=portfolioSummary(ctx);
  const rows=(ctx.engineList||[]).map(e=>engineCard(ctx,e)).join('');
  return wrap(`<div class="nxp-basic-home">
-   <div class="nxp-home-greeting">${eyebrow('NEXA · Inicio')}<span>${connected?chip('Datos verificados','good'):chip(ctx.deviceEnrolled?'Conexión pendiente':'Sin vincular','warn')}</span></div>
-   <section class="nxp-basic-balance"><span>${connected?'Mi patrimonio':'Tu centro de control'}</span>
-    <h1>${connected?money(s.navUsd):'Un vistazo a todo tu bot.'}</h1>
-    <p>${connected?'Tu actividad consolidada, sin mezclar reservas con resultados.':'Cuatro estrategias, una cartera y un acceso protegido.'}</p>
+   <div class="nxp-home-greeting">${eyebrow('NEXA · Inicio')}<span>${connected?chip(exchangeUsd!==null?'Saldos exchange leídos':'Lectura parcial',exchangeUsd!==null?'good':'warn'):chip(ctx.deviceEnrolled?'Conexión pendiente':'Sin vincular','warn')}</span></div>
+   <section class="nxp-basic-balance"><span>${connected?(exchangeUsd!==null?'Mi patrimonio (saldos exchange)':'Patrimonio sin conciliar'):'Tu centro de control'}</span>
+    <h1>${connected?(exchangeUsd!==null?money(exchangeUsd):'—'):'Un vistazo a todo tu bot.'}</h1>
+    <p>${connected?(exchangeUsd!==null?'Saldos reales de Kraken y Revolut X a precios verificados.':'El presupuesto interno del bot no es patrimonio: falta conciliación de saldos o precios.'):'Cuatro estrategias, una cartera y un acceso protegido.'}</p>
     ${connected?`<div class="nxp-pnl-pair">${block('PnL realizado',pnl(s.realizedPnlUsd),moneyClass(s.realizedPnlUsd))}${block('Sin realizar',pnl(s.unrealizedPnlUsd),moneyClass(s.unrealizedPnlUsd))}</div>`:
       `<div class="nxp-actions"><button class="nxp-primary" data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar mi bot'} <b>↗</b></button></div>`}
    </section>
@@ -117,16 +129,16 @@ function basicHome(ctx){
  </div>`,'nxp-mode-basic');
 }
 function proHome(ctx){
- const {s,connected}=portfolioSummary(ctx);
+ const {s,connected,exchangeUsd}=portfolioSummary(ctx);
  const market=raw(ctx,'market'),ticker=getTicker(market,ctx.ui?.marketPair||'BTC/USD');
  const events=raw(ctx,'activity').events||[];
  return wrap(`<div class="nxp-pro-home">
    <div class="nxp-terminal-title"><div>${eyebrow('NEXA / TERMINAL')}<h1>Centro de operaciones</h1></div>
-      ${connected?chip('Cartera conectada','good'):chip('Datos sin verificar','warn')}</div>
+      ${connected?chip(exchangeUsd!==null?'Saldos exchange leídos':'Sin conciliación completa',exchangeUsd!==null?'good':'warn'):chip('Datos sin verificar','warn')}</div>
    <div class="nxp-command-strip">
-    ${block('Patrimonio',connected?money(s.navUsd):'—')}
+    ${block('Patrimonio exchange',exchangeUsd!==null?money(exchangeUsd):'No confirmado')}
+    ${block('Presupuesto bot',connected?money(s.navUsd):'—')}
     ${block('PnL realizado',connected?pnl(s.realizedPnlUsd):'—',moneyClass(connected?s.realizedPnlUsd:null))}
-    ${block('Exposición',connected?money(s.exposureUsd):'—')}
     ${block('No realizado',connected?pnl(s.unrealizedPnlUsd):'—',moneyClass(connected?s.unrealizedPnlUsd:null))}
    </div>
    <div class="nxp-terminal-grid">
@@ -539,14 +551,17 @@ function allocationBars(rows,nameKey='asset'){
 }
 function basicPortfolio(ctx){
  const s=raw(ctx,'portfolio').summary||{},ready=goodCommon(ctx,'portfolio');
+ const p=raw(ctx,'portfolio'),rs=p.resourceStates||{};
+ const exchangeUsd=(rs.exchangeBalances==='ok'&&rs.prices==='ok'&&p.exchangeBalances)?
+  valueExchangeBalances(p.exchangeBalances,p.prices).totalUsd:null;
  const byAsset=s.byAsset||raw(ctx,'portfolio').holdings||[];
  const verifiedAssets=Array.isArray(byAsset)&&byAsset.some(x=>num(x.valueUsd??x.exposureUsd??x.currentValueUsd));
- const navConfirmed=ready&&num(s.navUsd);
- const label=verifiedAssets?'Patrimonio consolidado':'Capital informado por la API';
+ const label=exchangeUsd!==null?'Patrimonio en exchanges':'Lectura sin conciliación completa';
  return wrap(`${section('CARTERA','Mi cartera')}
   ${ready?`<section class="nxp-basic-balance nxp-balanced">
-    <span>${label}</span><h1>${navConfirmed?money(s.navUsd):'—'}</h1>
-    <p>${verifiedAssets?'Valor según los activos y el balance disponible.':'No se ha recibido desglose por activo: esta cifra no debe interpretarse como saldo confirmado de Kraken.'}</p>
+    <span>${label}</span><h1>${exchangeUsd!==null?money(exchangeUsd):'—'}</h1>
+    <p>${exchangeUsd!==null?'Suma de saldos reales de Kraken y Revolut X valorados a precios actuales.':'Faltan saldos de exchange o precios para confirmar el patrimonio. No se muestra el presupuesto interno del bot como patrimonio.'}</p>
+    ${num(s.navUsd)?`<p class="nxp-inline-note" style="opacity:.8">Presupuesto interno del bot (NAV contable): ${money(s.navUsd)} — no es saldo del exchange.</p>`:''}
     <div class="nxp-pnl-pair">${block('PnL realizado',pnl(s.realizedPnlUsd),moneyClass(s.realizedPnlUsd))}
       ${block('Sin realizar',pnl(s.unrealizedPnlUsd),moneyClass(s.unrealizedPnlUsd))}</div></section>
     ${verifiedAssets?`${section('DISTRIBUCIÓN','Mis activos')}${allocationBars(byAsset)}`:
@@ -557,9 +572,13 @@ function basicPortfolio(ctx){
 }
 function proPortfolio(ctx){
  const s=raw(ctx,'portfolio').summary||{},ready=goodCommon(ctx,'portfolio');
+ const p=raw(ctx,'portfolio'),rs=p.resourceStates||{};
+ const exchangeUsd=(rs.exchangeBalances==='ok'&&rs.prices==='ok'&&p.exchangeBalances)?
+  valueExchangeBalances(p.exchangeBalances,p.prices).totalUsd:null;
  return wrap(`<div class="nxp-terminal-title">${section('CAPITAL Y EXPOSICIÓN','Análisis de cartera')}
-  ${chip(ready?'Balance verificado':'Balance no verificado',ready?'good':'warn')}</div>
-  <div class="nxp-command-strip">${block('NAV',ready?money(s.navUsd):'—')}
+  ${chip(exchangeUsd!==null?'Saldos exchange leídos':'Sin conciliación completa',exchangeUsd!==null?'good':'warn')}</div>
+  <div class="nxp-command-strip">${block('Patrimonio exchange',exchangeUsd!==null?money(exchangeUsd):'No confirmado')}
+   ${block('Presupuesto bot (NAV interno)',ready?money(s.navUsd):'—')}
    ${block('Realizado',ready?pnl(s.realizedPnlUsd):'—',moneyClass(ready?s.realizedPnlUsd:null))}
    ${block('No realizado',ready?pnl(s.unrealizedPnlUsd):'—',moneyClass(ready?s.unrealizedPnlUsd:null))}
    ${block('Exposición',ready?money(s.exposureUsd):'—')}</div>

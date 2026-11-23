@@ -35,6 +35,9 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .seg button{padding:6px 11px;font-size:12px;color:var(--tx2)}
 .seg button.on{background:#123877;color:var(--blue2);font-weight:600}
 .seg-btn{padding:6px 11px;font-size:12px;border:1px solid var(--line2);border-radius:9px;color:var(--tx2)}
+.nx-ver{padding:4px 8px;font-size:10.5px;font-family:ui-monospace,monospace;border:1px solid var(--line2);
+  border-radius:8px;color:var(--tx3);background:transparent;white-space:nowrap;cursor:pointer}
+.nx-ver:hover{color:var(--blue2);border-color:var(--blue)}
 .seg-btn:hover{color:var(--tx);border-color:var(--blue)}
 .statusline{display:flex;gap:10px;align-items:center;min-height:26px;padding:3px 14px;
   font-size:11px;color:var(--tx3);border-bottom:1px solid var(--line);background:var(--bg2);

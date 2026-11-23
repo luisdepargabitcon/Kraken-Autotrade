@@ -29,6 +29,16 @@ export const BUILD_INFO = {
   commit: ${JSON.stringify(commit)},
   channel: ${JSON.stringify(channel)},
   builtAt: ${JSON.stringify(builtAt)},
+  apkType: ${JSON.stringify(arg('apk-type', 'debug'))},
 };
 `);
+// El nombre de la caché del service worker lleva el sello: cada compilación
+// invalida la shell anterior y ningún dispositivo sirve módulos de otra versión.
+try {
+  const swPath = path.join(root, 'web', 'sw.js');
+  const sw = readFileSync(swPath, 'utf8').replace(
+    /const CACHE='nexa-v2-[^']*';/,
+    `const CACHE='nexa-v2-${version}-${channel}-${commit}';`);
+  writeFileSync(swPath, sw);
+} catch {}
 console.log(`[stamp-build] ${version} · ${commit} · ${channel} · ${builtAt}`);

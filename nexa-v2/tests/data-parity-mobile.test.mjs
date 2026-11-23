@@ -85,18 +85,23 @@ test('IDCA: resumen usa tipos numéricos en valores USD y no inventa ceros',()=>
  assert.equal(x.realizedPnlUsd,-12.5);
  assert.equal(normIdcaSummary({}).capitalUsedUsd,null);
 });
-test('Cartera: capital global sin holdings no se vende como patrimonio verificado',()=>{
+test('Cartera: NAV interno sin conciliación nunca se vende como patrimonio',()=>{
  const html=renderPortfolioPremium({...ctx({}),mode:'basic',
   data:{portfolio:{state:'ok',data:{summary:{navUsd:5000,holdUsd:null},holdings:[]}}}});
- assert.match(html,/Capital informado por la API/);
- assert.match(html,/no debe interpretarse como saldo confirmado de Kraken/);
- assert.doesNotMatch(html,/Patrimonio consolidado/);
+ assert.match(html,/Lectura sin conciliación completa/);
+ assert.match(html,/no es saldo del exchange/);
+ assert.doesNotMatch(html,/Patrimonio consolidado|Mi patrimonio/);
 });
-test('Cartera: holdings con currentValueUsd sí producen desglose real',()=>{
+test('Cartera: saldos de exchange conciliados sí producen patrimonio real',()=>{
  const html=renderPortfolioPremium({...ctx({}),mode:'basic',
    data:{portfolio:{state:'ok',data:{summary:{navUsd:5000},
+     resourceStates:{exchangeBalances:'ok',prices:'ok'},
+     exchangeBalances:[{exchange:'kraken',asset:'USD',total:1265.55,valueUsd:1265.55},
+       {exchange:'revolutx',asset:'ETH',total:0.01,valueUsd:17.13}],
+     prices:[{asset:'ETH',priceUsd:1713}],
      holdings:[{asset:'BTC',currentValueUsd:2400},{asset:'ETH',currentValueUsd:2600}]}}}});
- assert.match(html,/Patrimonio consolidado/);
+ assert.match(html,/Patrimonio en exchanges/);
+ assert.match(html,/1\.?282|1282/, 'la suma real de saldos no aparece');
  assert.match(html,/BTC/);
  assert.match(html,/ETH/);
  assert.match(html,/nxp-allocation/);

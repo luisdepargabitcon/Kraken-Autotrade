@@ -156,3 +156,23 @@
 .nxh-mode-breakdown span{font-size:10px;font-weight:750;border:1px solid #5079a0;color:#cce4ff;padding:5px 8px;background:#1c4165;border-radius:8px}
 .nxh-mode-breakdown span:first-child{border-color:#348769;color:#77e3b4;background:#17493e}
 .nxh-mode-breakdown span:nth-child(2){border-color:#ad874c;color:#f2d298;background:#514126}
+/* Rev24: separación REAL/SHADOW en el hero de inicio */
+.nxh-env-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.nxh-env{border:1px solid var(--line2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.nxh-env small{font-size:10px;letter-spacing:.08em;font-weight:700}
+.nxh-env strong{font-size:15px}
+.nxh-env span{color:var(--tx3);font-size:11px}
+.nxh-env-real{border-color:#2e7d52;box-shadow:inset 0 0 0 1px rgba(46,125,82,.15)}
+.nxh-env-real small{color:#6fd6a0}
+.nxh-env-shadow{border-color:#7a4fd0;box-shadow:inset 0 0 0 1px rgba(122,79,208,.15)}
+.nxh-env-shadow small{color:#b79cf0}
+@media (max-width:420px){.nxh-env-grid{gap:7px}.nxh-env{padding:8px 9px}}
+/* Rev24: categorías de eventos */
+.nxs-cat{display:inline-block;padding:1px 6px;border-radius:6px;font-size:9px;font-weight:800;letter-spacing:.06em;margin-right:6px;vertical-align:middle}
+.nxs-cat-executed{background:#0e3d28;color:#6fd6a0}
+.nxs-cat-rejected{background:#4a1f1f;color:#f0a0a0}
+.nxs-cat-decision{background:#233b6e;color:#9cbdf0}
+.nxs-cat-technical{background:#2a3140;color:#9aa5b5}
+.nxs-cat-error{background:#5a1220;color:#ff9db0}
+.nxs-cat-pending{background:#3d3418;color:#e8c96a}
+.nxs-code{font-size:9px;opacity:.6;font-family:ui-monospace,monospace}
