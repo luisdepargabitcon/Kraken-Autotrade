@@ -68,11 +68,14 @@ android {
         debug {
             // QA builds install alongside the signed release: distinct package id
             // (com.nexa.autotrade.v2.qa) avoids the debug/release cert conflict.
-            applicationIdSuffix ".qa"
+            // -PnexaParallelId produce un paquete .qa2 para instalar en paralelo.
+            applicationIdSuffix (project.hasProperty('nexaParallelId') ? ".qa2" : ".qa")
             versionNameSuffix "-qa"
             // Firma QA persistente si existe la keystore dedicada; si no, debug
             // estándar (CI). Nunca mezcla certificados entre orígenes.
-            if (nexaCanSignQa) signingConfig signingConfigs.qa
+            // -PhostDebugSign fuerza la debug.keystore del host (misma firma que
+            // las QA locales antiguas) para actualizar instalaciones existentes.
+            if (nexaCanSignQa && !project.hasProperty('hostDebugSign')) signingConfig signingConfigs.qa
         }
         release {
             minifyEnabled false
