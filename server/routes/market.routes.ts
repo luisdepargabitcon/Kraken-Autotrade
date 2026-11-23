@@ -27,7 +27,7 @@ export const registerMarketRoutes: RegisterRoutes = (app, _deps) => {
         ]);
         const candleCache=MarketDataService.getStats().entries.find(e=>e.key===`${pair}::${frames[timeframe]}`);
         return res.json({pair, candleAgeMs:candleCache?.ageMs ?? null, candlesStale:candleCache?.stale ?? true,
-          lastCandleTs:candles.length?candles[candles.length-1].time:null,
+          lastCandleTs:candles.length?(candles[candles.length-1].time<1e12?candles[candles.length-1].time*1000:candles[candles.length-1].time):null,
           price:ticker?.last ?? null, bid:ticker?.bid ?? null,
           ask:ticker?.ask ?? null, volume24h:ticker?.volume24h ?? null,
           source:"bot-market-data", provider:"MarketDataService · VPS", candleTimeframe:timeframe,
