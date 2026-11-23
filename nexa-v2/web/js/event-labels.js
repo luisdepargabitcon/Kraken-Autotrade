@@ -17,6 +17,20 @@ export function eventCategory(r){
   return {id:'technical',label:'EVENTO'};
 }
 
+// Agrupa eventos periódicos idénticos consecutivos (mismo tipo+motor+par) en
+// "… ×N" sin ocultar ninguno: el detalle completo sigue en la ficha Pro.
+export function dedupeEvents(list){
+  if(!Array.isArray(list))return list;
+  const out=[];
+  for(const e of list){
+    const prev=out[out.length-1];
+    const key=[e.type||e.kind||e.reason||'',e.engine||'',e.pair||e.symbol||''].join('|');
+    if(prev&&prev._k===key){prev._n=(prev._n||1)+1;continue;}
+    out.push({...e,_k:key,_n:1});
+  }
+  return out;
+}
+
 // Traducciones de códigos conocidos (GRID, IDCA, AMA). Fallback honesto.
 const LABELS = {
   buy_filled:'Compra ejecutada en nivel de la rejilla',
@@ -41,6 +55,15 @@ const LABELS = {
   manual_buy:'Compra manual registrada',
   decision_evaluated:'Decisión del motor evaluada',
   mandate_updated:'Mandato AMA actualizado',
+  // Códigos GRID_* emitidos por el monitor (mayúsculas, telemetría por minuto)
+  GRID_LEVEL_POST_ONLY_REJECTED:'Orden post-only rechazada: el nivel se mantiene en modo maker (sin fallback taker)',
+  GRID_CYCLES_RECOVERED:'Ciclos de rejilla recuperados al arrancar el monitor',
+  GRID_SHADOW_EXECUTION_PRICE:'Precio de ejecución simulado recalculado (solo shadow)',
+  GRID_MONITOR_TICK:'Revisión periódica del monitor de rejilla',
+  GRID_RANGE_VERSION:'Nueva versión del rango de la rejilla',
+  GRID_BUY_PLACED:'Orden de compra maker colocada en nivel',
+  GRID_SELL_PLACED:'Orden de venta maker colocada en nivel',
+  GRID_LEVEL_FILLED:'Nivel ejecutado (orden maker confirmada)',
 };
 export function describeEvent(r){
   const code = String(r?.type||r?.kind||r?.reason||'');

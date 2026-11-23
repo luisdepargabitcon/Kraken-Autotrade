@@ -755,7 +755,19 @@ document.addEventListener('visibilitychange',()=>{
 window.addEventListener('offline', ()=>{ state.online=false; renderStatusline(); });
 
 // PWA
-if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+// En la APK (Capacitor) el bundle local ES la fuente de verdad: ningún service
+// worker puede servir módulos antiguos restaurados por backup. Se purga
+// cualquier registro/caché previa y solo en despliegue web se registra el SW.
+(function(){
+  const isCap=!!(window.Capacitor||window.webkit?.messageHandlers||/^https?:\/\/localhost$/.test(location.origin));
+  if(!('serviceWorker' in navigator))return;
+  if(isCap){
+    navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister()));
+    if(window.caches)caches.keys().then(ks=>ks.forEach(k=>caches.delete(k)));
+    return;
+  }
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
 
 // ---------- Boot ----------
 (async function boot(){

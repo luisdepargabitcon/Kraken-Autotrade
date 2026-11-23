@@ -1,7 +1,7 @@
 // NEXA: scope-aware motor and activity views. No REAL records inside SHADOW.
 import {esc,fmtUsd,fmtTs,signedUsd} from './util.js';
 import {classifyMode,inScope,scopeTitle,SCOPE_SHADOW} from './display-scope.js';
-import {eventCategory,describeEvent,eventCode} from './event-labels.js';
+import {eventCategory,describeEvent,eventCode,dedupeEvents} from './event-labels.js';
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
 const first=(o,...ks)=>{for(const k of ks){const x=o?.[k];if(x!==null&&x!==undefined&&x!=='')return x;}return null;};
 const text=v=>v==null||v===''?'—':esc(String(v));
@@ -40,8 +40,9 @@ function recordCard(id,field,r,index,ctx){
  const cat=isEvent?eventCategory(r):null;
  const catTag=cat?'<span class="nxs-cat nxs-cat-'+cat.id+'">'+cat.label+'</span>':'';
  const proCode=cat&&ctx.mode==='pro'&&eventCode(r)?' <code class="nxs-code">'+esc(eventCode(r))+'</code>':'';
+ const dupBadge=r._n>1?'<span class="nxs-dup">×'+r._n+'</span>':'';
  return '<article class="nxs-record nxs-'+tone+'"><div class="nxs-record-top">'+
- '<div>'+catTag+'<span class="nxs-record-kind">'+esc(id.toUpperCase())+' · '+
+ '<div>'+catTag+dupBadge+'<span class="nxs-record-kind">'+esc(id.toUpperCase())+' · '+
  (cat&&cat.id!=='executed'?esc(describeEvent(r)):text(type))+proCode+'</span>'+
  '<h3>'+text(title)+(r.id!=null?' · #'+text(r.id):'')+'</h3>'+
  '<small>'+ (when?esc(fmtTs(when)):'Sin fecha comprobada')+'</small></div>'+
@@ -132,7 +133,7 @@ export function renderScopedActivity(ctx){
  '<h1>Movimientos del bot</h1><p>Solo eventos identificados de este entorno. Los eventos de modo desconocido se excluyen de ambos modos.</p></div>'+
  '<div class="nxs-filters"><button data-ui="eng:all">Todos</button>'+['idca','spot','grid','ama'].map(x=>
  '<button data-ui="eng:'+x+'">'+x.toUpperCase()+'</button>').join('')+'</div>'+
- (visible?visible.slice(0,100).map(x=>recordCard(String(x.e.engine||'common'),x.e.engine?'events':'events',x.e,x.i,ctx)
+ (visible?dedupeEvents(visible).slice(0,100).map(x=>recordCard(String(x.e.engine||'common'),'events',x.e,x.i,ctx)
     .replace('data-inspect="'+esc(String(x.e.engine||'common')+':events:'+x.i)+'"',
       'data-inspect="common:events:'+x.i+'"')).join('')||
   '<p class="nxs-empty">Sin eventos verificados de este entorno en la lectura actual.</p>':

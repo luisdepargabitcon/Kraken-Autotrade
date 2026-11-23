@@ -176,3 +176,19 @@
 .nxs-cat-error{background:#5a1220;color:#ff9db0}
 .nxs-cat-pending{background:#3d3418;color:#e8c96a}
 .nxs-code{font-size:9px;opacity:.6;font-family:ui-monospace,monospace}
+/* Rev25: dedupe badge + cabecera/pie compactos + tabs sin corte */
+.nxs-dup{display:inline-block;padding:1px 6px;border-radius:6px;font-size:9px;font-weight:800;background:#3d3418;color:#e8c96a;margin-right:5px}
+@media (max-width:520px){
+ .topbar{padding:4px 8px!important;gap:6px}
+ .brand-tx span{display:none}
+ .seg button,.seg-btn{padding:4px 7px;font-size:11px;min-height:30px}
+ .nx-scope-bar{padding:2px 10px;font-size:11px}
+ .nx-scope-bar small{display:none}
+ .statusline{padding:2px 10px;font-size:10px;min-height:20px}
+ .bottomnav{min-height:46px;padding-bottom:env(safe-area-inset-bottom,0)}
+ .bottomnav button,.bottomnav a{padding:4px 2px;font-size:10px}
+}
+/* Tabs de motor: scroll horizontal sin cortar */
+.nxs-tabs,.nx-tabs,.subtab-row{display:flex;gap:6px;overflow-x:auto;white-space:nowrap;
+  scrollbar-width:thin;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+.nxs-tabs button,.nx-tabs button{flex:0 0 auto}

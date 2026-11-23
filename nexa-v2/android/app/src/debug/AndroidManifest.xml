@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- QA (debug): nunca restaurar datos vía Auto Backup. Un WebView restaurado
+         traía el service worker/caché de una QA antigua y ejecutaba la UI vieja. -->
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        tools:replace="android:allowBackup,android:fullBackupContent" />
+</manifest>
