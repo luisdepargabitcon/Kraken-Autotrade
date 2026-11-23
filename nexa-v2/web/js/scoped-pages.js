@@ -92,9 +92,11 @@ export function renderScopedEngine(ctx){
  if(!sections.length)return '<div class="nxs-root"><h2>Motor no identificado</h2></div>';
  const sub=sections.find(x=>x.path===active);
  const selected=active==='panel'?sections:sub?[sub]:sections;
- let html='<div class="nxs-root"><div class="nxs-heading"><span>'+esc(scopeTitle(scope))+'</span>'+
+ let html='<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(scope))+'</span>'+
  '<h1>'+esc(engines[id]||id)+'</h1>'+
- '<p>Datos filtrados por entorno. No se mezclan órdenes, posiciones ni resultados de LIVE y simulación.</p></div>'+
+ '<p>Estado y actividad del modo en el entorno seleccionado.</p></div>'+
+ '<nav class="nxs-mode-tabs" aria-label="Elegir modo">'+Object.entries(engines).map(([key,label])=>
+ '<button data-nav="engine:'+key+'" class="'+(id===key?'on':'')+'" aria-current="'+(id===key?'page':'false')+'">'+esc(key.toUpperCase())+'</button>').join('')+'</nav>'+
  facts(ctx,id)+
  '<nav class="nxs-tabs" aria-label="Secciones del motor">'+
  '<button data-ui="subtab:panel" class="'+(active==='panel'?'on':'')+'">Panel</button>'+
@@ -133,9 +135,9 @@ export function renderScopedActivity(ctx){
  '<h1>Movimientos del bot</h1><p>Solo eventos identificados de este entorno. Los eventos de modo desconocido se excluyen de ambos modos.</p></div>'+
  '<div class="nxs-filters"><button data-ui="eng:all">Todos</button>'+['idca','spot','grid','ama'].map(x=>
  '<button data-ui="eng:'+x+'">'+x.toUpperCase()+'</button>').join('')+'</div>'+
- (visible?dedupeEvents(visible).slice(0,100).map(x=>recordCard(String(x.e.engine||'common'),'events',x.e,x.i,ctx)
-    .replace('data-inspect="'+esc(String(x.e.engine||'common')+':events:'+x.i)+'"',
-      'data-inspect="common:events:'+x.i+'"')).join('')||
+ (visible?dedupeEvents(visible.map(x=>({...x.e,_sourceIndex:x.i}))).slice(0,100).map(e=>recordCard(String(e.engine||'common'),'events',e,e._sourceIndex,ctx)
+    .replace('data-inspect="'+esc(String(e.engine||'common')+':events:'+e._sourceIndex)+'"',
+      'data-inspect="common:events:'+e._sourceIndex+'"')).join('')||
   '<p class="nxs-empty">Sin eventos verificados de este entorno en la lectura actual.</p>':
  '<p class="nxs-empty">La API no devuelve el historial de eventos. No significa que no existan.</p>')+
  (unknown?'<p class="nxs-warning">'+unknown+' eventos no tienen modo operativo identificable; no se han atribuido a REAL ni SHADOW.</p>':'')+'</div>';

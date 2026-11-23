@@ -45,7 +45,7 @@ let renewPromise=null;
 const NAV = [
   { id:'home',   label:'Inicio',     icon:'M4 11 12 4l8 7v9h-5v-5H9v5H4z' },
   { id:'market', label:'Mercado',    icon:'M4 20 10 12l4 4 6-10' },
-  { id:'engines',label:'Motores',    icon:'M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1' },
+  { id:'engines',label:'Modos',    icon:'M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1' },
   { id:'portfolio',label:'Cartera',  icon:'M4 7h16v12H4zM4 7l3-4h10l3 4M12 11v6' },
   { id:'activity',label:'Actividad', icon:'M4 12h4l2-7 4 14 2-7h4' },
   { id:'fisco',  label:'FISCO',      icon:'M8 3h8v18l-4-3-4 3z' },
@@ -163,7 +163,7 @@ function renderNav(){
   const cur = state.screen;
   $('topnav').innerHTML = NAV.filter(n=>n.id!=='engines').map(n=>
     `<a href="#${n.id}" data-nav="${n.id}" class="${cur===n.id?'on':''}">${esc(n.label)}</a>`).join('')
-    + `<a href="#engines" data-nav="engines" class="${cur==='engines'?'on':''}">Motores</a>`;
+    + `<a href="#engines" data-nav="engines" class="${cur==='engines'?'on':''}">Modos</a>`;
   $('settings-shortcut').setAttribute('aria-current',cur==='settings'?'page':'false');
   $('bottomnav').innerHTML = BOTTOM_NAV.map(id=>{
     const n = NAV.find(x=>x.id===id);
