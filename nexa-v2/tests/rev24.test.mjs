@@ -94,3 +94,35 @@ test('todos los módulos JS servidos existen en web/js y en la shell del SW', ()
     assert.ok(sw.includes(`'./js/${m}.js'`), `sw.js no precachea ${m}.js (riesgo de UI antigua)`);
   }
 });
+
+// ---------- R18: barra de decisión con payload real ----------
+test('marketStatus no imprime [object Object] ni NaN con payload real', async () => {
+  const { renderScopedEngine } = await import(pathToFileURL(join(web, 'js', 'scoped-pages.js')));
+  const ctx = { viewScope:'real', mode:'pro', ui:{engineId:'idca',subtab:'panel'},
+    enginesData:{ idca:{ state:'ok', data:{ pairContexts:{
+      'BTC/USD':{ pair:'BTC/USD', currentPrice:'abc', referencePrice:60000,
+        targetEntryPrice:57000, trailingBuy:{state:'watching',armed:true},
+        dipDetectedPct:2.4, requiredDipPct:5.0, entryDecision:'watch',
+        regime:'neutral_range', entryScore:36.8, confidenceGrade:'C',
+        hardBlocked:false, cycles:[] } },
+      cycles:[] } } },
+    data:{} };
+  const html = renderScopedEngine(ctx);
+  assert.ok(!html.includes('[object Object]'), 'objeto serializado como texto');
+  assert.ok(!html.includes('NaN'), 'NaN visible en la barra');
+  assert.ok(html.includes('Régimen'), 'etiqueta Régimen ausente');
+  assert.ok(html.includes('watching'), 'estado trailing no extraído');
+});
+test('marketStatus con precio 0 o sin target no muestra distancia inválida', async () => {
+  const { renderScopedEngine } = await import(pathToFileURL(join(web, 'js', 'scoped-pages.js')));
+  const ctx = { viewScope:'real', mode:'pro', ui:{engineId:'idca',subtab:'panel'},
+    enginesData:{ idca:{ state:'ok', data:{ pairContexts:{
+      'ETH/USD':{ pair:'ETH/USD', currentPrice:0, referencePrice:null,
+        trailingBuy:{state:'idle'}, hardBlocked:true, hardBlockers:['low_volume'], cycles:[] } },
+      cycles:[] } } },
+    data:{} };
+  const html = renderScopedEngine(ctx);
+  assert.ok(!html.includes('NaN'), 'NaN visible');
+  assert.ok(!html.includes('Infinity'), 'Infinity visible');
+  assert.ok(html.includes('low_volume'), 'hardBlocker no mostrado');
+});

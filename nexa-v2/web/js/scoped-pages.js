@@ -92,15 +92,20 @@ function marketStatus(ctx,id){
   const cycles=chosen(ctx,id,'cycles').rows||[];
   const open=cycles.filter(x=>x.row.pair===pair);
   const target=first(c,'targetEntryPrice','entryTargetPrice','nextBuyPrice');
-  const cur=first(c,'currentPrice','price'),tgtN=Number(target);
-  const dist=cur&&tgtN?(((tgtN-cur)/cur)*100):null;
-  const zone=first(c,'regime','zone','band','marketZone');
-  const trail=first(c,'trailingBuy','trailing','trailingState');
-  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+esc(c.hardBlocked?'Entrada bloqueada por las condiciones del mercado.':c.reboundSignal||'Esperando confirmación de entrada.')+'</p>'+
-   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(cur)+'</strong></div><div><small>Referencia (ancla)</small><strong>'+amount(c.referencePrice)+'</strong></div><div><small>Precio de activación</small><strong>'+amount(target)+'</strong></div>'+
-   '<div><small>Distancia</small><strong>'+(dist===null?'—':(dist>0?'+':'')+dist.toFixed(2)+' %')+'</strong></div>'+
-   (zone?'<div><small>Zona/régimen</small><strong>'+esc(String(zone))+'</strong></div>':'')+
-   (trail?'<div><small>Trailing</small><strong>'+esc(String(trail))+'</strong></div>':'')+'</div>'+
+  const cur=n(c.currentPrice),tgtN=n(target);
+  const dist=Number.isFinite(cur)&&cur>0&&Number.isFinite(tgtN)?(((tgtN-cur)/cur)*100):null;
+  const tb=c.trailingBuy&&typeof c.trailingBuy==='object'?c.trailingBuy:null;
+  const fact=(l,v)=>v===null||v===undefined||v===''?'' :'<div><small>'+l+'</small><strong>'+esc(String(v))+'</strong></div>';
+  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+esc(c.hardBlocked?'Entrada bloqueada: '+((c.hardBlockers||[]).join(', ')||'condiciones del mercado'):c.reboundSignal||'Esperando confirmación de entrada.')+'</p>'+
+   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(cur)+'</strong></div><div><small>Referencia (ancla)</small><strong>'+amount(c.referencePrice)+(c.reference?' · '+esc(String(c.reference)):'')+'</strong></div>'+
+   fact('Precio de activación',target?amount(tgtN):null)+
+   fact('Distancia a activación',dist===null?null:(dist>0?'+':'')+dist.toFixed(2)+' %')+
+   fact('Caída desde referencia',n(c.dipDetectedPct)===null?null:n(c.dipDetectedPct).toFixed(2)+' %')+
+   fact('Caída requerida',n(c.requiredDipPct)===null?null:n(c.requiredDipPct).toFixed(2)+' %')+
+   fact('Confirmación (trailing)',tb?.state??c.reboundSignal)+
+   fact('Decisión',c.entryDecision)+
+   fact('Régimen',c.regime)+
+   fact('Score',c.entryScore===null||c.entryScore===undefined?null:n(c.entryScore)?.toFixed(1)+(c.confidenceGrade?' · '+c.confidenceGrade:''))+'</div>'+
    open.map(x=>'<p>Objetivo de venta del ciclo #'+text(x.row.id)+': '+amount(first(x.row,'tpTargetPrice','sellTarget'))+'</p>').join('')+
    '<small>Los precios son referencias del bot; la ejecución depende de sus condiciones y protecciones.</small></article>';
  }).join('')+(Object.keys(contexts).length?'':'<p class="nxs-empty">Este modo todavía no entrega un contexto de entrada por activo.</p>')+'</section>';
