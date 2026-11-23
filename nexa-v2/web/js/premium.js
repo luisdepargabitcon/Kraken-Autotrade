@@ -76,6 +76,17 @@ function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=
  const tfBar=compact?'':'<div class="nxp-tfbar" role="group" aria-label="Intervalo de velas">'+
    [['1','1m'],['5','5m'],['15','15m'],['60','1h'],['240','4h'],['1440','1d']].map(([v,l])=>
    `<button data-ui="tf:${v}" class="${String(tf)===v?'on':''}">${l}</button>`).join('')+'</div>';
+ // Niveles etiquetados sobre la gráfica: indicadores calculados sobre estas mismas
+ // velas + referencias del contexto IDCA del par. Solo valores finitos; nada ficticio.
+ if(!levels.length){
+   const ind=m.indicators||{},e=ind.ema||{},bb=ind.bollinger||{};
+   const L=(price,label,old)=>num(price)?{price:num(price),label,old}:null;
+   levels=[
+     L(e.ema20,'EMA 20'),L(e.ema50,'EMA 50'),L(e.ema200,'EMA 200'),
+     L(bb.upper,'Bollinger sup.'),L(bb.mid,'Bollinger media'),L(bb.lower,'Bollinger inf.'),
+     L(m.referencePrice,'Referencia IDCA'),L(m.targetEntryPrice||m.nextBuyPrice,'Activación IDCA'),
+   ].filter(Boolean);
+ }
  return `<section class="nxp-chartbox ${compact?'nxp-chart-compact':''}">
    <div class="nxp-charthead"><div>${eyebrow(title)}<strong>${esc(pair)}</strong></div>
      <span class="nxp-timeframe" title="Temporalidad de las velas mostradas">${esc(tfLabel)}</span></div>
