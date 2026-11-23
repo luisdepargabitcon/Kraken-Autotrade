@@ -73,3 +73,26 @@ export function describeEvent(r){
   return code ? code.replace(/_/g,' ') : 'Evento del bot';
 }
 export function eventCode(r){ return String(r?.type||r?.kind||r?.reason||'')||null; }
+
+// Traducción de códigos técnicos de estado/decisión a castellano natural.
+// El código original solo debe verse en detalle Pro; el texto principal usa esto.
+const STATE_ES={
+  watching:'Vigilando el mercado', watch:'Vigilar', idle:'En espera',
+  armed:'Preparado', triggered:'Activado', blocked:'Bloqueado',
+  cooldown:'En pausa de seguridad', active:'Activo', paused:'En pausa',
+  neutral_range:'Rango neutro', capitulation:'Capitulación', capitulacion:'Capitulación',
+  accumulation:'Acumulación', distribution:'Distribución', trend_up:'Tendencia alcista',
+  trend_down:'Tendencia bajista', bullish:'Alcista', bearish:'Bajista', ranging:'En rango',
+  low_volume:'volumen insuficiente', spread_too_wide:'diferencial excesivo',
+  min_notional:'importe mínimo no alcanzado', insufficient_balance:'saldo insuficiente',
+  high_volatility:'volatilidad elevada', stale_data:'datos desactualizados',
+  pending_confirmation:'confirmación pendiente', waiting_rebound:'esperando rebote',
+  hard_blocked:'bloqueo de seguridad', rate_limited:'límite de peticiones',
+};
+export function translateCode(code){
+  if(code===null||code===undefined||code==='')return null;
+  const s=String(code);
+  if(STATE_ES[s])return STATE_ES[s];
+  if(STATE_ES[s.toLowerCase()])return STATE_ES[s.toLowerCase()];
+  return s.replace(/_/g,' ');
+}

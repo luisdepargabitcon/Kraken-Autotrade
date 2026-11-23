@@ -1,7 +1,7 @@
 // NEXA: scope-aware motor and activity views. No REAL records inside SHADOW.
 import {esc,fmtUsd,fmtTs,signedUsd} from './util.js';
 import {classifyMode,inScope,scopeTitle,SCOPE_SHADOW} from './display-scope.js';
-import {eventCategory,describeEvent,eventCode,dedupeEvents} from './event-labels.js';
+import {eventCategory,describeEvent,eventCode,dedupeEvents,translateCode} from './event-labels.js';
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
 const first=(o,...ks)=>{for(const k of ks){const x=o?.[k];if(x!==null&&x!==undefined&&x!=='')return x;}return null;};
 const text=v=>v==null||v===''?'—':esc(String(v));
@@ -93,19 +93,22 @@ function marketStatus(ctx,id){
   const open=cycles.filter(x=>x.row.pair===pair);
   const target=first(c,'targetEntryPrice','entryTargetPrice','nextBuyPrice');
   const cur=n(c.currentPrice),tgtN=n(target);
-  const dist=Number.isFinite(cur)&&cur>0&&Number.isFinite(tgtN)?(((tgtN-cur)/cur)*100):null;
+  const dist=Number.isFinite(cur)&&cur>0&&Number.isFinite(tgtN)&&tgtN>0?(((tgtN-cur)/cur)*100):null;
   const tb=c.trailingBuy&&typeof c.trailingBuy==='object'?c.trailingBuy:null;
-  const fact=(l,v)=>v===null||v===undefined||v===''?'' :'<div><small>'+l+'</small><strong>'+esc(String(v))+'</strong></div>';
-  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+esc(c.hardBlocked?'Entrada bloqueada: '+((c.hardBlockers||[]).join(', ')||'condiciones del mercado'):c.reboundSignal||'Esperando confirmación de entrada.')+'</p>'+
+  const isPro=ctx.mode==='pro';
+  const tr=v=>{const t=translateCode(v);return t===null?null:(isPro&&v&&t!==v?t+' <code class="nxs-code">'+esc(String(v))+'</code>':esc(t));};
+  const fact=(l,v)=>v===null||v===undefined||v===''?'' :'<div><small>'+l+'</small><strong>'+v+'</strong></div>';
+  const blockers=(c.hardBlockers||[]).map(x=>translateCode(x)).join(', ');
+  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+(c.hardBlocked?'Entrada bloqueada: '+esc(blockers||'condiciones del mercado'):tr(c.reboundSignal)||'Esperando confirmación de entrada.')+'</p>'+
    '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(cur)+'</strong></div><div><small>Referencia (ancla)</small><strong>'+amount(c.referencePrice)+(c.reference?' · '+esc(String(c.reference)):'')+'</strong></div>'+
    fact('Precio de activación',target?amount(tgtN):null)+
    fact('Distancia a activación',dist===null?null:(dist>0?'+':'')+dist.toFixed(2)+' %')+
    fact('Caída desde referencia',n(c.dipDetectedPct)===null?null:n(c.dipDetectedPct).toFixed(2)+' %')+
    fact('Caída requerida',n(c.requiredDipPct)===null?null:n(c.requiredDipPct).toFixed(2)+' %')+
-   fact('Confirmación (trailing)',tb?.state??c.reboundSignal)+
-   fact('Decisión',c.entryDecision)+
-   fact('Régimen',c.regime)+
-   fact('Score',c.entryScore===null||c.entryScore===undefined?null:n(c.entryScore)?.toFixed(1)+(c.confidenceGrade?' · '+c.confidenceGrade:''))+'</div>'+
+   fact('Confirmación (trailing)',tr(tb?.state??c.reboundSignal))+
+   fact('Decisión',tr(c.entryDecision))+
+   fact('Régimen',tr(c.regime))+
+   fact('Score',n(c.entryScore)===null?null:n(c.entryScore).toFixed(1)+(c.confidenceGrade?' · '+esc(String(c.confidenceGrade)):''))+'</div>'+
    open.map(x=>'<p>Objetivo de venta del ciclo #'+text(x.row.id)+': '+amount(first(x.row,'tpTargetPrice','sellTarget'))+'</p>').join('')+
    '<small>Los precios son referencias del bot; la ejecución depende de sus condiciones y protecciones.</small></article>';
  }).join('')+(Object.keys(contexts).length?'':'<p class="nxs-empty">Este modo todavía no entrega un contexto de entrada por activo.</p>')+'</section>';

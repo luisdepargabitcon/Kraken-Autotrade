@@ -111,7 +111,10 @@ test('marketStatus no imprime [object Object] ni NaN con payload real', async ()
   assert.ok(!html.includes('[object Object]'), 'objeto serializado como texto');
   assert.ok(!html.includes('NaN'), 'NaN visible en la barra');
   assert.ok(html.includes('Régimen'), 'etiqueta Régimen ausente');
-  assert.ok(html.includes('watching'), 'estado trailing no extraído');
+  assert.ok(html.includes('Vigilando el mercado'), 'estado trailing no traducido');
+  // El código original solo puede aparecer en detalle Pro (<code>), nunca como texto principal.
+  const proOnly=html.match(/watching/g)||[];
+  assert.ok(proOnly.every(()=>/<code[^>]*>watching<\/code>/.test(html)), 'código crudo fuera del detalle Pro');
 });
 test('marketStatus con precio 0 o sin target no muestra distancia inválida', async () => {
   const { renderScopedEngine } = await import(pathToFileURL(join(web, 'js', 'scoped-pages.js')));
@@ -124,5 +127,5 @@ test('marketStatus con precio 0 o sin target no muestra distancia inválida', as
   const html = renderScopedEngine(ctx);
   assert.ok(!html.includes('NaN'), 'NaN visible');
   assert.ok(!html.includes('Infinity'), 'Infinity visible');
-  assert.ok(html.includes('low_volume'), 'hardBlocker no mostrado');
+  assert.ok(html.includes('volumen insuficiente'), 'hardBlocker no traducido');
 });
