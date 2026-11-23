@@ -42,8 +42,12 @@ test('Código admite 24 caracteres o pegado con separadores',()=>{
 test('Engranaje Ajustes permanente en cabecera; cinco destinos en pie',()=>{
   assert.match(html,/id="settings-shortcut"/);
   assert.match(html,/id="pair-config-toggle"/);
-  assert.match(app,/const BOTTOM_NAV = \['home','market','engines','portfolio','activity'\]/);
-  assert.doesNotMatch(app,/const BOTTOM_NAV = \[[^\]]*'settings'/);
+  // La lista canónica de destinos raíz vive en nav-model.js (ROOT_ITEMS) y la
+  // barra inferior la deriva por nivel; Ajustes sigue fuera del pie.
+  const navModel=load('../web/js/nav-model.js');
+  assert.match(navModel,/ROOT_ITEMS = \[[\s\S]*?'home'[\s\S]*?'market'[\s\S]*?'engines'[\s\S]*?'portfolio'[\s\S]*?'activity'[\s\S]*?\]/);
+  assert.doesNotMatch(navModel,/ROOT_ITEMS = \[[^\]]*?'settings'/);
+  assert.match(app,/bottomItems\(state\.nav/);
   assert.match(app,/function openPairOverlay/);
   assert.match(app,/function syncPairServer/);
   assert.match(app,/pair-config-form.*addEventListener\('submit'/);

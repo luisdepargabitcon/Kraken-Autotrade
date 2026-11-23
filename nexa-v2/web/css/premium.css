@@ -362,7 +362,7 @@
 }
 /* header/nav accent: preserves Android status-bar safe-area integration */
 body .topbar{background:#090f1af6;border-bottom:1px solid #1d3048}
-body .bottomnav{background:#09111ef7;border-top:1px solid #263950}
+body .dock{background:#09111ef7;border-top:1px solid #263950}
 body .bottomnav a.on{color:#83b5ff}
 body #screen{min-height:calc(100dvh - 145px)}
 

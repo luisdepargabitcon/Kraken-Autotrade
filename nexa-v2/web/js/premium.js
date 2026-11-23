@@ -207,12 +207,24 @@ function indicatorRows(ind){
  return rows.map(([name,items],i)=>`<details class="nxp-ind-group" ${i===0?'open':''}><summary>${esc(name)}<span>⌄</span></summary><div class="nxp-ind-grid">
    ${items.map(([k,v])=>block(k,v)).join('')}</div></details>`).join('');
 }
+// Panel «Niveles»: los mismos chartLevels que se dibujan sobre la gráfica, en
+// texto — referencias informativas, nunca órdenes ni promesa de ejecución.
+function levelsPanel(ctx,pair,active){
+ const m=raw(ctx,'market'),lv=chartLevels(m,pair);
+ return `<section class="nxp-terminal-panel">${section('NIVELES','Niveles etiquetados')}
+  ${active&&lv.length?`<div class="nxp-level-list">`+lv.map(l=>`<div class="nxp-level-row"><span>${esc(l.label)}</span><b>${money(l.price)}</b></div>`).join('')+`</div>`:
+   `<p class="nxp-panel-empty">${active?'Sin niveles calculables con los datos actuales.':'Pendiente de una lectura verificada del mercado.'}</p>`}
+  <p class="nxp-panel-empty">Referencias informativas calculadas por la app o emitidas por el bot; no son órdenes ni compra garantizada.</p>
+ </section>`;
+}
 function basicMarket(ctx){
  const pair=ctx.ui?.marketPair||'BTC/USD',m=raw(ctx,'market'),t=getTicker(m,pair);
+ const sub=ctx.ui?.marketSub||'price';
  const active=goodCommon(ctx,'market')&&(num(t.price)||getCandles(m,pair).length>1);
- return wrap(`${section('COTIZACIONES','Mercado')}
-   ${marketPairBar(ctx)}
-   <div class="nxp-market-price"><span>${esc(pair)}</span><h1>${active?money(t.price):'—'}
+ let body='';
+ if(sub==='chart') body=candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true});
+ else if(sub==='levels') body=levelsPanel(ctx,pair,active);
+ else body=`<div class="nxp-market-price"><span>${esc(pair)}</span><h1>${active?money(t.price):'—'}
    ${num(t.change24hPct)?`<small class="${moneyClass(t.change24hPct)}">${pct(t.change24hPct)}</small>`:''}</h1></div>
    ${candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true})}
    ${active?`<div class="nxp-basic-market-indicators">
@@ -220,36 +232,32 @@ function basicMarket(ctx){
     ${block('ADX',num(getInd(m,pair).adx)?fmtNum(getInd(m,pair).adx,{dec:1}):'—')}
     ${block('Spread',money(t.spread))}
    </div>`:offline(ctx,'Consulta mercado BTC/ETH, velas e indicadores')}
-   ${link('engines','Ver estrategias vinculadas')}
+   ${link('engines','Ver estrategias vinculadas')}`;
+ return wrap(`${section('COTIZACIONES','Mercado')}
+   ${marketPairBar(ctx)}
+   ${body}
  </div>`,'nxp-mode-basic nxp-market');
 }
 function proMarket(ctx){
  const pair=ctx.ui?.marketPair||'BTC/USD',m=raw(ctx,'market'),t=getTicker(m,pair),ind=getInd(m,pair);
+ const sub=ctx.ui?.marketSub||'price';
  const active=goodCommon(ctx,'market');
- return wrap(`<div class="nxp-terminal-title"><div>${eyebrow('TRADING · ANÁLISIS')}<h1>Mercados</h1></div>${chip(active?'API conectada':'API pendiente',active?'good':'warn')}</div>
-  ${marketPairBar(ctx)}
-  <div class="nxp-market-terminal">
-   <div class="nxp-main-column">
-    <div class="nxp-quote"><div>${eyebrow(pair+' · PRECIO')}<strong>${active?money(t.price):'—'}</strong></div>
-    ${block('24h',active?pct(t.change24hPct):'—',moneyClass(active?t.change24hPct:null))}</div>
-    ${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}
-    <div class="nxp-terminal-panel">${section('ANÁLISIS','Indicadores técnicos')}
+ const head=`<div class="nxp-terminal-title"><div>${eyebrow('TRADING · ANÁLISIS')}<h1>Mercados</h1></div>${chip(active?'API conectada':'API pendiente',active?'good':'warn')}</div>
+  ${marketPairBar(ctx)}`;
+ const indicatorsPanel=`<div class="nxp-terminal-panel">${section('ANÁLISIS','Indicadores técnicos')}
       ${active?indicatorRows(ind):`<p class="nxp-panel-empty">Los indicadores están preparados para datos reales del proveedor, sin valores de relleno.</p>`}
-    </div>
-   </div>
-   <aside class="nxp-side-column">
-    <section class="nxp-terminal-panel">${section('LIBRO DE PRECIO','Bid / Ask / Spread')}
+    </div>`;
+ const bookPanel=`<section class="nxp-terminal-panel">${section('LIBRO DE PRECIO','Bid / Ask / Spread')}
       <div class="nxp-vertical-stats">${block('Mejor BID',active?money(t.bid):'—')}
       ${block('Mejor ASK',active?money(t.ask):'—')}${block('Spread',active?money(t.spread):'—')}</div>
-    </section>
-    <section class="nxp-terminal-panel">${section('Fuentes de datos','Origen y frescura')}
+    </section>`;
+ const sourcesPanel=`<section class="nxp-terminal-panel">${section('Fuentes de datos','Origen y frescura')}
       ${block('Proveedor',active?value(m.provider||m.source):'—')}
       ${block('Última lectura',active&&m.ts?esc(fmtAge(m.ts)):'—')}
       ${block('Régimen',active?value(ind.regime):'—')}
       ${active&&Array.isArray(m.sources||m.externalSources)&&(m.sources||m.externalSources).length?`<div class="nxp-source-list">`+(m.sources||m.externalSources).map(x=>`<div class="nxp-source-row"><span>${esc(x.name||x.id||'fuente')}</span><small>${esc(x.state||x.role||'')}${x.lastOk?' · '+esc(fmtAge(x.lastOk)):''}</small></div>`).join('')+`</div>`:''}
-    </section>
-    ${!active?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
-    <section class="nxp-terminal-panel">${section('CONTEXTO','Lectura real de los motores')}
+    </section>`;
+ const contextPanel=`<section class="nxp-terminal-panel">${section('CONTEXTO','Lectura real de los motores')}
       ${(()=>{const cx=m.marketContext||{};const rows=[
         ['Zona macro · AMA',cx.macroZone],
         ['Caída actual · AMA',num(cx.currentDropPct)!=null?pct(cx.currentDropPct):null],
@@ -263,9 +271,27 @@ function proMarket(ctx){
       return rows.length?`<div class="nxp-vertical-stats">${rows.map(([k,v])=>block(k,v)).join('')}</div>`:''})()}
       <p class="nxp-panel-empty">Los botones de este panel no lanzan compras ni ventas. Cada motor decide según sus propias reglas.</p>
       ${link('engines','Ver decisiones de motores')}
-    </section>
+    </section>`;
+ let body='';
+ if(sub==='chart') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}</div></div>`;
+ else if(sub==='levels') body=levelsPanel(ctx,pair,active);
+ else if(sub==='indicators') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">${indicatorsPanel}</div>
+    <aside class="nxp-side-column">${sourcesPanel}</aside></div>`;
+ else body=`<div class="nxp-market-terminal">
+   <div class="nxp-main-column">
+    <div class="nxp-quote"><div>${eyebrow(pair+' · PRECIO')}<strong>${active?money(t.price):'—'}</strong></div>
+    ${block('24h',active?pct(t.change24hPct):'—',moneyClass(active?t.change24hPct:null))}</div>
+    ${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}
+    ${indicatorsPanel}
+   </div>
+   <aside class="nxp-side-column">
+    ${bookPanel}
+    ${sourcesPanel}
+    ${!active?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
+    ${contextPanel}
    </aside>
-  </div>
+  </div>`;
+ return wrap(`${head}${body}
  </div>`,'nxp-mode-pro nxp-market');
 }
 export function renderMarketPremium(ctx){return ctx.mode==='basic'?basicMarket(ctx):proMarket(ctx);}

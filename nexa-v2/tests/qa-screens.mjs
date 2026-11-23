@@ -2,9 +2,14 @@
 // DEMO nunca se importan desde el producto ni saltan la autenticación real.
 // Renderiza las mismas funciones que usa la app (dashboard/premium/scoped-pages/
 // portfolio-view) sobre los fixtures de tests/fixtures.mjs, monta la SHELL real
-// de index.html (topbar, scope-bar, statusline, bottomnav) y captura con Chrome
-// headless a 360/393/412 px midiendo el desbordamiento horizontal real.
-// Salida: %TEMP%\qa-shots-r18h\qa-<pantalla>-<modo>-<scope>-<ancho>.png + qa-metrics.json
+// de index.html (topbar con segmentos Básico/Pro + REAL/SHADOW, statusline,
+// dock con botón Atrás + bottomnav por profundidad) y captura con Chrome
+// headless + CDP a 360/393/412 px midiendo desbordamiento, tap targets y
+// solape pie/contenido.
+// Recorrido R19: Inicio → Mercado → Modos → SPOT → motor (Órdenes IDCA en Pro,
+// Estado en Básico) → vuelta a Modos → vuelta a raíz, en Básico/Pro ×
+// REAL/SHADOW; más Cartera y Actividad con datos / vacías / sin sesión.
+// Salida: %TEMP%\qa-shots-r19\qa-<paso>-<modo>-<scope>-<ancho>.png + qa-metrics.json
 // Uso: node tests/qa-screens.mjs [dir_salida]
 import { mkdirSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -25,7 +30,7 @@ globalThis.sessionStorage ??= {
 };
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const web = join(root, 'web');
-const OUT = process.argv[2] || join(tmpdir(), 'qa-shots-r18h');
+const OUT = process.argv[2] || join(tmpdir(), 'qa-shots-r19');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const WIDTHS = [360, 393, 412];
 const HEIGHT = 900;
@@ -36,8 +41,9 @@ const { classifyMode } = await import(pathToFileURL(join(web, 'js', 'display-sco
 const { normMarket, enrichMarket } = await import(pathToFileURL(join(web, 'js', 'adapters.js')));
 const { renderDashboard } = await import(pathToFileURL(join(web, 'js', 'dashboard.js')));
 const { renderMarketPremium } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
-const { renderScopedEngine, renderScopedActivity } = await import(pathToFileURL(join(web, 'js', 'scoped-pages.js')));
+const { renderScopedEngine, renderScopedActivity, renderModesOverview } = await import(pathToFileURL(join(web, 'js', 'scoped-pages.js')));
 const { renderPortfolioView } = await import(pathToFileURL(join(web, 'js', 'portfolio-view.js')));
+const { bottomItems, navView, ROOT_ITEMS } = await import(pathToFileURL(join(web, 'js', 'nav-model.js')));
 const { BUILD_INFO } = await import(pathToFileURL(join(web, 'js', 'build-info.js')));
 
 // ---------- Variante LIVE de los fixtures ----------
@@ -107,19 +113,32 @@ const activityFor = scope => F.DEMO_ACTIVITY.map(e => ({ ...e, mode: scope === '
 
 // ctx replicando la forma exacta de app.js render(): {mode, viewScope, ui,
 // engineList, authenticated, deviceEnrolled, enginesData, data, dataTag, market,
-// subtabs, renderEngineSub}.
-function makeCtx({ mode = 'pro', scope = 'real', pair = 'BTC/USD', botLevel = false, brokenCandles = false } = {}) {
+// subtabs, renderEngineSub}. El estado de navegación se traduce con navView(),
+// igual que hace render() en app.js, y se sincronizan los campos de ui.
+function makeCtx({ mode = 'pro', scope = 'real', nav = { depth: 0, section: 'home', sub: 'summary', inner: null },
+  variant = 'datos', pair = 'BTC/USD', botLevel = false, brokenCandles = false } = {}) {
   const market = marketFor(pair, { botLevel, brokenCandles });
   const otherPair = pair === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD';
+  const view = navView(nav);
+  const ui = {
+    engineId: 'idca', subtab: 'panel', marketPair: pair, marketTf: '15',
+    portfolioTab: 'summary', positionFilter: 'all',
+    activityFilter: { sev: 'all', engine: 'all', cat: 'all' },
+  };
+  if (view.ui.marketSub !== undefined) ui.marketSub = view.ui.marketSub;
+  if (view.ui.engineId) { ui.engineId = view.ui.engineId; ui.subtab = view.ui.subtab; }
+  if (view.ui.portfolioTab) ui.portfolioTab = view.ui.portfolioTab;
+  if (view.ui.activityCat) ui.activityFilter.cat = view.ui.activityCat;
+  const sinSesion = variant === 'sinsesion';
+  const vacia = variant === 'vacia';
+  const portfolio = vacia
+    ? { summary: null, holdings: [], ledger: [], reservations: [], budgets: [], inventory: [], exchangeBalances: null, prices: null, resourceStates: {} }
+    : portfolioData();
   return {
     mode, viewScope: scope,
-    authenticated: true, deviceEnrolled: true, repairRequired: false,
+    authenticated: !sinSesion, deviceEnrolled: !sinSesion, repairRequired: false,
     engineList: ENGINES,
-    ui: {
-      engineId: 'idca', subtab: 'panel', marketPair: pair, marketTf: '15',
-      portfolioTab: 'summary', positionFilter: 'all',
-      activityFilter: { sev: 'all', engine: 'all', cat: 'all' },
-    },
+    ui,
     enginesData: enginesFor(scope),
     data: {
       marketPairs: {
@@ -127,50 +146,60 @@ function makeCtx({ mode = 'pro', scope = 'real', pair = 'BTC/USD', botLevel = fa
         [otherPair]: { state: 'ok', data: marketFor(otherPair, {}) },
       },
       market: { state: 'ok', data: market },
-      portfolio: { state: 'ok', data: portfolioData() },
-      activity: { state: 'ok', data: { events: activityFor(scope) } },
+      portfolio: sinSesion ? { state: 'auth_required', data: null } : { state: 'ok', data: portfolio },
+      activity: sinSesion ? { state: 'auth_required', data: { events: null } }
+        : { state: 'ok', data: { events: vacia ? [] : activityFor(scope) } },
       fisco: { state: 'ok', data: F.DEMO_FISCO },
     },
     dataTag: 'QA · FIXTURES DEMO',
     market: { state: 'ok', data: market },
-    subtabs: ENGINE_SUBTABS.idca || [],
+    subtabs: ENGINE_SUBTABS[ui.engineId] || [],
     renderEngineSub: () => '',
   };
 }
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const RENDERERS = {
-  inicio: ctx => renderDashboard(ctx),
-  mercado: ctx => renderMarketPremium(ctx),
-  modos: ctx => renderScopedEngine(ctx),          // ui.engineId='idca'
-  cartera: ctx => renderPortfolioView(ctx),
-  actividad: ctx => renderScopedActivity(ctx),
+  dashboard: ctx => renderDashboard(ctx),
+  market: ctx => renderMarketPremium(ctx),
+  modes: ctx => renderModesOverview(ctx),
+  engine: ctx => renderScopedEngine(ctx),
+  portfolio: ctx => renderPortfolioView(ctx),
+  activity: ctx => renderScopedActivity(ctx),
 };
+const renderShot = shot => RENDERERS[navView(shot.nav).screen](makeCtx(shot));
 
-// Matriz obligatoria: {Inicio, Mercado, Modos, Cartera, Actividad} × {basic, pro}
-// a {360,393,412} px; REAL vs SHADOW para Inicio y Cartera; un caso de estado
-// parcial (mercado sin velas válidas → aviso honesto, no curvas inventadas).
-// Modos(IDCA) se captura en scope shadow porque el fixture IDCA es simulation:
-// en scope real sus listas quedarían vacías (comportamiento correcto del scope).
-// 'variant' solo cambia el nombre del fichero, no el scope del ctx.
-const SHOTS = [
-  { screen: 'inicio', mode: 'basic', scope: 'real' },
-  { screen: 'inicio', mode: 'basic', scope: 'shadow' },
-  { screen: 'inicio', mode: 'pro', scope: 'real' },
-  { screen: 'inicio', mode: 'pro', scope: 'shadow' },
-  { screen: 'mercado', mode: 'basic', scope: 'real', pair: 'ETH/USD' },  // fallback → «Umbral derivado»
-  { screen: 'mercado', mode: 'pro', scope: 'real', botLevel: true },     // → «Activación (nivel del bot)»
-  { screen: 'modos', mode: 'basic', scope: 'shadow' },
-  { screen: 'modos', mode: 'pro', scope: 'shadow' },
-  { screen: 'cartera', mode: 'basic', scope: 'real' },
-  { screen: 'cartera', mode: 'basic', scope: 'shadow' },
-  { screen: 'cartera', mode: 'pro', scope: 'real' },
-  { screen: 'cartera', mode: 'pro', scope: 'shadow' },
-  { screen: 'actividad', mode: 'basic', scope: 'real' },
-  { screen: 'actividad', mode: 'pro', scope: 'real' },
-  { screen: 'mercado', mode: 'pro', scope: 'real', variant: 'error', brokenCandles: true },
+// Recorrido R19 (prototipo de controles): Inicio raíz → Mercado (subpestañas)
+// → Modos → motor SPOT → sección interna del motor (Órdenes de IDCA en Pro —
+// SPOT no tiene path 'orders'; en Básico se muestra Estado porque Órdenes se
+// oculta) → vuelta a Modos → vuelta a la raíz. Todo en las 4 combinaciones
+// Básico/Pro × REAL/SHADOW. Además Cartera y Actividad con datos, vacías y
+// sin sesión (en Pro·REAL y Básico·SHADOW).
+const D1 = (section, sub) => ({ depth: 1, section, sub, inner: null });
+const D2 = (sub, inner) => ({ depth: 2, section: 'engines', sub, inner });
+const JOURNEY = mode => [
+  { step: 'inicio', nav: { depth: 0, section: 'home', sub: 'summary', inner: null }, botLevel: true },
+  { step: 'mercado', nav: D1('market', 'price'), botLevel: true },
+  { step: 'modos', nav: D1('engines', 'general') },
+  { step: 'spot', nav: D2('spot', 'panel') },
+  mode === 'pro'
+    ? { step: 'ordenes', nav: D2('idca', 'orders') }
+    : { step: 'motor', nav: D2('idca', 'panel') },
+  { step: 'vuelta-modos', nav: D1('engines', 'general') },
+  { step: 'vuelta-raiz', nav: { depth: 0, section: 'home', sub: 'summary', inner: null }, botLevel: true },
 ];
-const shotName = s => `qa-${s.screen}-${s.mode}-${s.variant || s.scope}`;
+const SHOTS = [];
+for (const mode of ['basic', 'pro']) for (const scope of ['real', 'shadow'])
+  for (const j of JOURNEY(mode)) SHOTS.push({ ...j, mode, scope });
+for (const { mode, scope } of [{ mode: 'pro', scope: 'real' }, { mode: 'basic', scope: 'shadow' }])
+  for (const section of ['portfolio', 'activity'])
+    for (const variant of ['datos', 'vacia', 'sinsesion'])
+      SHOTS.push({
+        step: `${section === 'portfolio' ? 'cartera' : 'actividad'}-${variant}`,
+        nav: D1(section, section === 'activity' ? 'recent' : 'summary'),
+        mode, scope, variant,
+      });
+const shotName = s => `qa-${s.step}-${s.mode}-${s.scope}`;
 
 // ---------- Shell real de index.html ----------
 // NAV y BOTTOM_NAV copiados de web/js/app.js (constantes NAV/BOTTOM_NAV) para no
@@ -182,8 +211,7 @@ const NAV = [
   { id: 'portfolio', label: 'Cartera', icon: 'M4 7h16v12H4zM4 7l3-4h10l3 4M12 11v6' },
   { id: 'activity', label: 'Actividad', icon: 'M4 12h4l2-7 4 14 2-7h4' },
 ];
-const BOTTOM_NAV = ['home', 'market', 'engines', 'portfolio', 'activity'];
-const SCREEN_NAV = { inicio: 'home', mercado: 'market', modos: 'engines', cartera: 'portfolio', actividad: 'activity' };
+const NAV_ICONS = Object.fromEntries(NAV.map(n => [n.id, n.icon]));
 
 // Texto de la insignia como en app.js ('v'+version+' · '+canal); si el sello
 // fuente sigue siendo placeholder se muestra la versión de la entrega QA.
@@ -196,53 +224,65 @@ const GEAR_SVG = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" st
 
 function shell(shot, bodyHtml) {
   const name = shotName(shot);
-  const cur = SCREEN_NAV[shot.screen];
+  const { nav, mode } = shot;
+  const view = navView(nav);
+  // Igual que renderNav() de app.js: topnav por sección, bottomnav por nivel.
+  const sectionOn = id => nav.section === id || view.screen === id;
   const topnav = NAV.filter(n => n.id !== 'engines').map(n =>
-    `<a href="#${n.id}" data-nav="${n.id}" class="${cur === n.id ? 'on' : ''}">${esc(n.label)}</a>`).join('') +
-    `<a href="#engines" data-nav="engines" class="${cur === 'engines' ? 'on' : ''}">Modos</a>`;
-  const bottomnav = BOTTOM_NAV.map(id => {
-    const n = NAV.find(x => x.id === id);
-    const active = cur === id;
-    return `<a href="#${id}" data-nav="${id}" class="${active ? 'on' : ''}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="${n.icon}"/></svg>${esc(n.label)}</a>`;
+    `<a href="#${n.id}" data-nav="${n.id}" class="${sectionOn(n.id) ? 'on' : ''}">${esc(n.label)}</a>`).join('') +
+    `<a href="#engines" data-nav="engines" class="${sectionOn('engines') ? 'on' : ''}">Modos</a>`;
+  const items = bottomItems(nav, mode);
+  const cols = Math.min(items.length, items.length > 5 ? 3 : 5);
+  const bottomnav = items.map((it, i) => {
+    const active = nav.depth === 0 ? it.id === nav.section
+      : nav.depth === 1 ? it.id === nav.sub : it.id === nav.inner;
+    const icon = nav.depth === 0 && NAV_ICONS[it.id]
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="${NAV_ICONS[it.id]}"/></svg>` : '';
+    return `<a href="#${it.id}" data-nav-idx="${i}" class="${active ? 'on' : ''}${nav.depth ? ' nv-sub' : ''}">${icon}${esc(it.label)}</a>`;
   }).join('');
-  const scopeReal = shot.scope === 'shadow' ? '' : ' on';
-  const scopeShadow = shot.scope === 'shadow' ? ' on' : '';
   const statusline = `<span class="dot"></span><span>Conectado · datos QA (fixtures)</span>` +
-    `<span class="nx-status-right">NEXA · ${shot.scope === 'shadow' ? 'SHADOW' : 'REAL'} · ${shot.mode === 'basic' ? 'Básico' : 'Pro'}</span>`;
+    `<span class="nx-status-right">NEXA · ${shot.scope === 'shadow' ? 'SHADOW' : 'REAL'} · ${mode === 'basic' ? 'Básico' : 'Pro'}</span>`;
   return `<div class="qa-ribbon">QA · FIXTURES DEMO — datos sintéticos, no provienen del bot · ${esc(name)}</div>
-<div id="app" class="app" data-mode="${shot.mode}" data-scope="${shot.scope}" data-screen="${cur}" data-online="1">
+<div id="app" class="app" data-mode="${mode}" data-scope="${shot.scope}" data-screen="${view.screen}" data-online="1">
   <header class="topbar">
-    <div class="brand">${BRAND_SVG}
-      <div class="brand-tx"><b>NEXA</b><span id="brand-sub">Control · Web + Android</span></div>
+    <div class="brand">
+      <button class="logo" id="brand-home" type="button" aria-label="Volver a Inicio" title="Inicio">${BRAND_SVG}
+        <span class="brand-tx"><b>NEXA</b><span id="brand-sub">Control · Web + Android</span></span>
+      </button>
     </div>
     <nav class="topnav" id="topnav" aria-label="Navegación principal escritorio">${topnav}</nav>
+    <div class="top-segs">
+      <div class="seg" role="group" aria-label="Nivel de presentación">
+        <button id="mode-basic" data-mode="basic"${mode === 'basic' ? ' class="on"' : ''}>Básico</button>
+        <button id="mode-pro" data-mode="pro"${mode === 'pro' ? ' class="on"' : ''}>Pro</button>
+      </div>
+      <div class="seg seg-env" role="group" aria-label="Datos visibles: reales o de simulación">
+        <button type="button" id="scope-real" data-scope="real" class="${shot.scope === 'shadow' ? '' : 'on'}" aria-pressed="${shot.scope !== 'shadow'}">REAL</button>
+        <button type="button" id="scope-shadow" data-scope="shadow" class="${shot.scope === 'shadow' ? 'on' : ''}" aria-pressed="${shot.scope === 'shadow'}">SHADOW</button>
+      </div>
+    </div>
     <div class="top-ctl">
       <button class="seg-btn" id="engine-btn" aria-haspopup="dialog" title="Cambiar motor" aria-label="Cambiar motor. Actual: IDCA">Motor: <b id="engine-name">IDCA</b></button>
-      <div class="seg" role="group" aria-label="Nivel de presentación">
-        <button id="mode-basic" data-mode="basic"${shot.mode === 'basic' ? ' class="on"' : ''}>Básico</button>
-        <button id="mode-pro" data-mode="pro"${shot.mode === 'pro' ? ' class="on"' : ''}>Pro</button>
-      </div>
       <button class="seg-btn" id="lock-btn" title="Bloquear (PIN)">Bloq.</button>
       <button class="nx-ver" id="ver-badge" type="button" title="Información de compilación" aria-label="Versión y compilación">${esc(verText)}</button>
       <button class="nx-header-settings" id="settings-shortcut" type="button" data-nav="settings" title="Ajustes" aria-label="Abrir ajustes">${GEAR_SVG}</button>
     </div>
   </header>
-  <div class="nx-scope-bar" role="group" aria-label="Seleccionar datos reales o de simulación">
-    <span>Datos visibles:</span>
-    <button type="button" id="scope-real" data-scope="real" class="${scopeReal.trim()}" aria-pressed="${shot.scope !== 'shadow'}">REAL</button>
-    <button type="button" id="scope-shadow" data-scope="shadow" class="${scopeShadow.trim()}" aria-pressed="${shot.scope === 'shadow'}">SHADOW</button>
-    <small id="scope-warning">Selector de visualización, no cambia el motor</small>
-  </div>
   <div class="statusline" id="statusline" role="status">${statusline}</div>
   <main id="screen" class="screen" tabindex="-1">${bodyHtml}</main>
-  <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil">${bottomnav}</nav>
+  <div class="dock">
+    <button id="back" type="button" aria-label="Volver al nivel anterior" title="Atrás"${nav.depth > 0 ? '' : ' hidden'}>‹</button>
+    <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${bottomnav}</nav>
+  </div>
 </div>`;
 }
 
-// Sonda de desbordamiento evaluada por CDP (Runtime.evaluate): devuelve
-// scrollWidth/innerWidth reales del viewport EMULADO y hasta 15 elementos que
-// pintan fuera sin un ancestro que los recorte (overflow-x distinto de visible).
+// Sonda evaluada por CDP (Runtime.evaluate) sobre el viewport EMULADO:
+// - scrollWidth/innerWidth reales y hasta 15 elementos que pintan fuera sin un
+//   ancestro que los recorte (overflow-x distinto de visible).
+// - Tap targets del dock: todo control pulsable debe medir >=44px en ambos ejes.
+// - Solape pie/contenido: el padding-bottom de <main> debe cubrir la altura del
+//   dock fijo para que nada quede oculto (se mide con getBoundingClientRect).
 const METRICS_EXPR = `(()=>{const iw=innerWidth;
 const clipped=el=>{for(let p=el.parentElement;p;p=p.parentElement){const o=getComputedStyle(p).overflowX;if(o==='hidden'||o==='auto'||o==='scroll'||o==='clip')return true}return false};
 const over=[];
@@ -252,7 +292,20 @@ for(const el of document.querySelectorAll('body *')){
  const cs=(typeof el.className==='string'&&el.className)?'.'+el.className.trim().split(/\\\\s+/).join('.'):'';
  over.push(el.tagName.toLowerCase()+(el.id?'#'+el.id:'')+cs+'['+Math.round(r.left)+'..'+Math.round(r.right)+']');
 }
-return JSON.stringify({iw,scrollW:document.documentElement.scrollWidth,over:over.slice(0,15)})})()`;
+let minTap=9999;const tapBad=[];
+for(const el of document.querySelectorAll('.dock a,.dock button')){
+ const r=el.getBoundingClientRect();
+ if(!r.width||el.hidden)continue;
+ const mn=Math.min(r.width,r.height);if(mn<minTap)minTap=mn;
+ if(r.height<44||r.width<44)tapBad.push((el.id?'#'+el.id:el.textContent.trim().slice(0,14))+' '+Math.round(r.width)+'x'+Math.round(r.height));
+}
+const dock=document.querySelector('.dock');
+const scr=document.getElementById('screen');
+const dockH=dock?dock.getBoundingClientRect().height:0;
+const pad=scr?parseFloat(getComputedStyle(scr).paddingBottom)||0:0;
+return JSON.stringify({iw,scrollW:document.documentElement.scrollWidth,over:over.slice(0,15),
+ minTap:minTap===9999?null:Math.round(minTap),tapBad:tapBad.slice(0,10),
+ dockH:Math.round(dockH),screenPad:Math.round(pad),padOk:pad>=dockH-1})})()`;
 
 function page(shot, bodyHtml) {
   const name = shotName(shot);
@@ -273,8 +326,7 @@ font:600 11px/1.5 ui-monospace,monospace;padding:5px 10px;letter-spacing:.04em;b
 mkdirSync(OUT, { recursive: true });
 const pages = new Map();
 for (const shot of SHOTS) {
-  const ctx = makeCtx(shot);
-  pages.set(shotName(shot) + '.html', page(shot, RENDERERS[shot.screen](ctx)));
+  pages.set(shotName(shot) + '.html', page(shot, renderShot(shot)));
 }
 
 // Servidor estático local efímero: /css/* desde web/, el resto son páginas QA.
@@ -362,7 +414,9 @@ try {
     const size = statSync(out).size;
     metrics.push({ name, ...m });
     results.push({ file: name + '.png', size });
-    console.log(`${name}.png  ${size} B  scrollW=${m ? m.scrollW : '?'}/iw${w}${m && m.over.length ? '  OVERFLOW: ' + m.over.join(' ') : ''}`);
+    console.log(`${name}.png  ${size} B  scrollW=${m ? m.scrollW : '?'}/iw${w}` +
+      `${m && m.over.length ? '  OVERFLOW: ' + m.over.join(' ') : ''}` +
+      `${m ? `  tap>=44:${m.tapBad.length ? 'NO(' + m.tapBad.join('|') + ')' : 'si'}  pad:${m.screenPad}/${m.dockH}${m.padOk ? '' : ' FALLO'}` : ''}`);
   }
 } finally {
   ws.close();

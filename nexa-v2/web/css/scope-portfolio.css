@@ -1,18 +1,14 @@
 /* NEXA rev21 — completely separate display scope from Basic/Pro and trading mode.
    REAL = dark navy / emerald, SHADOW = aubergine / lavender / gold. */
-.nx-scope-bar{display:flex;align-items:center;gap:6px;min-height:36px;padding:4px 14px;background:#0c182a;border-bottom:1px solid #28415d}
-.nx-scope-bar>span{color:#9ab5d5;font-size:11px;font-weight:700;white-space:nowrap;margin-right:7px}
-.nx-scope-bar button{border:1px solid #345477;background:#11233a;color:#a6c2e3;border-radius:8px;padding:5px 14px;font-size:11px;line-height:1.5;font-weight:820;letter-spacing:.045em;min-height:29px;transition:background .16s}
-.nx-scope-bar button.on{background:#1d644f;border-color:#3eae84;color:#b1ffe2}
-.nx-scope-bar button#scope-shadow.on{background:#67418f;border-color:#c0a0ff;color:#fff0ff}
-.nx-scope-bar>small{font-size:10px;color:#7899b9;margin-left:auto;text-align:right}
+.seg-env button{border:1px solid #345477;background:#11233a;color:#a6c2e3;font-weight:820;letter-spacing:.045em;transition:background .16s}
+.seg-env button.on{background:#1d644f;border-color:#3eae84;color:#b1ffe2}
+.seg-env button#scope-shadow.on{background:#67418f;border-color:#c0a0ff;color:#fff0ff}
 #app[data-scope=shadow]{--bg:#100d1c;--bg2:#181126;--card:#211831;--card2:#2a1c3b;--line:#37294d;--line2:#5d4179;--tx:#eee5ff;--tx2:#bba6d7;--tx3:#8e78ae;--blue:#c29aff;--blue2:#d0adff;--ice:#58d9be;--red:#fa829e;--amber:#ffc877;
   --nxp-night:#110d1c;--nxp-panel:#221731;--nxp-raised:#322246;--nxp-line:#50395e;--nxp-deep:#160e23;--nxp-soft:#bea6d8;--nxp-blue:#c29aff}
 #app[data-scope=shadow] .topbar{background:#150f22ee;border-bottom-color:#60427c}
-#app[data-scope=shadow] .nx-scope-bar{background:#2a1c3a;border-color:#795294}
 #app[data-scope=shadow] .statusline{background:#1c132d;color:#c2a6e3;border-color:#6a4483}
 #app[data-scope=shadow] .screen{background:linear-gradient(180deg,#150e21,#100c1b)}
-#app[data-scope=shadow] .bottomnav{background:#1a1129;border-top-color:#664681}
+#app[data-scope=shadow] .dock{background:#1a1129;border-top-color:#664681}
 #app[data-scope=shadow] .nxh-root{--nxh-bg:#21152f;--nxh-border:#62417a;--nxh-dim:#bba6d4;--nxh-text:#faf0ff}
 #app[data-scope=shadow] .nxh-hero,
 #app[data-scope=shadow] .nxh-market-tile,
@@ -79,9 +75,7 @@
 #app[data-scope=shadow] .nxw-stat{background:#291d37;border-color:#694a7d}
 #app[data-scope=shadow] .nxw-tabs button.on{background:#6f4492;border-color:#b48beb;color:#fff}
 @media(max-width:650px){
- .nx-scope-bar{padding:5px 10px;gap:5px}.nx-scope-bar>span{font-size:10px}
- .nx-scope-bar button{padding:4px 9px;min-height:29px;font-size:10px}
- .nx-scope-bar>small{font-size:9px}
+ .seg-env button{padding:4px 9px;font-size:10px}
  .nxw-hero{padding:18px 15px}
  .nxw-hero-line{grid-template-columns:repeat(2,minmax(0,1fr))}
  .nxw-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
@@ -90,7 +84,7 @@
  .nxw-balance{grid-template-columns:minmax(65px,.6fr) minmax(95px,1fr);gap:8px}
  .nxw-balance-value{grid-column:2;text-align:left}
 }
-@media(max-width:375px){.nx-scope-bar>small{display:none}.nxw-hero-line{grid-template-columns:1fr 1fr}}
+@media(max-width:375px){.nxw-hero-line{grid-template-columns:1fr 1fr}}
 
 
 /* FISCO · private read-only tax explorer, no sample fiscal amounts. */

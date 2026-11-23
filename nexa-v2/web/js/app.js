@@ -17,6 +17,7 @@ import {renderFiscalView} from './fisco-view.js';
 import {openImportPositionPreview} from './import-position.js';
 import {renderScopedEngine,renderScopedActivity,renderModesOverview} from './scoped-pages.js';
 import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
+import {ROOT_ITEMS,bottomItems,navMove,navUp,navRoot,sanitizeNav,navView} from './nav-model.js';
 
 // Mark native Android WebView to reserve system status-bar inset reliably.
 if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.add('nexa-native');
@@ -25,7 +26,8 @@ if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.ad
 const state = {
   mode: localStorage.getItem('nexa.mode') || 'pro',
   viewScope: localStorage.getItem('nexa.viewScope')==='shadow'?'shadow':'real', // solo pantalla, jamás modo del bot      // basic | pro  (solo presentación)
-  screen: 'home',
+  nav: navRoot(),          // navegación por profundidad {depth,section,sub,inner}
+  detail: null,            // pantalla fuera del árbol: asset | manage-idca | fisco
   ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all', portfolioTab:'summary',fiscoTab:'summary',
     activityFilter:{ sev:'all', engine:'all', cat:'all' } },
   provider: createApiProvider(),
@@ -51,20 +53,36 @@ const NAV = [
   { id:'fisco',  label:'FISCO',      icon:'M8 3h8v18l-4-3-4 3z' },
   { id:'settings',label:'Ajustes',   icon:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8 4h3M3 12h3m6-9v3m0 12v3M17.7 6.3l2-2M4.3 19.7l2-2m11.4 2 2-2M4.3 4.3l2 2' },
 ];
-const BOTTOM_NAV = ['home','market','engines','portfolio','activity'];
-
 // ---------- Router ----------
-function navTarget(){
-  if(state.screen==='engines') return 'engines:'+state.ui.engineId;
-  return state.screen;
-}
+// navTo traduce los destinos data-nav que ya existen en el contenido al nuevo
+// modelo de profundidad. 'engine:<id>' abre el motor en depth 2; 'fisco',
+// 'asset' y 'manage-idca' son pantallas detalle fuera del árbol de secciones.
 function navTo(target){
-  if(target.startsWith('engine:')){ state.ui.engineId = target.slice(7); state.ui.subtab = ENGINE_SUBTABS[state.ui.engineId]?.[0]?.id || 'panel'; state.screen='engines'; }
-  else {state.screen = target;if(target==='engines')state.ui.engineId='overview';}
+  state.detail=null;
+  if(target.startsWith('engine:')){ state.nav={depth:2,section:'engines',sub:target.slice(7),inner:'panel'}; }
+  else if(target==='fisco'||target==='asset'||target==='manage-idca'){ state.detail=target; }
+  else if(target==='positions'){ state.nav={depth:1,section:'home',sub:'positions',inner:null}; }
+  else if(target==='settings'){ state.nav={depth:1,section:'home',sub:'connection',inner:null}; }
+  else {
+    const i=ROOT_ITEMS.findIndex(x=>x.id===target);
+    state.nav = i>=0 ? navMove(navRoot(),i,state.mode) : navRoot();
+  }
+  render();
+  window.scrollTo?.(0,0);
+}
+// Un único nivel hacia arriba: detalle → árbol, depth 2 → sección, depth 1 → raíz.
+function backOne(){
+  if(state.detail){ state.detail=null; }
+  else if(state.nav.depth>0){ state.nav=navUp(state.nav); }
+  else return;
   render();
   window.scrollTo?.(0,0);
 }
 window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.hash.slice(1)); });
+// Botón Atrás de Android (Capacitor) o del navegador: sube un nivel; en la
+// raíz se conserva el comportamiento por defecto (salir / historial).
+try{ window.Capacitor?.Plugins?.App?.addListener?.('backButton',()=>{ if(state.detail||state.nav.depth>0) backOne(); }); }catch{}
+window.addEventListener('popstate',()=>{ if(state.detail||state.nav.depth>0) backOne(); });
 
 // ---------- Datos ----------
 async function loadData(){
@@ -131,17 +149,27 @@ function render(){
     renderEngineSub, ctxBridge(){ window.__nexa = { ctx: this, session: session.get() }; },
   };
   ctx.ctxBridge();
+  // La navegación de profundidad es la fuente de verdad de la ruta; se
+  // sincronizan los campos de ui que los renderers existentes ya leen.
+  state.nav = sanitizeNav(state.nav, state.mode);
+  const view = navView(state.nav);
+  if(view.ui.marketSub!==undefined)state.ui.marketSub=view.ui.marketSub;
+  if(view.ui.engineId){state.ui.engineId=view.ui.engineId;state.ui.subtab=view.ui.subtab;}
+  if(view.ui.portfolioTab)state.ui.portfolioTab=view.ui.portfolioTab;
+  if(view.ui.activityCat)state.ui.activityFilter.cat=view.ui.activityCat;
+  const scr2 = state.detail || view.screen;
   let html='';
-  if(state.screen==='home') html = D.renderDashboard(ctx);
-  else if(state.screen==='positions') html = D.renderPositions(ctx);
-  else if(state.screen==='asset') html = D.renderAsset(ctx);
-  else if(state.screen==='manage-idca') html = D.renderCycleManager(ctx);
-  else if(state.screen==='market') html = S.renderMarket(ctx);
-  else if(state.screen==='engines') html = state.ui.engineId==='overview'?renderModesOverview(ctx):renderScopedEngine(ctx);
-  else if(state.screen==='portfolio') html = renderPortfolioView(ctx);
-  else if(state.screen==='activity') html = renderScopedActivity(ctx);
-  else if(state.screen==='fisco') html = renderFiscalView(ctx);
-  else if(state.screen==='settings') html = S.renderSettings(ctx);
+  if(scr2==='dashboard') html = D.renderDashboard(ctx);
+  else if(scr2==='positions') html = D.renderPositions(ctx);
+  else if(scr2==='asset') html = D.renderAsset(ctx);
+  else if(scr2==='manage-idca') html = D.renderCycleManager(ctx);
+  else if(scr2==='market') html = S.renderMarket(ctx);
+  else if(scr2==='modes') html = renderModesOverview(ctx);
+  else if(scr2==='engine') html = renderScopedEngine(ctx);
+  else if(scr2==='portfolio') html = renderPortfolioView(ctx);
+  else if(scr2==='activity') html = renderScopedActivity(ctx);
+  else if(scr2==='fisco') html = renderFiscalView(ctx);
+  else if(scr2==='settings') html = S.renderSettings(ctx);
   scr.innerHTML = html;
   renderNav(); renderStatusline();
   document.getElementById('app').dataset.mode = state.mode;
@@ -150,7 +178,7 @@ function render(){
   $('scope-shadow').classList.toggle('on',state.viewScope==='shadow');
   $('scope-real').setAttribute('aria-pressed',String(state.viewScope==='real'));
   $('scope-shadow').setAttribute('aria-pressed',String(state.viewScope==='shadow'));
-  document.getElementById('app').dataset.screen = state.screen;
+  document.getElementById('app').dataset.screen = scr2;
   document.getElementById('mode-basic').classList.toggle('on', state.mode==='basic');
   document.getElementById('mode-pro').classList.toggle('on', state.mode==='pro');
   const selectedEngine=ENGINES.find(e=>e.id===state.ui.engineId)?.name || 'Motor';
@@ -160,17 +188,26 @@ function render(){
   scr.focus({preventScroll:true});
 }
 function renderNav(){
-  const cur = state.screen;
+  const view = navView(state.nav);
+  const cur = state.detail || view.screen;
+  const sectionActive = id => state.detail===id || (!state.detail && state.nav.section===id) || cur===id;
   $('topnav').innerHTML = NAV.filter(n=>n.id!=='engines').map(n=>
-    `<a href="#${n.id}" data-nav="${n.id}" class="${cur===n.id?'on':''}">${esc(n.label)}</a>`).join('')
-    + `<a href="#engines" data-nav="engines" class="${cur==='engines'?'on':''}">Modos</a>`;
+    `<a href="#${n.id}" data-nav="${n.id}" class="${sectionActive(n.id)?'on':''}">${esc(n.label)}</a>`).join('')
+    + `<a href="#engines" data-nav="engines" class="${sectionActive('engines')?'on':''}">Modos</a>`;
   $('settings-shortcut').setAttribute('aria-current',cur==='settings'?'page':'false');
-  $('bottomnav').innerHTML = BOTTOM_NAV.map(id=>{
-    const n = NAV.find(x=>x.id===id);
-    const active = cur===id || (id==='engines'&&cur==='engines');
-    return `<a href="#${id}" data-nav="${id}" class="${active?'on':''}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="${n.icon}"/></svg>${esc(n.label)}</a>`;
+  // La barra inferior cambia de contenido según el nivel (prototipo):
+  // raíz → secciones; depth 1 → subpestañas; depth 2 → secciones del motor.
+  const items = bottomItems(state.nav, state.mode);
+  const bn = $('bottomnav');
+  bn.style.gridTemplateColumns = `repeat(${Math.min(items.length,items.length>5?3:5)},minmax(0,1fr))`;
+  bn.innerHTML = items.map((it,i)=>{
+    const active = !state.detail && (state.nav.depth===0 ? it.id===state.nav.section
+      : state.nav.depth===1 ? it.id===state.nav.sub : it.id===state.nav.inner);
+    const icon = state.nav.depth===0 ? (()=>{const n=NAV.find(x=>x.id===it.id);
+      return n?`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="${n.icon}"/></svg>`:'';})() : '';
+    return `<a href="#${it.id}" data-nav-idx="${i}" class="${active?'on':''}${state.nav.depth?' nv-sub':''}">${icon}${esc(it.label)}</a>`;
   }).join('');
+  $('back').hidden = !(state.detail || state.nav.depth>0);
 }
 function renderStatusline(){
   const authed=!!session.get();
@@ -222,8 +259,8 @@ function openEngineModal(){
       <span class="ic">${esc(e.name[0])}</span><span><b>${esc(e.name)}</b><br><small class="tiny">${esc(e.desc)}</small></span></button>`).join('')+
     `</div>`);
   modal.root.querySelectorAll('[data-pick-engine]').forEach(b=>b.addEventListener('click',()=>{
-    state.ui.engineId=b.dataset.pickEngine; state.screen='engines';
-    state.ui.subtab = ENGINE_SUBTABS[state.ui.engineId]?.[0]?.id || 'panel';
+    state.detail=null;
+    state.nav={depth:2,section:'engines',sub:b.dataset.pickEngine,inner:'panel'};
     modal.close(); render();
   }));
 }
@@ -622,16 +659,17 @@ document.addEventListener('click', e=>{
   if(asset){
     e.preventDefault();const pair=asset.dataset.asset;
     if(pair!=='BTC/USD'&&pair!=='ETH/USD')return;
-    state.ui.marketPair=pair;state.screen='asset';render();window.scrollTo?.(0,0);return;
+    state.ui.marketPair=pair;state.detail='asset';render();window.scrollTo?.(0,0);return;
   }
   const manage=e.target.closest('[data-manage-cycle]');
   if(manage){
     e.preventDefault();state.ui.cycleId=manage.dataset.manageCycle;
-    state.ui.engineId='idca';state.screen='manage-idca';render();window.scrollTo?.(0,0);return;
+    state.ui.engineId='idca';state.detail='manage-idca';render();window.scrollTo?.(0,0);return;
   }
   const subFromManager=e.target.closest('[data-engine-sub]');
-  if(subFromManager){e.preventDefault();state.ui.engineId='idca';
-    state.ui.subtab=subFromManager.dataset.engineSub;state.screen='engines';
+  if(subFromManager){e.preventDefault();
+    state.detail=null;
+    state.nav={depth:2,section:'engines',sub:'idca',inner:subFromManager.dataset.engineSub};
     render();window.scrollTo?.(0,0);return;}
   const manual=e.target.closest('[data-manual-buy]');
   if(manual){e.preventDefault();openManualBuyForm(manual.dataset.manualBuy);return;}
@@ -642,17 +680,23 @@ document.addEventListener('click', e=>{
     const next=scope.dataset.scope;
     if(next!=='real'&&next!=='shadow')return;
     state.viewScope=next;localStorage.setItem('nexa.viewScope',next);
-    state.ui.positionFilter='all';state.ui.portfolioTab='summary';
     render();window.scrollTo?.(0,0);return;
   }
   const inspect = e.target.closest('[data-inspect]');
   if(inspect){ e.preventDefault(); showRecordInspector(state,inspect.dataset.inspect); return; }
+  // Ítems de la barra inferior por índice: su significado depende del nivel.
+  const nv=e.target.closest('[data-nav-idx]');
+  if(nv){
+    e.preventDefault();state.detail=null;
+    state.nav=navMove(state.nav,Number(nv.dataset.navIdx),state.mode);
+    render();window.scrollTo?.(0,0);return;
+  }
   const nav = e.target.closest('[data-nav]');
   if(nav){ e.preventDefault(); navTo(nav.dataset.nav); return; }
   const ui = e.target.closest('[data-ui]');
   if(ui){
     const [k,v] = ui.dataset.ui.split(':');
-    if(k==='subtab') state.ui.subtab=v;
+    if(k==='subtab'){ state.ui.subtab=v; if(state.nav.depth===2) state.nav.inner=v; }
     else if(k==='marketPair'){
       state.ui.marketPair=v;
       render(); // The chosen pair changes immediately.
@@ -677,11 +721,16 @@ document.addEventListener('click', e=>{
       return;
     }
     else if(k==='positionFilter')state.ui.positionFilter=v;
-    else if(k==='portfolioTab')state.ui.portfolioTab=v;
+    else if(k==='portfolioTab'){ state.ui.portfolioTab=v;
+      if(state.nav.depth===1&&state.nav.section==='portfolio') state.nav.sub=v; }
     else if(k==='fiscoTab')state.ui.fiscoTab=v;
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
-    else if(k==='cat') state.ui.activityFilter.cat=v;
+    else if(k==='cat'){ state.ui.activityFilter.cat=v;
+      if(state.nav.depth===1&&state.nav.section==='activity'){
+        const inv={all:'recent',executed:'executed',decision:'decision',technical:'notices'};
+        if(inv[v])state.nav.sub=inv[v];
+      } }
     render(); return;
   }
   const act = e.target.closest('[data-action]');
@@ -705,10 +754,12 @@ document.addEventListener('keydown', e=>{
   if(!target || (e.key!=='Enter'&&e.key!==' '))return;
   e.preventDefault(); showRecordInspector(state,target.dataset.inspect);
 });
-$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); render(); });
-$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); render(); });
+$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); state.nav=sanitizeNav(state.nav,'basic'); render(); });
+$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); state.nav=sanitizeNav(state.nav,'pro'); render(); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
+$('back').addEventListener('click', backOne);
+$('brand-home').addEventListener('click',()=>{ state.detail=null; state.nav=navRoot(); render(); window.scrollTo?.(0,0); });
 // Insignia de versión permanente: generada en compilación, visible en todas las pantallas.
 (function(){
   const b=$('ver-badge');if(!b)return;

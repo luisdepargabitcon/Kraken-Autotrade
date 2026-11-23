@@ -8,12 +8,15 @@ const text=v=>v==null||v===''?'—':esc(String(v));
 const amount=v=>n(v)===null?'—':fmtUsd(n(v));
 const profit=v=>n(v)===null?'—':signedUsd(n(v));
 const engines={idca:'IDCA · Acumulación por ciclos',spot:'SPOT / Swing',grid:'GRID aislado',ama:'AMA · Macro adaptativo'};
-const stream=[
+// STREAM se exporta: nav-model.js deriva de estos path las secciones internas
+// de cada motor (Estado/Posiciones/Historial/Órdenes) sin duplicar la lista.
+export const STREAM=[
   ['idca','cycles','Ciclos abiertos'],['idca','history','Historial'],['idca','orders','Órdenes'],['idca','events','Eventos'],
   ['spot','positions','Posiciones'],['spot','trades','Historial global (origen no atribuido)'],
   ['grid','cycles','Ciclos BUY → SELL'],['grid','events','Eventos de GRID'],
   ['ama','cycles','Ciclos AMA'],['ama','tranches','Tramos'],['ama','trace.decisions','Decisiones'],
 ];
+const stream=STREAM;
 function getPath(obj,path){return String(path).split('.').reduce((o,k)=>o?.[k],obj);}
 function meta(ctx,id){return ctx.enginesData?.[id]||{state:'unavailable',data:{}};}
 function modeFallback(ctx,id){const d=meta(ctx,id).data||{};
@@ -118,12 +121,15 @@ export function renderModesOverview(ctx){
 }
 export function renderScopedEngine(ctx){
  const id=ctx.ui?.engineId||'idca',info=meta(ctx,id),scope=ctx.viewScope||'real';
- const active=ctx.mode==='basic'&&!['panel','cycles','positions'].includes(ctx.ui?.subtab)?'panel':(ctx.ui?.subtab||'panel');
+ const active=ctx.mode==='basic'&&ctx.ui?.subtab==='orders'?'panel':(ctx.ui?.subtab||'panel');
  const sections=stream.filter(([engine])=>engine===id).map(([engine,path,label])=>({engine,path,label}));
  if(!sections.length)return '<div class="nxs-root"><h2>Motor no identificado</h2></div>';
  const sub=sections.find(x=>x.path===active);
  const basic=ctx.mode==='basic';
- const selected=active==='panel'?sections.filter(x=>!basic||['cycles','positions'].includes(x.path)):sub?[sub]:[];
+ // En Básico solo se ocultan las Órdenes; el resto de secciones internas
+ // (posiciones, historial, eventos, tramos, decisiones) siguen disponibles.
+ const basicAllowed=x=>x.path!=='orders';
+ const selected=active==='panel'?sections.filter(x=>!basic||basicAllowed(x)):sub?[sub]:[];
  let html='<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(scope))+'</span>'+
  '<h1>'+esc(engines[id]||id)+'</h1>'+
  '<p>Estado y actividad del modo en el entorno seleccionado.</p></div>'+
@@ -132,7 +138,7 @@ export function renderScopedEngine(ctx){
  facts(ctx,id)+
  '<nav class="nxs-tabs" aria-label="Secciones del motor">'+
  '<button data-ui="subtab:panel" class="'+(active==='panel'?'on':'')+'">Panel</button>'+
- sections.filter(x=>!basic||['cycles','positions'].includes(x.path)).map(x=>'<button data-ui="subtab:'+esc(x.path)+'" class="'+(active===x.path?'on':'')+'">'+esc(x.label)+'</button>').join('')+
+ sections.filter(x=>!basic||basicAllowed(x)).map(x=>'<button data-ui="subtab:'+esc(x.path)+'" class="'+(active===x.path?'on':'')+'">'+esc(x.label)+'</button>').join('')+
  '</nav>';
  if(info.state!=='ok'&&info.state!=='partial')html+='<p class="nxs-warning">El motor no está disponible desde la API. No se genera un estado ficticio.</p>';
  if(active==='panel')html+=marketStatus(ctx,id);

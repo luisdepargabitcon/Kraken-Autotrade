@@ -18,16 +18,24 @@
 <div id="app" class="app" data-mode="pro" data-online="1">
   <header class="topbar">
     <div class="brand">
-      <svg aria-hidden="true" viewBox="0 0 36 36" width="30" height="30"><rect x="1" y="1" width="34" height="34" rx="9" fill="#123877"/><path d="m7 25 6-15h5l3 11 4-11h5l-6 15h-6l-3-10-4 10z" fill="#79bcff"/></svg>
-      <div class="brand-tx"><b>NEXA</b><span id="brand-sub">Control · Web + Android</span></div>
+      <button class="logo" id="brand-home" type="button" aria-label="Volver a Inicio" title="Inicio">
+        <svg aria-hidden="true" viewBox="0 0 36 36" width="30" height="30"><rect x="1" y="1" width="34" height="34" rx="9" fill="#123877"/><path d="m7 25 6-15h5l3 11 4-11h5l-6 15h-6l-3-10-4 10z" fill="#79bcff"/></svg>
+        <span class="brand-tx"><b>NEXA</b><span id="brand-sub">Control · Web + Android</span></span>
+      </button>
     </div>
     <nav class="topnav" id="topnav" aria-label="Navegación principal escritorio"></nav>
-    <div class="top-ctl">
-      <button class="seg-btn" id="engine-btn" aria-haspopup="dialog" title="Cambiar motor" aria-label="Cambiar motor">Motor: <b id="engine-name">IDCA</b></button>
+    <div class="top-segs">
       <div class="seg" role="group" aria-label="Nivel de presentación">
         <button id="mode-basic" data-mode="basic">Básico</button>
         <button id="mode-pro" data-mode="pro" class="on">Pro</button>
       </div>
+      <div class="seg seg-env" role="group" aria-label="Datos visibles: reales o de simulación">
+        <button type="button" id="scope-real" data-scope="real" class="on" aria-pressed="true">REAL</button>
+        <button type="button" id="scope-shadow" data-scope="shadow" aria-pressed="false">SHADOW</button>
+      </div>
+    </div>
+    <div class="top-ctl">
+      <button class="seg-btn" id="engine-btn" aria-haspopup="dialog" title="Cambiar motor" aria-label="Cambiar motor">Motor: <b id="engine-name">IDCA</b></button>
       <button class="seg-btn" id="lock-btn" title="Bloquear (PIN)">Bloq.</button>
       <button class="nx-ver" id="ver-badge" type="button" title="Información de compilación" aria-label="Versión y compilación">v…</button>
       <button class="nx-header-settings" id="settings-shortcut" type="button" data-nav="settings" title="Ajustes" aria-label="Abrir ajustes">
@@ -35,15 +43,12 @@
       </button>
     </div>
   </header>
-  <div class="nx-scope-bar" role="group" aria-label="Seleccionar datos reales o de simulación">
-    <span>Datos visibles:</span>
-    <button type="button" id="scope-real" data-scope="real" class="on" aria-pressed="true">REAL</button>
-    <button type="button" id="scope-shadow" data-scope="shadow" aria-pressed="false">SHADOW</button>
-    <small id="scope-warning">Selector de visualización, no cambia el motor</small>
-  </div>
   <div class="statusline" id="statusline" role="status"></div>
   <main id="screen" class="screen" tabindex="-1"></main>
-  <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil"></nav>
+  <div class="dock">
+    <button id="back" type="button" aria-label="Volver al nivel anterior" title="Atrás" hidden>‹</button>
+    <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil"></nav>
+  </div>
 </div>
 
 <div id="unlock-overlay" class="pin-overlay" role="dialog" aria-modal="true" aria-label="Desbloquear NEXA">
