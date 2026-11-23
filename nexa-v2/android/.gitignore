@@ -103,3 +103,4 @@ app/src/main/res/xml/config.xml
 # Signing material: keep release keystore local only (INC-021)
 nexa-v2-release.keystore
 *.jks
+keystore/

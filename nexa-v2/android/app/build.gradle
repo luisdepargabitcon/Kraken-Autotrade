@@ -7,6 +7,22 @@ def nexaSigning = [
 ]
 def nexaCanSignRelease = nexaSigning.values().every { it != null && it.trim() }
 
+// Firma QA persistente (Rev24b): keystore dedicada en android/keystore/nexa-qa.jks
+// (gitignored) + credenciales en android/local.properties o variables de entorno.
+// Todas las APK QA comparten la misma firma → se actualizan entre sí sin
+// conflictos. No es la clave de producción (expuesta, INC-021).
+def nexaLocalProps = new Properties()
+def nexaLpFile = rootProject.file('local.properties')
+if (nexaLpFile.exists()) nexaLpFile.withInputStream { nexaLocalProps.load(it) }
+def qaSigning = [
+  file: System.getenv('NXV2_QA_KEYSTORE_PATH') ?: nexaLocalProps.getProperty('nxv2.qa.storeFile'),
+  storePassword: System.getenv('NXV2_QA_KEYSTORE_PASSWORD') ?: nexaLocalProps.getProperty('nxv2.qa.storePassword'),
+  keyAlias: System.getenv('NXV2_QA_KEY_ALIAS') ?: nexaLocalProps.getProperty('nxv2.qa.keyAlias'),
+  keyPassword: System.getenv('NXV2_QA_KEY_PASSWORD') ?: nexaLocalProps.getProperty('nxv2.qa.keyPassword'),
+]
+def nexaCanSignQa = qaSigning.values().every { it != null && it.trim() } &&
+  rootProject.file(qaSigning.file ?: 'keystore/__none__.jks').exists()
+
 apply plugin: 'com.android.application'
 
 android {
@@ -17,6 +33,14 @@ android {
                 storePassword nexaSigning.storePassword
                 keyAlias nexaSigning.keyAlias
                 keyPassword nexaSigning.keyPassword
+            }
+        }
+        qa {
+            if (nexaCanSignQa) {
+                storeFile rootProject.file(qaSigning.file)
+                storePassword qaSigning.storePassword
+                keyAlias qaSigning.keyAlias
+                keyPassword qaSigning.keyPassword
             }
         }
     }
@@ -31,8 +55,8 @@ android {
         applicationId "com.nexa.autotrade.v2"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 12
-        versionName "0.8.0"
+        versionCode 13
+        versionName "0.8.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -46,6 +70,9 @@ android {
             // (com.nexa.autotrade.v2.qa) avoids the debug/release cert conflict.
             applicationIdSuffix ".qa"
             versionNameSuffix "-qa"
+            // Firma QA persistente si existe la keystore dedicada; si no, debug
+            // estándar (CI). Nunca mezcla certificados entre orígenes.
+            if (nexaCanSignQa) signingConfig signingConfigs.qa
         }
         release {
             minifyEnabled false
