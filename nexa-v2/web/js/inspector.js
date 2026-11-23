@@ -151,8 +151,13 @@ const REASONS={
   safety_buy:'Compra adicional de protección (DCA)',
 };
 const STATUS_ES={closed:'Cerrado',open:'Abierto',filled:'Ejecutada',partial:'Parcial',partially_filled:'Parcial',
-  cancelled:'Cancelada',canceled:'Cancelada',pending:'Pendiente',rejected:'Rechazada',
+  cancelled:'Cancelada',canceled:'Cancelada',pending:'Pendiente',rejected:'Rechazada',failed:'Fallida',
+  skipped:'Omitida',vetoed:'Vetada',planned:'Planificada',expired:'Expirada',
   reserved:'Reservado, sin orden ejecutada',simulation:'Simulación',live:'LIVE',shadow:'SHADOW'};
+// Estados en los que NO consta ejecución en el exchange: la ficha no puede
+// presentarlos como compra/venta realizada.
+const NONEXEC=new Set(['rejected','cancelled','canceled','failed','skipped','vetoed',
+  'planned','reserved','pending','expired','not_executed','dry_rejected','simulated_skip']);
 const translate=(v,dict)=>v==null||v===''?'—':dict[String(v).toLowerCase()]||String(v).replaceAll('_',' ');
 const reasonText=v=>{
  if(v==null||v==='')return 'La API no facilita el motivo de esta operación.';
@@ -260,19 +265,31 @@ export function showRecordInspector(state,ref){
  const heading=TITLES[engine+':'+path]||'Detalle de registro';
  const keyKind=String(s.kind||'').toUpperCase();
  const signal=keyKind==='BUY'||keyKind==='COMPRA'?'buy':keyKind==='SELL'||keyKind==='VENTA'?'sell':'neutral';
- const name=signal==='buy'?'COMPRA':signal==='sell'?'VENTA':f.cycle?(f.closed?'CICLO CERRADO':'CICLO ABIERTO'):statusName(s.state||s.kind);
+ const mode=first(record,'mode','executionMode'),status=first(record,'status','state','executionStatus');
+ const stLower=String(status||'').toLowerCase();
+ const isEvent=path==='events'||path==='trace.decisions';
+ const notExecuted=!isEvent&&NONEXEC.has(stLower);
+ const name=isEvent?'EVENTO':
+  notExecuted?(signal!=='neutral'?((signal==='buy'?'COMPRA':'VENTA')+' '+statusName(status).toUpperCase()):statusName(status).toUpperCase()):
+  signal==='buy'?'COMPRA':signal==='sell'?'VENTA':f.cycle?(f.closed?'CICLO CERRADO':'CICLO ABIERTO'):statusName(s.state||s.kind);
  const pnlPresent=num(f.pnl)!==null;
  const performanceLabel=pnlPresent?(f.closed?'Resultado neto del cierre':'Resultado no realizado'):'Resultado sin verificar';
  const valueNum=pnlPresent?f.pnl:null;
  const heroMain=pnlPresent?signedMoney(valueNum):f.cycle?'—':amountOrDash(first(record,'grossValueUsd','valueUsd','executedUsd','capitalUsedUsd'));
- const heroLabel=pnlPresent?performanceLabel:f.cycle?'Resultado sin verificar':'Importe de la operación';
+ const heroLabel=pnlPresent?performanceLabel:
+  isEvent?'Registro técnico del bot':
+  notExecuted?'Importe previsto — sin ejecución confirmada':
+  f.cycle?'Resultado sin verificar':'Importe de la operación';
  const warn=!pnlPresent&&f.cycle?'<p class="nx-inspect-caution">No hay beneficio o pérdida verificable en esta lectura. No se considera resultado cero ni se suma como ganancia.</p>':'';
  const importFlag=record.isImported===true||record.imported===true;
  const pct=pnlPresent&&num(f.pnlPct)!==null?
   '<span class="nx-inspect-percent nx-inspect-'+perfColor(f.pnl)+'">'+esc(pctText(f.pnlPct))+'</span>':'';
- const mode=first(record,'mode','executionMode'),status=first(record,'status','state','executionStatus');
  const labelReason=first(record,'closeReason','reason','triggerReason','exitType','type','humanReason');
- const summaryText=f.cycle?
+ const summaryText=isEvent?
+   'Evento técnico del bot (decisión, monitor o veto). No es una compra ni una venta y no computa como operación.':
+  notExecuted?
+   'La API registra la intención o decisión; no consta ejecución confirmada en el exchange. No computa como operación ni como resultado.':
+  f.cycle?
   (f.closed?'Ciclo finalizado. El beneficio/pérdida mostrado es el resultado registrado en el backend.':
     'Ciclo abierto: los importes pueden variar. Una reserva de capital no equivale a compra ejecutada.'):
    (signal==='buy'?'Orden de compra registrada. El importe no constituye un beneficio.':
@@ -286,12 +303,12 @@ export function showRecordInspector(state,ref){
  const body='<div class="nx-inspector nx-inspector-v2" role="dialog" aria-modal="true" aria-labelledby="nx-inspector-title">'+
   '<div class="nx-inspect-head"><span class="nx-inspect-eyebrow">NEXA · '+esc(engine.toUpperCase())+'</span>'+
    '<h2 id="nx-inspector-title">'+esc(heading)+'</h2>'+
-   '<div class="nx-inspect-head-meta">'+pill(name,signal)+meta+'</div></div>'+
+   '<div class="nx-inspect-head-meta">'+pill(name,isEvent||notExecuted?'neutral':signal)+meta+'</div></div>'+
   '<section class="nx-inspect-hero '+(pnlPresent?'is-'+perfColor(f.pnl):'is-unverified')+'">'+
    '<small>'+esc(heroLabel)+'</small><div class="nx-inspect-result-line"><strong>'+esc(heroMain)+'</strong>'+pct+'</div>'+
    '<p>'+esc(summaryText)+'</p>'+warn+'</section>'+
   '<section class="nx-inspect-main"><h3>Resumen de la operación</h3><div class="nx-inspect-priority nx-inspect-priority-v2">'+figures+'</div></section>'+
-  '<section class="nx-inspect-reason nx-inspect-reason-v2"><small>Motivo de ejecución o salida</small>'+
+  '<section class="nx-inspect-reason nx-inspect-reason-v2"><small>'+(isEvent||notExecuted?'Motivo del registro':'Motivo de ejecución o salida')+'</small>'+
    '<p>'+esc(reasonText(labelReason))+'</p>'+
    (labelReason?'<span class="nx-inspect-code">Código: '+esc(labelReason)+'</span>':'')+'</section>'+
   timeline(orders,record)+linkedCards(orders)+

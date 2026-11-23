@@ -4,6 +4,7 @@
 import {esc,fmtUsd,signedUsd,signedPct,fmtNum,fmtPct,fmtTs,fmtAge,NA} from './util.js';
 import {candleChart,lineChart,modeBadge} from './ui.js';
 import {ohlcvChart} from './premium-chart.js';
+import {BUILD_INFO} from './build-info.js';
 
 const NAMES={idca:'IDCA',spot:'SPOT / Swing',grid:'GRID aislado',ama:'AMA'};
 const DESCS={idca:'Acumulación inteligente por ciclos',spot:'Señales y gestión de posiciones',grid:'Órdenes por niveles BUY → SELL',ama:'Mandatos y acumulación macro'};
@@ -73,7 +74,7 @@ function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=
    <div class="nxp-charthead"><div>${eyebrow(title)}<strong>${esc(pair)}</strong></div>
      <span class="nxp-timeframe" title="Temporalidad disponible del contrato">15m</span></div>
    ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${ohlcvChart(candles,{height:compact?240:315,levels:levels.filter(x=>num(x.price)),label:pair+' · velas OHLCV'})}</div>`:
-      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado','Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias.')}
+      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado','Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias. El bot calcula velas internamente, pero la API de solo lectura no exporta la serie.')}
    <div class="nxp-chartfoot">${ready?`Origen: ${esc(m.provider||m.source||'API')} · ${m.ts?esc(fmtAge(m.ts)):'hora no verificada'}`:
      'Precio y velas pendientes de autenticación y fuente'}</div>
  </section>`;
@@ -215,7 +216,18 @@ function proMarket(ctx){
       ${active&&Array.isArray(m.sources||m.externalSources)&&(m.sources||m.externalSources).length?`<div class="nxp-source-list">`+(m.sources||m.externalSources).map(x=>`<div class="nxp-source-row"><span>${esc(x.name||x.id||'fuente')}</span><small>${esc(x.state||x.role||'')}${x.lastOk?' · '+esc(fmtAge(x.lastOk)):''}</small></div>`).join('')+`</div>`:''}
     </section>
     ${!active?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
-    <section class="nxp-terminal-panel">${section('CONTEXTO','Aplicación automática')}
+    <section class="nxp-terminal-panel">${section('CONTEXTO','Lectura real de los motores')}
+      ${(()=>{const cx=m.marketContext||{};const rows=[
+        ['Zona macro · AMA',cx.macroZone],
+        ['Caída actual · AMA',num(cx.currentDropPct)!=null?pct(cx.currentDropPct):null],
+        ['Rebote desde mínimo · AMA',num(cx.reboundFromLowPct)!=null?pct(cx.reboundFromLowPct):null],
+        ['Score de entrada · IDCA',num(cx.entryScore)!=null?fmtNum(cx.entryScore,{dec:1})+(cx.confidenceGrade?' · grado '+cx.confidenceGrade:''):null],
+        ['Decisión IDCA',cx.entryDecision],
+        ['Dip detectado · IDCA',num(cx.dipDetectedPct)!=null?pct(cx.dipDetectedPct):null],
+        ['Señal de rebote · IDCA',cx.reboundSignal],
+        ['Bloqueo de seguridad · IDCA',cx.hardBlocked===true?'Sí':null],
+      ].filter(([,v])=>v!=null&&v!=='');
+      return rows.length?`<div class="nxp-vertical-stats">${rows.map(([k,v])=>block(k,v)).join('')}</div>`:''})()}
       <p class="nxp-panel-empty">Los botones de este panel no lanzan compras ni ventas. Cada motor decide según sus propias reglas.</p>
       ${link('engines','Ver decisiones de motores')}
     </section>
@@ -657,6 +669,7 @@ export function renderSettingsPremium(ctx,legacy){
   </div>
   ${ctx.mode==='pro'&&goodCommon(ctx,'settings')?`<details class="nxp-audit"><summary>Configuración técnica <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
   <p class="nxp-settings-footnote">La vinculación no autoriza compras, ventas ni cambios en el bot.</p>
+  <p class="nxp-settings-footnote">NEXA ${esc(BUILD_INFO.version)} · ${esc(BUILD_INFO.commit)} · ${esc(BUILD_INFO.channel)}${BUILD_INFO.builtAt?' · '+esc(BUILD_INFO.builtAt.slice(0,16).replace('T',' ')):''}</p>
  </div>`;
  return wrap(`${header}${content}`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
 }

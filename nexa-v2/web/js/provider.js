@@ -6,7 +6,7 @@ import { CONFIG } from './config.js';
 import { apiFetch, session } from './auth.js';
 import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder, normSpotTrade,
          normGridCycle, normGridStatus, normAmaStatus, normAmaMandate,
-         normPortfolioSummary, normMarket, normEvent,
+         normPortfolioSummary, normMarket, normEvent, enrichMarket,
          wrap, unwrap } from './adapters.js';
 import { freshness } from './util.js';
 
@@ -206,8 +206,20 @@ export function createApiProvider(){
       };
     },
     async market(pair='BTC/USD'){
-      const r = await get(ROUTES.common.market, {params:{pair}});
-      return { state: st(r.state), market: wrap(r.data, normMarket), latency: r.latency };
+      // Tres lecturas reales permitidas por la pasarela: ticker, libro AMA (bid/ask)
+      // y diagnósticos IDCA (régimen/ATRP/score por par). Sin velas OHLCV exportadas.
+      const [r,mv,entry] = await Promise.all([
+        get(ROUTES.common.market,{params:{pair}}),
+        get(ROUTES.ama.marketView),
+        readEntryDiagnostics()]);
+      const ctxs=entry.state==='ok'?entryContexts(entry.data):null;
+      const sources=[
+        {name:'API /market/'+pair,state:st(r.state)},
+        {name:'AMA market-view',state:st(mv.state)},
+        {name:'IDCA entry-diagnostics',state:st(entry.state)}];
+      const market=wrap(r.data,
+        raw=>enrichMarket(normMarket(raw),{marketView:mv.data,entryCtx:ctxs?.[pair],sources}));
+      return { state: st(r.state), market, latency: r.latency };
     },
     async portfolio(){
       // Saldos EXCHANGE y contabilidad BOT son fuentes diferentes.

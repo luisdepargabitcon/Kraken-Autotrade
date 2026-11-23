@@ -296,6 +296,37 @@ export function normMarket(raw){
   };
 }
 
+// Enriquece el ticker con fuentes reales verificadas: libro AMA (bid/ask/spread)
+// y contexto de diagnósticos IDCA (régimen, ATRP, score). Solo se fusionan cuando
+// el par coincide; si falta una fuente, los campos quedan ausentes ("—"), nunca inventados.
+export function enrichMarket(m,{marketView,entryCtx,sources}={}){
+  if(!m||typeof m!=='object')return m;
+  const mv=marketView&&typeof marketView==='object'?marketView:null;
+  if(mv&&String(mv.pair)===String(m.pair)){
+    if(num(mv.executionBid)!==null)m.bid=num(mv.executionBid);
+    if(num(mv.executionAsk)!==null)m.ask=num(mv.executionAsk);
+    if(num(m.bid)!==null&&num(m.ask)!==null)m.spread=Math.abs(m.ask-m.bid);
+    if(num(mv.spreadPct)!==null)m.spreadPct=num(mv.spreadPct);
+    if(num(mv.executionMid)!==null)m.executionMid=num(mv.executionMid);
+    if(mv.dataQuality!=null)m.execDataQuality=mv.dataQuality;
+    m.marketContext={...(m.marketContext||{}),
+      macroZone:mv.macroZone??null,currentDropPct:num(mv.currentDropPct),
+      reboundFromLowPct:num(mv.reboundFromLowPct)};
+  }
+  if(entryCtx&&typeof entryCtx==='object'){
+    m.indicators={...(m.indicators||{}),
+      ...(entryCtx.regime!=null?{regime:entryCtx.regime}:{}),
+      ...(entryCtx.atrpPct!=null?{atrpPct:entryCtx.atrpPct}:{})};
+    m.marketContext={...(m.marketContext||{}),
+      entryScore:num(entryCtx.entryScore),confidenceGrade:entryCtx.confidenceGrade??null,
+      dipDetectedPct:num(entryCtx.dipDetectedPct),requiredDipPct:num(entryCtx.requiredDipPct),
+      entryDecision:entryCtx.entryDecision??null,reboundSignal:entryCtx.reboundSignal??null,
+      hardBlocked:entryCtx.hardBlocked===true?true:null,referencePrice:num(entryCtx.referencePrice)};
+  }
+  if(Array.isArray(sources))m.sources=sources;
+  return m;
+}
+
 export function normEvent(raw){
   if(!raw || typeof raw!=='object') return null;
   const sev=pick(raw,'level','severity','sev');

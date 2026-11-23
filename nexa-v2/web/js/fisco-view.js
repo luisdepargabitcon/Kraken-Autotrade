@@ -16,7 +16,8 @@ export function renderFiscalView(ctx){
  '<p>Los saldos, operaciones y resultados fiscales REALES están ocultos en este entorno. Shadow no genera declaraciones ni obligaciones fiscales simuladas.</p></div>'+
  empty('Cambia a REAL para consultar FISCO con el permiso independiente fisco:read.')+'</div>';
  if(ctx.data?.fisco?.state==='forbidden')return '<div class="nxf-root"><div class="nxf-intro">'+
- '<span>FISCALIDAD PRIVADA</span><h1>FISCO / AEAT</h1><p>El dispositivo puede estar vinculado, pero no tiene la autorización independiente fisco:read. Reintentar no concede permisos.</p></div>'+
+ '<span>FISCALIDAD PRIVADA</span><h1>FISCO / AEAT</h1><p>El dispositivo puede estar vinculado, pero no tiene la autorización independiente fisco:read. Reintentar no concede permisos.</p>'+
+ '<p>Para activarlo hay que vincular el dispositivo con un código de emisión que incluya el rol fisco:read.</p></div>'+
  empty('Acceso fiscal restringido. No se muestran importes ni datos personales.')+'</div>';
  const a=ctx.data?.fisco?.data||{},state=ctx.data?.fisco?.state||'unavailable';
  const tab=ctx.ui?.fiscoTab||'summary';

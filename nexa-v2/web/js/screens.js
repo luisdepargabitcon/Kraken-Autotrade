@@ -9,6 +9,7 @@ import {
   microBar, signed, stateBanner, lineChart, candleChart, miniSpark,
 } from './ui.js';
 import { GRID_DISTINCTION } from './contracts.js';
+import { BUILD_INFO } from './build-info.js';
 import { renderHomePremium, renderMarketPremium, renderEnginePremium, renderPortfolioPremium, renderActivityPremium, renderFiscoPremium, renderSettingsPremium } from './premium.js';
 
 const P = (v, src, ts) => provenance(v, {source:src, ts});
@@ -813,7 +814,7 @@ function renderSettingsLegacy(ctx){
     [{label:'Venue'},{label:'Rol'},{label:'Conectado'},{label:'Último OK'},{label:'Nota'}],
     (st.exchanges||[]).map(e=>[esc(e.venue),esc(e.role),badge(e.connected?'OK':'fallo',e.connected?'on':'err'),
       e.lastOk?esc(fmtAge(e.lastOk)):NA,`<small>${esc(e.note)}</small>`]),{minWidth:560}));
-  const note = `<div class="banner info">Las ediciones son <b>borrador local</b>: no se envían hasta confirmar en el editor propietario del motor. Cambiar Básico/Pro nunca envía POST.</div>`;
+  const note = `<div class="banner info">NEXA ${esc(BUILD_INFO.version)} · ${esc(BUILD_INFO.commit)} · ${esc(BUILD_INFO.channel)} — Las ediciones son <b>borrador local</b>: no se envían hasta confirmar en el editor propietario del motor. Cambiar Básico/Pro nunca envía POST.</div>`;
   return `<div class="grid">${note}${paramTables}${mode==='pro'?flags+exch:''}</div>`;
 }
 

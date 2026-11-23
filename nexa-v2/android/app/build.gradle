@@ -31,8 +31,8 @@ android {
         applicationId "com.nexa.autotrade.v2"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "0.6.0"
+        versionCode 11
+        versionName "0.7.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -41,6 +41,12 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // QA builds install alongside the signed release: distinct package id
+            // (com.nexa.autotrade.v2.qa) avoids the debug/release cert conflict.
+            applicationIdSuffix ".qa"
+            versionNameSuffix "-qa"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
