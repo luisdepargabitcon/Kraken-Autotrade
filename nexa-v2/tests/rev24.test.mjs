@@ -150,6 +150,37 @@ test('chartLevels no inventa niveles sin datos finitos', async () => {
   assert.equal(chartLevels({marketContext:{referencePrice:'x',requiredDipPct:5}}).length, 0);
 });
 
+// ---------- R18h: sin anchos fijos >360px que fuercen scroll horizontal ----------
+test('Mercado y Cartera no emiten anchos fijos >360px en elementos de layout', async () => {
+  const { renderMarketPremium } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
+  const { renderPortfolioView } = await import(pathToFileURL(join(web, 'js', 'portfolio-view.js')));
+  const ctx = {
+    mode:'pro', viewScope:'real', authenticated:true, deviceEnrolled:true, engineList:[],
+    ui:{ marketPair:'BTC/USD', portfolioTab:'summary', engineId:'idca', subtab:'panel' },
+    data:{
+      market:{ state:'ok', data:{ pair:'BTC/USD', price:60000, candles:[
+        {o:59000,h:60100,l:58800,c:59900,t:1},{o:59900,h:60500,l:59500,c:60000,t:2}] } },
+      portfolio:{ state:'ok', data:{ summary:{navUsd:1000}, resourceStates:{} } },
+      activity:{ state:'ok', data:{ events:[] } },
+    },
+    enginesData:{},
+  };
+  for (const [name, html] of [['mercado', renderMarketPremium(ctx)], ['cartera', renderPortfolioView(ctx)]]) {
+    const offenders = [];
+    for (const tag of html.match(/<[^!][^>]*>/g) || []) {
+      const st = tag.match(/style="([^"]*)"/);
+      if (!st) continue;
+      const m = st[1].match(/(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)px/);
+      if (!m || parseFloat(m[1]) <= 360) continue;
+      // Las tablas .tbl viven dentro de .tblwrap (overflow-x:auto): su min-width
+      // produce scroll interno legítimo, no desbordamiento de página.
+      if (/<table[^>]*class="[^"]*\btbl\b/.test(tag)) continue;
+      offenders.push(tag.slice(0, 120));
+    }
+    assert.deepEqual(offenders, [], `${name}: ancho fijo >360px en: ${offenders.join(' | ')}`);
+  }
+});
+
 // ---------- R18i: umbral derivado etiquetado vs nivel emitido por el bot ----------
 test('chartLevels prioriza el nivel del bot y etiqueta la fórmula como umbral derivado', async () => {
   const { enrichMarket } = await import(pathToFileURL(join(web, 'js', 'adapters.js')));
