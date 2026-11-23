@@ -139,8 +139,8 @@ test('chartLevels conecta referencia/activación desde marketContext (contrato e
   const lv = chartLevels(m, 'BTC/USD');
   const labels = lv.map(l=>l.label);
   assert.ok(labels.includes('Referencia IDCA'), 'referencia no conectada a la gráfica');
-  const act = lv.find(l=>l.label.startsWith('Activación'));
-  assert.ok(act && act.price === 61000*(1-5/100), 'activación derivada incorrecta');
+  const act = lv.find(l=>l.label.startsWith('Umbral derivado'));
+  assert.ok(act && act.price === 61000*(1-5/100), 'umbral derivado incorrecto');
   const bb = lv.find(l=>l.label==='Bollinger sup.');
   assert.ok(bb && bb.price === 61000, 'Bollinger no conectada');
 });
@@ -148,4 +148,27 @@ test('chartLevels no inventa niveles sin datos finitos', async () => {
   const { chartLevels } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
   assert.equal(chartLevels({indicators:{},marketContext:{}}).length, 0);
   assert.equal(chartLevels({marketContext:{referencePrice:'x',requiredDipPct:5}}).length, 0);
+});
+
+// ---------- R18i: umbral derivado etiquetado vs nivel emitido por el bot ----------
+test('chartLevels prioriza el nivel del bot y etiqueta la fórmula como umbral derivado', async () => {
+  const { enrichMarket } = await import(pathToFileURL(join(web, 'js', 'adapters.js')));
+  const { chartLevels } = await import(pathToFileURL(join(web, 'js', 'premium.js')));
+  // (a) El bot emite un nivel efectivo: se dibuja tal cual y la fórmula no aparece.
+  const withBot = enrichMarket({ pair:'BTC/USD', price:60000 },
+    { entryCtx:{ referencePrice:61000, requiredDipPct:5, targetEntryPrice:58200 } });
+  const lvA = chartLevels(withBot, 'BTC/USD');
+  const bot = lvA.find(l=>l.label === 'Activación (nivel del bot)');
+  assert.ok(bot && bot.price === 58200, 'no prioriza targetEntryPrice emitido por el bot');
+  assert.ok(!lvA.some(l=>l.label.startsWith('Umbral derivado')),
+    'la fórmula derivada aparece pese a existir nivel del bot');
+  // (b) Sin nivel del bot: referencia+caída requerida solo como fallback derivado.
+  const withoutBot = enrichMarket({ pair:'BTC/USD', price:60000 },
+    { entryCtx:{ referencePrice:61000, requiredDipPct:5 } });
+  const lvB = chartLevels(withoutBot, 'BTC/USD');
+  const d = lvB.find(l=>l.label.startsWith('Umbral derivado'));
+  assert.ok(d && d.label === 'Umbral derivado (ref. − caída req.)', 'etiqueta derivada incorrecta');
+  assert.equal(d.price, 61000*(1-5/100), 'precio derivado incorrecto');
+  assert.ok(!lvB.some(l=>l.label.startsWith('Activación')),
+    'fallback presentado como activación sin dato del bot');
 });

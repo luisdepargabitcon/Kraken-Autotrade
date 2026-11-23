@@ -70,9 +70,10 @@ function getCandles(m,pair){
 }
 // Niveles etiquetados sobre la gráfica: EMA/Bollinger calculados sobre las
 // mismas velas (valores actuales, no series históricas) + contexto IDCA del par
-// vía m.marketContext (contrato de enrichMarket). La activación se deriva del
-// par referencia+caída requerida que emite el bot — etiquetada como derivada,
-// nunca presentada como nivel emitido directamente.
+// vía m.marketContext (contrato de enrichMarket). Si el bot emite un nivel
+// efectivo (targetEntryPrice/nextBuyPrice) se dibuja como «nivel del bot»;
+// sin él, la fórmula referencia−caída requerida es solo fallback y se etiqueta
+// explícitamente como umbral derivado — nunca como orden ni compra garantizada.
 export function chartLevels(m,pair){
  const ind=m?.indicators||{},e=ind.ema||{},bb=ind.bollinger||{},mc=m?.marketContext||{};
  const nn=v=>num(v)?v:num(Number(v))?Number(v):null;
@@ -82,7 +83,9 @@ export function chartLevels(m,pair){
    L(e.ema20,'EMA 20'),L(e.ema50,'EMA 50'),L(e.ema200,'EMA 200'),
    L(bb.upper,'Bollinger sup.'),L(bb.mid,'Bollinger media'),L(bb.lower,'Bollinger inf.'),
    L(ref,'Referencia IDCA'),
-   L(ref&&req?ref*(1-req/100):null,'Activación (ref. − caída requerida)'),
+   L(mc.targetEntryPrice,'Activación (nivel del bot)')||
+   L(mc.nextBuyPrice,'Activación (nivel del bot)')||
+   L(ref&&req?ref*(1-req/100):null,'Umbral derivado (ref. − caída req.)'),
  ].filter(Boolean);
 }
 function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=[]}={}){

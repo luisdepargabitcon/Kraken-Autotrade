@@ -321,7 +321,8 @@ export function enrichMarket(m,{marketView,entryCtx,sources}={}){
       entryScore:num(entryCtx.entryScore),confidenceGrade:entryCtx.confidenceGrade??null,
       dipDetectedPct:num(entryCtx.dipDetectedPct),requiredDipPct:num(entryCtx.requiredDipPct),
       entryDecision:entryCtx.entryDecision??null,reboundSignal:entryCtx.reboundSignal??null,
-      hardBlocked:entryCtx.hardBlocked===true?true:null,referencePrice:num(entryCtx.referencePrice)};
+      hardBlocked:entryCtx.hardBlocked===true?true:null,referencePrice:num(entryCtx.referencePrice),
+      targetEntryPrice:num(entryCtx.targetEntryPrice),nextBuyPrice:num(entryCtx.nextBuyPrice)};
   }
   if(Array.isArray(sources))m.sources=sources;
   return m;
