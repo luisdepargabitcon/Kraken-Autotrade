@@ -72,7 +72,10 @@ test('Básico oculta Indicadores, Conciliación, Reservas y Órdenes', () => {
 });
 
 test('las secciones internas del motor derivan de los path reales de STREAM', () => {
-  assert.deepEqual(engineTabs('spot', 'pro').map(([id]) => id), ['panel', 'positions', 'trades']);
+  // SPOT declara 'orders' en STREAM (Pro): la pestaña existe pero el gateway no
+  // expone aún el dato → la vista lo declara como fuente ausente, no «0 órdenes».
+  assert.deepEqual(engineTabs('spot', 'pro').map(([id]) => id), ['panel', 'positions', 'trades', 'orders']);
+  assert.deepEqual(engineTabs('spot', 'basic').map(([id]) => id), ['panel', 'positions', 'trades']);
   assert.deepEqual(engineTabs('idca', 'pro').map(([id]) => id), ['panel', 'cycles', 'history', 'orders']);
   assert.deepEqual(engineTabs('grid', 'pro').map(([id]) => id), ['panel', 'cycles', 'events']);
   assert.deepEqual(engineTabs('ama', 'pro').map(([id]) => id), ['panel', 'cycles', 'trace.decisions']);
@@ -102,6 +105,8 @@ test('las subpestañas de Actividad mapean a activityFilter.cat', () => {
 test('bottomItems cambia de contenido según el nivel y respeta el modo', () => {
   assert.equal(bottomItems({ depth: 1, section: 'engines', sub: 'general', inner: null }, 'pro').length, 5);
   assert.deepEqual(bottomItems({ depth: 2, section: 'engines', sub: 'spot', inner: 'panel' }, 'pro')
+    .map(x => x.label), ['Estado', 'Posiciones', 'Historial', 'Órdenes']);
+  assert.deepEqual(bottomItems({ depth: 2, section: 'engines', sub: 'spot', inner: 'panel' }, 'basic')
     .map(x => x.label), ['Estado', 'Posiciones', 'Historial']);
   assert.equal(bottomItems({ depth: 1, section: 'portfolio', sub: 'summary', inner: null }, 'pro').length, 6);
   assert.equal(bottomItems({ depth: 1, section: 'portfolio', sub: 'summary', inner: null }, 'basic').length, 4);

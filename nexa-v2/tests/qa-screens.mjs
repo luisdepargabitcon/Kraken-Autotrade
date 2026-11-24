@@ -170,9 +170,10 @@ const RENDERERS = {
 const renderShot = shot => RENDERERS[navView(shot.nav).screen](makeCtx(shot));
 
 // Recorrido R19 (prototipo de controles): Inicio raíz → Mercado (subpestañas)
-// → Modos → motor SPOT → sección interna del motor (Órdenes de IDCA en Pro —
-// SPOT no tiene path 'orders'; en Básico se muestra Estado porque Órdenes se
-// oculta) → vuelta a Modos → vuelta a la raíz. Todo en las 4 combinaciones
+// → Modos → motor SPOT → sección interna del motor (Órdenes de IDCA en Pro;
+// SPOT también ofrece Órdenes en Pro pero declara «fuente no disponible» porque
+// el gateway no expone ese GET — ver scoped-pages.js; en Básico se muestra
+// Estado porque Órdenes se oculta) → vuelta a Modos → vuelta a la raíz. Todo en las 4 combinaciones
 // Básico/Pro × REAL/SHADOW. Además Cartera y Actividad con datos, vacías y
 // sin sesión (en Pro·REAL y Básico·SHADOW).
 const D1 = (section, sub) => ({ depth: 1, section, sub, inner: null });

@@ -54,10 +54,30 @@ const NAV = [
   { id:'settings',label:'Ajustes',   icon:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8 4h3M3 12h3m6-9v3m0 12v3M17.7 6.3l2-2M4.3 19.7l2-2m11.4 2 2-2M4.3 4.3l2 2' },
 ];
 // ---------- Router ----------
+// Historial real del WebView (botón Atrás de Android): la app NO instala
+// @capacitor/app, así que no hay plugin 'backButton'. Capacitor Android ejecuta
+// webView.goBack() por defecto cuando canGoBack() es true; por eso CADA navegación
+// del usuario apila una entrada real con history.pushState y 'popstate' restaura
+// state.nav/state.detail sin volver a llamar backOne (evitaría doble salto).
+// state.mode y state.viewScope son preferencias persistentes: NUNCA entran en el
+// historial ni generan entradas.
+let navSeq = 0;
+function pushNav(){
+  navSeq++;
+  try{ history.pushState({ nexa:{ seq:navSeq, nav:{...state.nav}, detail:state.detail } }, ''); }
+  catch{ navSeq--; /* contexto sin historial (tests/jsdom): la navegación sigue */ }
+}
+// Sellado de la entrada actual cuando el estado cambia SIN apilar (p. ej. el
+// cambio Básico/Pro sanea la ruta pero no debe crear un paso de «atrás»).
+function stampCurrent(){
+  try{ history.replaceState({ nexa:{ seq:history.state?.nexa?.seq||0, nav:{...state.nav}, detail:state.detail } }, ''); }catch{}
+}
 // navTo traduce los destinos data-nav que ya existen en el contenido al nuevo
 // modelo de profundidad. 'engine:<id>' abre el motor en depth 2; 'fisco',
 // 'asset' y 'manage-idca' son pantallas detalle fuera del árbol de secciones.
-function navTo(target){
+// opts.push=false solo para navegaciones que YA son una entrada de historial
+// (hashchange): apilar otra crearía un paso «atrás» duplicado.
+function navTo(target, opts={}){
   state.detail=null;
   if(target.startsWith('engine:')){ state.nav={depth:2,section:'engines',sub:target.slice(7),inner:'panel'}; }
   else if(target==='fisco'||target==='asset'||target==='manage-idca'){ state.detail=target; }
@@ -67,22 +87,40 @@ function navTo(target){
     const i=ROOT_ITEMS.findIndex(x=>x.id===target);
     state.nav = i>=0 ? navMove(navRoot(),i,state.mode) : navRoot();
   }
+  if(opts.push!==false) pushNav();
   render();
   window.scrollTo?.(0,0);
 }
 // Un único nivel hacia arriba: detalle → árbol, depth 2 → sección, depth 1 → raíz.
+// Si la entrada actual del historial es una navegación NEXA apilada (seq>0), el ‹
+// retrocede DE VERDAD con history.back() y popstate restaura el estado; solo si
+// no hay entrada previa (p. ej. llegada por hash sin pushes) se calcula el nivel
+// superior y se apila como navegación nueva. En la raíz no hay nada que hacer:
+// el botón del sistema sale de la app con su comportamiento normal.
 function backOne(){
+  if(history.state && history.state.nexa && history.state.nexa.seq>0){ history.back(); return; }
   if(state.detail){ state.detail=null; }
   else if(state.nav.depth>0){ state.nav=navUp(state.nav); }
   else return;
+  pushNav(); render(); window.scrollTo?.(0,0);
+}
+window.addEventListener('hashchange', ()=>{
+  if(location.hash){
+    navTo(location.hash.slice(1), {push:false});
+    stampCurrent(); // el hash ya ES la entrada de historial: solo se actualiza su estado
+  }
+});
+window.addEventListener('popstate', e=>{
+  // Restauración directa del estado guardado: NO llamar a backOne (doble salto).
+  // Entradas ajenas al modelo ({nxModal} de openModal en ui.js, o historial
+  // externo) se ignoran: el modal gestiona su propio cierre en su listener.
+  const snap = e.state && e.state.nexa;
+  if(!snap || !snap.nav || typeof snap.nav!=='object') return;
+  state.detail = snap.detail ? snap.detail : null;
+  state.nav = sanitizeNav(snap.nav, state.mode);
   render();
   window.scrollTo?.(0,0);
-}
-window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.hash.slice(1)); });
-// Botón Atrás de Android (Capacitor) o del navegador: sube un nivel; en la
-// raíz se conserva el comportamiento por defecto (salir / historial).
-try{ window.Capacitor?.Plugins?.App?.addListener?.('backButton',()=>{ if(state.detail||state.nav.depth>0) backOne(); }); }catch{}
-window.addEventListener('popstate',()=>{ if(state.detail||state.nav.depth>0) backOne(); });
+});
 
 // ---------- Datos ----------
 async function loadData(){
@@ -261,7 +299,7 @@ function openEngineModal(){
   modal.root.querySelectorAll('[data-pick-engine]').forEach(b=>b.addEventListener('click',()=>{
     state.detail=null;
     state.nav={depth:2,section:'engines',sub:b.dataset.pickEngine,inner:'panel'};
-    modal.close(); render();
+    pushNav(); modal.close(); render();
   }));
 }
 
@@ -659,23 +697,25 @@ document.addEventListener('click', e=>{
   if(asset){
     e.preventDefault();const pair=asset.dataset.asset;
     if(pair!=='BTC/USD'&&pair!=='ETH/USD')return;
-    state.ui.marketPair=pair;state.detail='asset';render();window.scrollTo?.(0,0);return;
+    state.ui.marketPair=pair;state.detail='asset';pushNav();render();window.scrollTo?.(0,0);return;
   }
   const manage=e.target.closest('[data-manage-cycle]');
   if(manage){
     e.preventDefault();state.ui.cycleId=manage.dataset.manageCycle;
-    state.ui.engineId='idca';state.detail='manage-idca';render();window.scrollTo?.(0,0);return;
+    state.ui.engineId='idca';state.detail='manage-idca';pushNav();render();window.scrollTo?.(0,0);return;
   }
   const subFromManager=e.target.closest('[data-engine-sub]');
   if(subFromManager){e.preventDefault();
     state.detail=null;
     state.nav={depth:2,section:'engines',sub:'idca',inner:subFromManager.dataset.engineSub};
-    render();window.scrollTo?.(0,0);return;}
+    pushNav();render();window.scrollTo?.(0,0);return;}
   const manual=e.target.closest('[data-manual-buy]');
   if(manual){e.preventDefault();openManualBuyForm(manual.dataset.manualBuy);return;}
   const importButton=e.target.closest('[data-idca-import]');
   if(importButton){e.preventDefault();openImportPositionPreview(state.enginesData.idca);return;}
-  const scope=e.target.closest('[data-scope]');
+  // OJO: #app lleva data-scope="real|shadow"; sin 'button' el closest capturaría
+  // CUALQUIER click dentro de la app y toda la delegación inferior quedaría muerta.
+  const scope=e.target.closest('button[data-scope]');
   if(scope){
     const next=scope.dataset.scope;
     if(next!=='real'&&next!=='shadow')return;
@@ -689,14 +729,14 @@ document.addEventListener('click', e=>{
   if(nv){
     e.preventDefault();state.detail=null;
     state.nav=navMove(state.nav,Number(nv.dataset.navIdx),state.mode);
-    render();window.scrollTo?.(0,0);return;
+    pushNav();render();window.scrollTo?.(0,0);return;
   }
   const nav = e.target.closest('[data-nav]');
   if(nav){ e.preventDefault(); navTo(nav.dataset.nav); return; }
   const ui = e.target.closest('[data-ui]');
   if(ui){
     const [k,v] = ui.dataset.ui.split(':');
-    if(k==='subtab'){ state.ui.subtab=v; if(state.nav.depth===2) state.nav.inner=v; }
+    if(k==='subtab'){ state.ui.subtab=v; if(state.nav.depth===2&&state.nav.inner!==v){ state.nav.inner=v; pushNav(); } }
     else if(k==='marketPair'){
       state.ui.marketPair=v;
       render(); // The chosen pair changes immediately.
@@ -722,14 +762,14 @@ document.addEventListener('click', e=>{
     }
     else if(k==='positionFilter')state.ui.positionFilter=v;
     else if(k==='portfolioTab'){ state.ui.portfolioTab=v;
-      if(state.nav.depth===1&&state.nav.section==='portfolio') state.nav.sub=v; }
+      if(state.nav.depth===1&&state.nav.section==='portfolio'&&state.nav.sub!==v){ state.nav.sub=v; pushNav(); } }
     else if(k==='fiscoTab')state.ui.fiscoTab=v;
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
     else if(k==='cat'){ state.ui.activityFilter.cat=v;
       if(state.nav.depth===1&&state.nav.section==='activity'){
         const inv={all:'recent',executed:'executed',decision:'decision',technical:'notices'};
-        if(inv[v])state.nav.sub=inv[v];
+        if(inv[v]&&state.nav.sub!==inv[v]){state.nav.sub=inv[v];pushNav();}
       } }
     render(); return;
   }
@@ -754,12 +794,14 @@ document.addEventListener('keydown', e=>{
   if(!target || (e.key!=='Enter'&&e.key!==' '))return;
   e.preventDefault(); showRecordInspector(state,target.dataset.inspect);
 });
-$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); state.nav=sanitizeNav(state.nav,'basic'); render(); });
-$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); state.nav=sanitizeNav(state.nav,'pro'); render(); });
+// Modo Básico/Pro = preferencia persistente: NO crea entrada de historial; solo
+// se re-sella la entrada actual por si sanitizeNav cambió la ruta (p. ej. Órdenes).
+$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); state.nav=sanitizeNav(state.nav,'basic'); stampCurrent(); render(); });
+$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); state.nav=sanitizeNav(state.nav,'pro'); stampCurrent(); render(); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
 $('back').addEventListener('click', backOne);
-$('brand-home').addEventListener('click',()=>{ state.detail=null; state.nav=navRoot(); render(); window.scrollTo?.(0,0); });
+$('brand-home').addEventListener('click',()=>{ state.detail=null; state.nav=navRoot(); pushNav(); render(); window.scrollTo?.(0,0); });
 // Insignia de versión permanente: generada en compilación, visible en todas las pantallas.
 (function(){
   const b=$('ver-badge');if(!b)return;
@@ -825,6 +867,7 @@ window.addEventListener('offline', ()=>{ state.online=false; renderStatusline();
 (async function boot(){
   pinInit();
   render();
+  stampCurrent(); // el estado de arranque también es restaurable vía popstate
   // Gate: PIN setup/unlock → sesión por challenge o pairing → app.
   await showUnlock();
 })();

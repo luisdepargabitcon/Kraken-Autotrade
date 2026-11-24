@@ -13,6 +13,10 @@ const engines={idca:'IDCA · Acumulación por ciclos',spot:'SPOT / Swing',grid:'
 export const STREAM=[
   ['idca','cycles','Ciclos abiertos'],['idca','history','Historial'],['idca','orders','Órdenes'],['idca','events','Eventos'],
   ['spot','positions','Posiciones'],['spot','trades','Historial global (origen no atribuido)'],
+  // 'orders' existe como sección de navegación Pro, pero el gateway/BFF aún no
+  // expone un GET de órdenes SPOT: renderScopedEngine lo muestra como fuente
+  // ausente nombrando el endpoint que falta, nunca como «0 órdenes».
+  ['spot','orders','Órdenes'],
   ['grid','cycles','Ciclos BUY → SELL'],['grid','events','Eventos de GRID'],
   ['ama','cycles','Ciclos AMA'],['ama','tranches','Tramos'],['ama','trace.decisions','Decisiones'],
 ];
@@ -144,6 +148,16 @@ export function renderScopedEngine(ctx){
  if(active==='panel')html+=marketStatus(ctx,id);
  let globalUnknown=0,total=0;
  for(const x of selected){
+  // Órdenes SPOT: el bot/BFF no expone aún un GET de órdenes abiertas del motor
+  // SPOT (READ_ROUTES solo permite /open-positions, /positions/smart-exit-
+  // diagnostics y /trades/closed). Si el dato llega en el futuro se muestra;
+  // mientras tanto se declara la fuente ausente y el endpoint que falta.
+  if(id==='spot'&&x.path==='orders'&&!Array.isArray(getPath(meta(ctx,id).data||{},'orders'))){
+   html+='<section class="nxs-group"><div class="nxs-group-title"><h2>'+x.label+'</h2>'+
+   '<span>Fuente no disponible</span></div>'+
+   '<p class="nxs-empty">Órdenes SPOT: el gateway no expone este dato aún. Falta un endpoint de lectura autorizado (p. ej. <code>GET /api/spot/orders</code> o equivalente en las rutas del bot y en READ_ROUTES del BFF). Las posiciones abiertas sí se consultan en «Posiciones»; este vacío no significa «0 órdenes».</p></section>';
+   continue;
+  }
   const got=chosen(ctx,id,x.path);globalUnknown+=got.unknown;
   if(got.missing){
     html+='<section class="nxs-group"><h2>'+x.label+'</h2><p class="nxs-empty">La API no ha proporcionado esta lista. No significa que esté vacía.</p></section>';continue;
