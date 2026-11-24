@@ -74,8 +74,15 @@ async function readState(filename){
     const st=await fs.stat(filename);
     if(process.platform!=='win32' && (st.mode & 0o077)!==0)throw new Error('El archivo de dispositivos debe ser privado (0600)');
     const j=JSON.parse(await fs.readFile(filename,'utf8'));
-    return new Map(Object.entries(j.devices||{}));
-  }catch(e){if(e.code==='ENOENT')return new Map();throw e;}
+    // Compatibilidad: archivos antiguos solo tienen {version,devices}.
+    const personal=j.personal&&typeof j.personal==='object'&&typeof j.personal.hash==='string'
+      ?j.personal:null;
+    return {devices:new Map(Object.entries(j.devices||{})),personal};
+  }catch(e){if(e.code==='ENOENT')return {devices:new Map(),personal:null};throw e;}
+}
+function pairCodeHash(code){
+  // Solo se persiste el hash SHA-256 del código normalizado; nunca el claro.
+  return crypto.createHash('sha256').update(String(code||'').toUpperCase()).digest('hex');
 }
 export async function createReadOnlyServer({
   upstream=process.env.NXV2_UPSTREAM,
@@ -91,14 +98,30 @@ export async function createReadOnlyServer({
   const dirStat=await fs.stat(stateDir);
   if(process.platform!=='win32' && (dirStat.mode&0o077)!==0)throw new Error('NXV2_STATE_DIR debe tener permisos 0700');
   const filename=path.join(stateDir,'devices.json');
-  const devices=await readState(filename);
+  const {devices,personal:initialPersonal}=await readState(filename);
+  // Código personal PERMANENTE del propietario: {hash,roles,createdAt,rotatedAt}|null.
+  // Solo vive el hash; el claro sale una única vez en la respuesta de /pair/personal/issue.
+  let personal=initialPersonal;
   const pairCodes=new Map(),sessions=new Map(),challenges=new Map(),attempts=new Map();
   let saves=Promise.resolve();
+  // rename atómico con reintento: en Windows el destino puede estar bloqueado
+  // transitoriamente (antivirus/indexer) y EPERM no debe perder la escritura.
+  async function renameRetry(tmp){
+    let last;
+    for(let i=0;i<6;i++){
+      try{return await fs.rename(tmp,filename);}
+      catch(e){last=e;if(!['EPERM','EBUSY','EACCES'].includes(e?.code))throw e;
+        await new Promise(r=>setTimeout(r,40*(i+1)));}
+    }
+    throw last;
+  }
   function persist(){
-    const content=JSON.stringify({version:1,devices:Object.fromEntries(devices)},null,2);
-    saves=saves.then(async()=>{
+    const content=JSON.stringify({version:1,devices:Object.fromEntries(devices),personal},null,2);
+    // .catch(()=>{}) en la cadena: un fallo anterior no debe envenenar las
+    // escrituras futuras; el error del trabajo actual sí llega al llamador.
+    saves=saves.catch(()=>{}).then(async()=>{
       const tmp=filename+'.'+crypto.randomBytes(5).toString('hex')+'.tmp';
-      try{await fs.writeFile(tmp,content,{mode:0o600,flag:'wx'});await fs.rename(tmp,filename);}
+      try{await fs.writeFile(tmp,content,{mode:0o600,flag:'wx'});await renameRetry(tmp);}
       finally{await fs.rm(tmp,{force:true}).catch(()=>{});}
     });
     return saves;
@@ -149,11 +172,47 @@ export async function createReadOnlyServer({
     pairCodes.set(code,{expiresAt:Date.now()+PAIR_TTL,roles,used:false});
     res.json({code,expiresIn:PAIR_TTL/1000});
   });
+  // Código personal PERMANENTE y reutilizable del propietario. Misma protección
+  // que /pair/issue (bootstrap + nginx loopback). Re-emitirlo lo rota: el hash
+  // anterior deja de funcionar para NUEVAS vinculaciones; los dispositivos ya
+  // dados de alta conservan su sesión y no se tocan.
+  app.post('/api/v2/pair/personal/issue',rate,async(req,res)=>{
+    if(!bootstrapCode || String(bootstrapCode).length<32 || !secureEqual(req.get('X-Bootstrap-Code'),bootstrapCode))
+      return res.status(403).json({error:'forbidden'});
+    const roles=req.body?.roles??['read','fisco:read'];
+    if(!Array.isArray(roles)||!roles.length||roles.some(x=>!ALLOWED_ROLES.has(x)))
+      return res.status(400).json({error:'only_read_roles_allowed'});
+    const code=crypto.randomBytes(12).toString('hex').toUpperCase();
+    const now=new Date().toISOString();
+    const previous=personal;
+    personal={hash:pairCodeHash(code),roles:[...roles],
+      createdAt:personal?.createdAt??now,rotatedAt:personal?now:null};
+    try{await persist();}catch(e){
+      personal=previous;return res.status(503).json({error:'persistence_failed'});
+    }
+    res.json({code,roles:[...roles],note:'shown_once'});
+  });
+  app.get('/api/v2/pair/personal/status',rate,(req,res)=>{
+    if(!bootstrapCode || String(bootstrapCode).length<32 || !secureEqual(req.get('X-Bootstrap-Code'),bootstrapCode))
+      return res.status(403).json({error:'forbidden'});
+    res.json({enabled:!!(personal&&personal.hash),
+      createdAt:personal?.createdAt??null,rotatedAt:personal?.rotatedAt??null});
+  });
   app.post('/api/v2/pair/redeem',rate,async(req,res)=>{
     const {code,deviceId,publicKey,label,platform}=req.body||{};
-    const rec=code&&pairCodes.get(String(code).toUpperCase());
-    if(!rec||rec.used||rec.expiresAt<=Date.now())
+    const codeStr=code?String(code).toUpperCase():null;
+    let rec=codeStr&&pairCodes.get(codeStr);
+    if(rec&&(rec.used||rec.expiresAt<=Date.now()))rec=null;
+    let roles;
+    if(rec){
+      roles=rec.roles;
+    }else if(codeStr&&personal&&personal.hash&&secureEqual(pairCodeHash(codeStr),personal.hash)){
+      // Código personal: NO se consume ni caduca; permite vincular varios
+      // dispositivos del propietario con el mismo código.
+      roles=personal.roles;
+    }else{
       return res.status(403).json({error:'pair_code_invalid_or_expired'});
+    }
     if(!isUuid(deviceId)||typeof publicKey!=='string'||publicKey.length>512)
       return res.status(400).json({error:'invalid_device'});
     let key;
@@ -164,13 +223,13 @@ export async function createReadOnlyServer({
     }catch{return res.status(400).json({error:'invalid_public_key'});}
     if(devices.has(deviceId)&&!devices.get(deviceId).revoked)
       return res.status(409).json({error:'device_already_registered'});
-    rec.used=true;pairCodes.delete(String(code).toUpperCase());
-    devices.set(deviceId,{publicKeyB64:publicKey,roles:rec.roles,label:String(label||'').slice(0,80),
+    if(rec){rec.used=true;pairCodes.delete(codeStr);}
+    devices.set(deviceId,{publicKeyB64:publicKey,roles,label:String(label||'').slice(0,80),
       platform:String(platform||'android').slice(0,20),revoked:false,createdAt:new Date().toISOString()});
     try{await persist();}catch(e){
       devices.delete(deviceId);return res.status(503).json({error:'persistence_failed'});
     }
-    res.status(200).json({ok:true,roles:rec.roles});
+    res.status(200).json({ok:true,roles});
   });
   app.post('/api/v2/session/challenge',rate,(req,res)=>{
     const id=req.body?.deviceId,dev=isUuid(id)&&devices.get(id);

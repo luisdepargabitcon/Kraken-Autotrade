@@ -568,7 +568,7 @@ async function afterUnlock(){
     scheduleRefresh();
     return;
   }
-  // Solo la PRIMERA vinculación, o la revocación explícita, usa código temporal.
+  // Solo la PRIMERA vinculación, o la revocación explícita, usa código de acceso.
   openPairOverlay();
 }
 async function doPair(){

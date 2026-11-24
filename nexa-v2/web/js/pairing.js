@@ -1,6 +1,6 @@
 // NEXA V2 — identidad de dispositivo + vinculación + sesión por desafío firmado.
 // Sin usuario/contraseña: el dispositivo genera una clave ECDSA P-256 no
-// exportable (IndexedDB), el backend la registra vía código de un solo uso y
+// exportable (IndexedDB), el backend la registra vía código de vinculación y
 // luego emite sesiones tras un challenge firmado. El PIN/biometría local solo
 // autoriza el uso de la clave en este dispositivo.
 import { CONFIG } from './config.js';
@@ -35,7 +35,8 @@ export async function enrollDevice(){
   return b64(pubSpki);
 }
 
-// Canjea el código de un solo uso emitido por el administrador.
+// Canjea el código de vinculación emitido por el administrador (personal
+// reutilizable o temporal de un solo uso; el formato y el flujo son idénticos).
 export async function redeemPairCode(code, label=''){
   // No perder una credencial anterior si el servidor rechaza el código o falla la red.
   const previousPriv=await idbGet('priv');

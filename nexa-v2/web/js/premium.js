@@ -45,7 +45,7 @@ function notice(ctx,details){
  const why=registered?
    'Este teléfono sigue autorizado. NEXA recuperará la sesión cuando vuelva la conexión; no necesitas otro código.':
    ctx.authenticated?'No se han podido verificar los datos del backend. No se inventan cifras ni operaciones.':
-   'Para conectar este dispositivo por primera vez, introduce el código temporal.';
+   'Para conectar este dispositivo por primera vez, introduce el código de vinculación.';
  return `<section class="nxp-connect" role="status"><div class="nxp-connect-icon">${ico('shield')}</div><div class="nxp-connect-main">
    ${eyebrow('Conexión privada')}<h3>${title}</h3><p>${why}</p>
    ${details?`<p class="nxp-connect-detail">${esc(details)}</p>`:''}
@@ -724,7 +724,7 @@ export function renderSettingsPremium(ctx,legacy){
   </div>
   <div class="nxp-settings-options">
    ${option('shield','Servidor','Conexión HTTPS segura','settings-api')}
-   ${option('key',ctx.deviceEnrolled?'Reintentar conexión':'Conectar este móvil',ctx.deviceEnrolled?'Este teléfono ya está registrado':'Código temporal solo para primera vinculación',ctx.deviceEnrolled?'refresh':'pair-device')}
+   ${option('key',ctx.deviceEnrolled?'Reintentar conexión':'Conectar este móvil',ctx.deviceEnrolled?'Este teléfono ya está registrado':'Código de vinculación solo para el alta inicial',ctx.deviceEnrolled?'refresh':'pair-device')}
    <div class="nxp-settings-option nxp-settings-static">
     <span class="nxp-settings-option-icon">${ico('key')}</span>
     <span class="nxp-settings-option-copy"><strong>PIN y biometría</strong><small>Desbloqueo local del dispositivo</small></span>
