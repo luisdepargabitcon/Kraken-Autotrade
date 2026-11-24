@@ -24,11 +24,15 @@ export function renderFiscalView(ctx){
  const overview=a.summary||{},years=Array.isArray(overview.years)?overview.years:[];
  const annual=a.annualReport||{},ops=safeList(ctx,'operations','operations'),lots=safeList(ctx,'lots','lots'),
   disposals=safeList(ctx,'disposals','disposals');
+ // /fisco/meta y /fisco/control-status son GET reales permitidos por el BFF:
+ // se muestran solo los campos que la respuesta trae; el resto queda «—».
+ const meta=a.meta||{},control=a.controlStatus||{};
+ const metaSync=one(meta,'lastSync','last_sync','syncedAt','updatedAt')??annual.last_sync??null;
  const reportSafe=annual.is_safe_for_report===true;
  const tabs=[['summary','Resumen'],['operations','Operaciones'],['lots','Lotes FIFO'],['disposals','Ventas'],['annual','Informe anual'],['validation','Validación']];
  let html='<div class="nxf-root"><div class="nxf-intro"><span>FISCALIDAD PRIVADA · REAL</span><h1>FISCO / AEAT</h1>'+
  '<p>Datos procedentes del backend autorizado. La app no calcula impuestos de ejemplo ni modifica los registros.</p></div>'+
- '<div class="nxf-sources"><span>Acceso '+v(state)+'</span><span>Última lectura '+v(annual.last_sync?fmtTs(annual.last_sync):null)+'</span>'+
+ '<div class="nxf-sources"><span>Acceso '+v(state)+'</span><span>Última sincronización '+v(metaSync?fmtTs(metaSync):null)+'</span>'+
  '<span>'+ (reportSafe?'Informe con controles favorables':'Validación de informe pendiente o no apta')+'</span></div>'+
  '<nav class="nxf-tabs" aria-label="Secciones fiscales">'+tabs.map(([k,title])=>
  '<button data-ui="fiscoTab:'+k+'" class="'+(k===tab?'on':'')+'" aria-current="'+(k===tab?'page':'false')+'">'+title+'</button>').join('')+'</nav>';
@@ -42,7 +46,15 @@ export function renderFiscalView(ctx){
     '<section class="nxf-panel"><h2>Ejercicios disponibles</h2>'+
     (years.length?years.map(y=>'<div class="nxf-year"><b>'+v(y.year)+'</b><span>Ganancia/pérdida: '+eur(y.total_gain_loss_eur)+'</span>'+
      '<small>Comisiones: '+eur(y.total_fees_eur)+'</small></div>').join(''):
-     empty('La API no ha devuelto un resumen fiscal anual verificable.'))+'</section>';
+     empty('La API no ha devuelto un resumen fiscal anual verificable.'))+'</section>'+
+    // Procedencia real de /fisco/meta: años cubiertos, exchanges y totales que
+    // publica el backend. Cada campo ausente se muestra como «—», nunca estimado.
+    '<section class="nxf-panel"><h2>Fuente y sincronización</h2><div class="nxf-kpis">'+
+     box('Años con datos',Array.isArray(meta.availableYears)&&meta.availableYears.length?meta.availableYears.join(', '):'—')+
+     box('Operaciones totales',n(meta.totalOperations)===null?'—':String(meta.totalOperations))+
+     box('Exchanges',Array.isArray(meta.exchanges)&&meta.exchanges.length?meta.exchanges.join(', '):'—')+
+     box('Última sincronización',metaSync?fmtTs(metaSync):'—')+'</div>'+
+     '<p class="nxf-note">Metadatos devueltos por GET /fisco/meta. Si el endpoint no está disponible, los campos quedan sin dato.</p></section>';
  }else if(tab==='operations'){
    html+='<section class="nxf-panel"><h2>Operaciones registradas</h2>'+
     (ops?ops.slice(0,100).map((o,i)=>row(o,i,'operations.operations',
@@ -82,7 +94,11 @@ export function renderFiscalView(ctx){
     '<div class="nxf-kpis">'+box('Informe apto',reportSafe?'Sí':'No verificado / no apto')+
     box('Cierre fiscal',fin.report_can_be_finalized===true?'Apto':fin.report_can_be_finalized===false?'Bloqueado':'—')+
     box('Errores críticos',v(annual.critical_errors_count))+
-    box('Bloqueos',scopeState(ctx,'finalizationStatus')==='ok'?String(blockers.length):'—')+'</div>'+
+    box('Bloqueos',scopeState(ctx,'finalizationStatus')==='ok'?String(blockers.length):'—')+
+    box('Estado de control',scopeState(ctx,'controlStatus')==='ok'?v(one(control,'status','state','control_status')):'—')+
+    box('Sync de control',scopeState(ctx,'controlStatus')==='ok'&&one(control,'lastSync','last_sync','syncedAt','updatedAt')?fmtTs(one(control,'lastSync','last_sync','syncedAt','updatedAt')):'—')+'</div>'+
+    (scopeState(ctx,'controlStatus')==='ok'&&Object.keys(control).length?
+     '<details class="nxf-technical"><summary>Estado de control fiscal completo</summary><pre>'+esc(JSON.stringify(control,null,2))+'</pre></details>':'')+
     [...blockers,...warnings].map(x=>'<div class="nxf-warning"><b>'+v(x.code||x.severity)+'</b><p>'+v(x.detail||x.message)+'</p></div>').join('')+
     '<div class="nxf-provenance">'+Object.entries(ctx.data?.fisco?.resourceStates||{}).map(([k,s])=>
       '<div><b>'+v(k)+'</b><span>'+v(s)+'</span></div>').join('')+'</div>'+

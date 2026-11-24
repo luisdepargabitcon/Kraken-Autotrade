@@ -98,7 +98,9 @@ test('Actividad filtrada a modo específico, sin atribuir eventos desconocidos',
  assert.match(shadow,/1 eventos no tienen modo/);
 });
 test('Motores conservan índices originales en fichas y no mezclan los dos modos',()=>{
- const real=renderScopedEngine(context('real')),shadow=renderScopedEngine(context('shadow'));
+ // «Estado» es ahora un resumen: las listas se consultan en su subpestaña.
+ const cyc=scope=>{const c=context(scope);c.ui={...c.ui,subtab:'cycles'};return c;};
+ const real=renderScopedEngine(cyc('real')),shadow=renderScopedEngine(cyc('shadow'));
  assert.match(real,/idca:cycles:0/);assert.doesNotMatch(real,/idca:cycles:1/);
  assert.match(shadow,/idca:cycles:1/);assert.doesNotMatch(shadow,/idca:cycles:0/);
  assert.match(shadow,/todos los controles de ejecución real permanecen bloqueados/);

@@ -153,7 +153,7 @@ function buildActivityFeed(activityEvents, enginesData) {
   };
   const gd = enginesData.grid?.data, ad = enginesData.ama?.data, id = enginesData.idca?.data;
   push(gd?.events, 'grid'); push(gd?.monitor?.events, 'grid'); push(gd?.monitor?.alerts, 'grid');
-  push(ad?.trace?.decisions, 'ama'); push(ad?.trace?.events, 'ama'); push(id?.events, 'idca');
+  push(ad?.trace?.decisions, 'ama'); push(id?.events, 'idca');
   // Eventos del feed sin modo propio heredan el de su motor cuando el backend
   // no lo etiqueta: así el filtro REAL/SHADOW no los pierde.
   for (const e of feed) {

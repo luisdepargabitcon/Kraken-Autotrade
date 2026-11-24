@@ -106,10 +106,12 @@ export function createApiProvider(){
       const resourceStates={
         summary:st(summary.state),controls:st(controls.state),
         cycles:st(cycles.state),orders:st(orders.state),
-        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state),simWallet:st(simWallet.state),feePresets:st(feePresets.state),importableStatus:st(importableStatus.state)
+        history:st(history.state),pairs:st(pairs.state),events:st(events.state),
+        entryDiagnostics:st(entry.state),simWallet:st(simWallet.state),feePresets:st(feePresets.state),importableStatus:st(importableStatus.state)
       };
       // Un GET secundario fallido es parcial, no «0 ciclos» ni histórico vacío.
-      const partial=!worst && [cycles,orders,history,pairs].some(r=>r.state!=='ok');
+      // /events también cuenta: sin él la actividad del motor queda muda.
+      const partial=!worst && [cycles,orders,history,pairs,events].some(r=>r.state!=='ok');
       return {
         state: worst ? st(worst.state) : (partial?'partial':'ok'),
         resourceStates,
@@ -167,27 +169,37 @@ export function createApiProvider(){
       ]);
       const a = audit.data || {};
       const cfg = config.data || {};
+      // resourceStates por sub-recurso (mismo patrón que idca/spot/portfolio):
+      // un GET secundario fallido degrada a 'partial', nunca a listas vacías.
+      const reads={status,levels,cycles,events,config,monitor:audit};
+      const resourceStates=Object.fromEntries(Object.entries(reads).map(([k,v])=>[k,st(v.state)]));
+      const secondary=[levels,cycles,events,config,audit];
+      // Eventos del monitor de auditoría solo si el GET propio falló pero el
+      // audit sí respondió; nunca se mezclan fuentes caídas.
+      const gridEvents=events.state==='ok'?list(events.data)
+        :(audit.state==='ok'?list(a.events||[]):null);
       return {
-        state: status.state==='ok'?'ok':st(status.state),
+        state: status.state==='ok'?(secondary.some(r=>r.state!=='ok')?'partial':'ok'):st(status.state),
+        resourceStates,
         status: wrap(status.data, normGridStatus),
-        levels: wrap({
+        levels: wrap(levels.state==='ok'||audit.state==='ok'?{
           levels: list(levels.data),
           rangeVersionId: status.data?.activeRangeVersionId,
           rangeStatus: status.data?.activeRangeStatus,
           currentRange: a.range ? {low:a.range.low??a.range.lowerBound, high:a.range.high??a.range.upperBound, openedAt:a.range.openedAt??a.range.createdAt} : null,
           previousRanges: Array.isArray(a.rangeHistory) ? a.rangeHistory : [],
-        }, x=>x, {ts:Date.now()}),
-        cycles: wrap(list(cycles.data).map(normGridCycle).filter(Boolean), x=>x, {ts:Date.now()}),
-        events: wrap(list(events.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}),
-        config: wrap({...cfg, policy:cfg.executionPolicy??cfg.policy, makerTaker:cfg.executionPolicy??cfg.makerTaker}, x=>x, {ts:Date.now()}),
-        monitor: wrap({
+        }:null, x=>x, {ts:Date.now()}),
+        cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normGridCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
+        events: wrap(gridEvents===null?null:gridEvents.map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}),
+        config: wrap(config.state==='ok'?{...cfg, policy:cfg.executionPolicy??cfg.policy, makerTaker:cfg.executionPolicy??cfg.makerTaker}:null, x=>x, {ts:Date.now()}),
+        monitor: wrap(audit.state==='ok'?{
           ...a,
           capitalLockedUsd: a.wallet?.reservedUsd ?? null,
           capitalReleasedUsd: a.wallet?.freeUsd ?? null,
           walletTotalUsd: a.wallet?.totalUsd ?? null,
-          events: list(a.events?.length?a.events:events.data).map(normEvent).filter(Boolean),
+          events: gridEvents===null?[]:gridEvents.map(normEvent).filter(Boolean),
           alerts: list(a.decisions).map(normEvent).filter(Boolean),
-        }, x=>x, {ts:Date.now()}),
+        }:null, x=>x, {ts:Date.now()}),
         latency: status.latency,
       };
     },
@@ -198,19 +210,28 @@ export function createApiProvider(){
         get(ROUTES.ama.readiness), get(ROUTES.ama.portfolio),
         get(ROUTES.ama.events), get(ROUTES.ama.ledger),
       ]);
+      // resourceStates por sub-recurso + estado agregado 'partial' cuando el
+      // status responde pero algún GET secundario falla (mandate, tranches,
+      // cycles, readiness, portfolio, events, ledger).
+      const reads={status,mandate,tranches,cycles,readiness,portfolio,events,ledger};
+      const resourceStates=Object.fromEntries(Object.entries(reads).map(([k,v])=>[k,st(v.state)]));
+      const secondary=[mandate,tranches,cycles,readiness,portfolio,events,ledger];
       return {
-        state: status.state==='ok'?'ok':st(status.state),
+        state: status.state==='ok'?(secondary.some(r=>r.state!=='ok')?'partial':'ok'):st(status.state),
+        resourceStates,
         status: wrap(status.data, normAmaStatus),
-        mandate: wrap(mandate.data, normAmaMandate, {ts:Date.now()}),
-        tranches: wrap(list(tranches.data), x=>x, {ts:Date.now()}),
-        cycles: wrap(list(cycles.data), x=>x, {ts:Date.now()}),
-        readiness: wrap(readiness.data, x=>x, {ts:Date.now()}),
-        portfolio: wrap(portfolio.data, x=>x, {ts:Date.now()}),
+        mandate: wrap(mandate.state==='ok'?mandate.data:null, normAmaMandate, {ts:Date.now()}),
+        tranches: wrap(tranches.state==='ok'?list(tranches.data):null, x=>x, {ts:Date.now()}),
+        cycles: wrap(cycles.state==='ok'?list(cycles.data):null, x=>x, {ts:Date.now()}),
+        readiness: wrap(readiness.state==='ok'?readiness.data:null, x=>x, {ts:Date.now()}),
+        portfolio: wrap(portfolio.state==='ok'?portfolio.data:null, x=>x, {ts:Date.now()}),
         trace: wrap({
           orders: [],
-          tranches: list(tranches.data),
-          ledger: list(ledger.data),
-          decisions: list(events.data).map(normEvent).filter(Boolean).map(e=>({...e, text:e.msg||e.type||'Evento AMA'})),
+          tranches: tranches.state==='ok'?list(tranches.data):null,
+          ledger: ledger.state==='ok'?list(ledger.data):null,
+          // Sin GET /ama/events no hay decisiones que mostrar: null (no [])
+          // para que la vista declare «fuente no disponible», no «0 eventos».
+          decisions: events.state==='ok'?list(events.data).map(normEvent).filter(Boolean).map(e=>({...e, text:e.msg||e.type||'Evento AMA'})):null,
         }, x=>x, {ts:Date.now()}),
         latency: status.latency,
       };
@@ -272,11 +293,11 @@ export function createApiProvider(){
       const roles=session.get()?.roles||[];
       if(!roles.includes('fisco:read')&&!roles.includes('admin')&&!roles.includes('*'))
         return {state:'forbidden',data:null,resourceStates:null,note:'Falta permiso fisco:read.'};
-      const keys=['summary','operations','lots','disposals','annualReport','finalizationStatus','meta'];
+      const keys=['summary','operations','lots','disposals','annualReport','finalizationStatus','meta','controlStatus'];
       const routes=[ROUTES.common.fisco,
         'GET /fisco/operations?page=1&pageSize=100','GET /fisco/lots',
         'GET /fisco/disposals','GET /fisco/annual-report',
-        'GET /fisco/finalization-status','GET /fisco/meta'];
+        'GET /fisco/finalization-status','GET /fisco/meta','GET /fisco/control-status'];
       const results=await Promise.all(routes.map(route=>get(route)));
       const resourceStates=Object.fromEntries(results.map((r,i)=>[keys[i],st(r.state)]));
       const data=Object.fromEntries(results.map((r,i)=>[keys[i],r.state==='ok'?r.data:null]));
