@@ -39,13 +39,21 @@ const marketCtx = mode => ({
 
 test('Mercado: ticker sin velas (partial) muestra el precio, no un guion', () => {
   for (const mode of ['basic','pro']) {
-    const html = renderMarketPremium(marketCtx(mode));
+    const ctx = marketCtx(mode);
+    const html = renderMarketPremium(ctx);
     assert.ok(html.includes('$60.444,80'), `${mode}: el precio real no se muestra`);
     assert.ok(!/<strong>—<\/strong>/.test(html.split('nxp-quote')[1]||''), `${mode}: precio vacío`);
-    assert.match(html, /Sin velas|sin velas/i, `${mode}: falta aviso honesto de velas`);
-    // change24h:"0.00" es un cambio ABSOLUTO: nunca se presenta como porcentaje.
+    // change24h:0 hardcodeado upstream sin % fiable → '—', nunca «Δ +$0,00».
     assert.ok(!/0,00 ?%|0\.00 ?%/.test(html), `${mode}: absoluto mostrado como %`);
-    assert.ok(html.includes('Δ'), `${mode}: falta el Δ absoluto de 24h`);
+    assert.ok(!html.includes('Δ'), `${mode}: Δ absoluto mostrado pese al 0 hardcodeado`);
+    assert.ok(html.includes('no reporta una variación 24h fiable'), `${mode}: falta la nota honesta`);
+    // La ausencia de velas se explica en la subpestaña Gráfico (Precio no lleva gráfica).
+    const chart = renderMarketPremium({...ctx, ui:{...ctx.ui, marketSub:'chart'}});
+    assert.match(chart, /Sin velas|sin velas/i, `${mode}: falta aviso honesto de velas`);
+    assert.ok(chart.includes('no publica velas')||chart.includes('Velas no disponibles'),
+      `${mode}: la nota no explica que el backend aún no publica velas`);
+    // Y el ticker sigue visible encima de la explicación.
+    assert.ok(chart.includes('$60.444,80'), `${mode}: el ticker no sigue visible en Gráfico`);
   }
 });
 
@@ -57,7 +65,8 @@ test('Inicio: la tarjeta de mercado muestra precio aunque falten velas', () => {
       activity:{ state:'ok', data:{ events:[] } } } };
   const html = renderDashboard(ctx);
   assert.ok(html.includes('$60.444,80'), 'dashboard oculta el precio con state partial');
-  assert.ok(html.includes('Δ 24h absoluto'), 'dashboard no etiqueta el cambio absoluto');
+  assert.ok(html.includes('Sin variación 24h fiable'), 'dashboard no etiqueta el cambio no fiable');
+  assert.ok(!html.includes('+$0'), 'dashboard muestra Δ +$0,00 como si fuera dato');
 });
 
 const actCtx = (feed, enginesData={}) => ({

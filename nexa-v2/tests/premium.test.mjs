@@ -52,21 +52,36 @@ test('Pro tiene estructura de trading con terminal, gráficos, riesgo y herramie
  assert.match(s,/Actividad del bot/);
  assert.doesNotMatch(s,/Conectar mi bot/);
 });
-test('Mercado cambia de composición, vela gráfica sólo si OHLCV válido',()=>{
+test('Mercado cambia de composición: cada subpestaña tiene una sola responsabilidad',()=>{
  const basic=renderMarketPremium(ready);
  const pro=renderMarketPremium({...ready,mode:'pro'});
+ const proChart=renderMarketPremium({...ready,mode:'pro',ui:{...ready.ui,marketSub:'chart'}});
+ const proInd=renderMarketPremium({...ready,mode:'pro',ui:{...ready.ui,marketSub:'indicators'}});
+ const proLevels=renderMarketPremium({...ready,mode:'pro',ui:{...ready.ui,marketSub:'levels'}});
+ // Precio: solo cotización — sin gráfica ni contexto de decisión.
  assert.match(basic,/nxp-market-price/);
  assert.match(pro,/nxp-market-terminal/);
- assert.match(pro,/nxp-chart-interactive/);
- assert.match(pro,/data-candle-tip/);
- assert.match(pro,/RSI 14/);
+ assert.doesNotMatch(pro,/nxp-chart-interactive/);
+ assert.doesNotMatch(pro,/CONTEXTO/);
+ // Gráfico: velas + timeframe; el ticker sigue visible arriba.
+ assert.match(proChart,/nxp-chart-interactive/);
+ assert.match(proChart,/data-candle-tip/);
+ assert.match(proChart,/nxp-quote/);
+ // Niveles: panel propio con la nota de que el derivado no es una orden.
+ assert.match(proLevels,/Niveles etiquetados/);
+ assert.match(proLevels,/nunca una orden/);
+ // Indicadores: indicadores + fuentes + contexto IDCA/AMA.
+ assert.match(proInd,/RSI 14/);
+ assert.match(proInd,/Fuentes de datos/);
+ assert.match(proInd,/CONTEXTO/);
  assert.match(pro,/data-ui="marketPair:ETH\/USD"/);
 });
 test('Mercado desconectado no inventa precios o gráficos de datos reales',()=>{
  const s=renderMarketPremium(offline);
- assert.match(s,/Esperando el mercado/);
  assert.match(s,/Conectar NEXA/);
  assert.doesNotMatch(s,/\$[0-9][0-9,.]*/);
+ const sc=renderMarketPremium({...offline,ui:{...offline.ui,marketSub:'chart'}});
+ assert.match(sc,/Esperando el mercado/);
 });
 test('Cada motor Pro utiliza visualización propia según su semántica',()=>{
  const idca=renderEnginePremium({...ready,mode:'pro'});

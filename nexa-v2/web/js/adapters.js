@@ -275,11 +275,26 @@ export function normAmaMandate(raw){
   return { ...raw, id: pick(raw,'id','mandateId') };
 }
 
+// Fecha parseable → epoch ms; null si el valor no es una fecha (nunca se
+// inventa frescura). Acepta ISO, epoch ms y epoch segundos.
+const asTs = v => {
+  if(v===null||v===undefined||v==='')return null;
+  const t = typeof v==='number' ? (Number.isFinite(v)?v:NaN)
+        : (typeof v==='string' ? Date.parse(v) : NaN);
+  if(!Number.isFinite(t))return null;
+  return Math.abs(t)<1e12 ? t*1000 : t;
+};
+
 export function normMarket(raw){
   if(!raw || typeof raw!=='object') return null;
   // NO descartar los indicadores ni las claves originales del mercado.
   // change24h (sin unidad explícita) NO equivale necesariamente a porcentaje.
   const explicitPct=num(pick(raw,'change24hPct','pct24h','changePct24h','percentChange24h'));
+  // Frescura real: el backend publica timestamp de cotización y lastCandleTs de
+  // velas (más candleAgeMs/candlesStale/dataState). Se normalizan a ts/candleTs
+  // en ms parseables; si no lo son quedan null y la UI muestra «—», no una edad falsa.
+  const candleTs=asTs(pick(raw,'lastCandleTs','candleTs','lastCandleTimestamp','candleTimestamp'));
+  const quoteTs=asTs(pick(raw,'ts','timestamp','time','quoteTs','priceTs'));
   return {
     ...raw,
     pair: pick(raw,'pair','symbol'),
@@ -292,7 +307,13 @@ export function normMarket(raw){
     candles: raw.candles || raw.ohlcv || null,
     indicators: raw.indicators || null,
     provider: pick(raw,'provider','source','exchange'),
-    ts: pick(raw,'ts','timestamp') || null,
+    ts: quoteTs ?? candleTs,
+    candleTs,
+    candleAgeMs: num(pick(raw,'candleAgeMs','candlesAgeMs')),
+    candlesStale: raw.candlesStale===true?true:(raw.candlesStale??null),
+    dataState: pick(raw,'dataState','candlesState') ?? null,
+    candleTimeframe: pick(raw,'candleTimeframe','timeframe') ?? null,
+    candlesSource: pick(raw,'candlesSource') ?? null,
   };
 }
 

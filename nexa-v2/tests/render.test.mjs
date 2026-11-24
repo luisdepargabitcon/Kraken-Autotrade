@@ -49,8 +49,9 @@ test('AMA panel muestra REAL cerrado y readiness', ()=>{
 });
 
 test('Mercado Pro incluye fuentes e indicadores; nunca ceros por ausencia', ()=>{
-  const html = S.renderMarket({mode:'pro', authenticated:true, ui:{marketPair:'BTC/USD'}, data:{market:{state:'ok',data:fixtures.DEMO_MARKET}}});
-  for(const s of ['Fuentes de datos','RSI','CoinGlass','Whale Alert','No disponible'===undefined?'':''])
+  // «Indicadores» es la subpestaña que reúne indicadores + fuentes + contexto.
+  const html = S.renderMarket({mode:'pro', authenticated:true, ui:{marketPair:'BTC/USD',marketSub:'indicators'}, data:{market:{state:'ok',data:fixtures.DEMO_MARKET}}});
+  for(const s of ['Fuentes de datos','RSI','CONTEXTO','CoinGlass','Whale Alert','No disponible'===undefined?'':''])
     if(s) assert.ok(html.includes(s), `falta "${s}"`);
 });
 

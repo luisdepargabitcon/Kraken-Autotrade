@@ -88,6 +88,15 @@ const STATE_ES={
   high_volatility:'volatilidad elevada', stale_data:'datos desactualizados',
   pending_confirmation:'confirmación pendiente', waiting_rebound:'esperando rebote',
   hard_blocked:'bloqueo de seguridad', rate_limited:'límite de peticiones',
+  // Estados que emite entry-diagnostics / trailingBuy del bot (códigos crudos).
+  arm_trailing:'Armado · esperando rebote de confirmación',
+  inactive:'Inactivo', neutral:'Neutro', tracking:'Siguiendo el mercado',
+  confirmed:'Confirmado', vwap_anchor:'Referencia VWAP',
+  capitulation:'Capitulación', capitulacion:'Capitulación',
+  // Clases de decisión IDCA (decisionClass / entryDecision).
+  wait_pullback:'En espera de retroceso', no_entry:'Sin entrada',
+  normal_entry:'Entrada normal', high_confidence_entry:'Entrada de alta confianza',
+  defensive_safety_buy:'Compra defensiva de seguridad',
 };
 export function translateCode(code){
   if(code===null||code===undefined||code==='')return null;

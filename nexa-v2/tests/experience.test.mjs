@@ -78,7 +78,7 @@ test('Cartera autenticada: cifras de fuente y desglose original en Pro',()=>{
 test('Pantallas públicas de screens.js usan la composición premium Rev11',()=>{
   const out=Screens.renderHome(base);
   assert.match(out,/nxp-basic-balance/);
-  const out2=Screens.renderMarket(base);
+  const out2=Screens.renderMarket({...base,ui:{...base.ui,marketSub:'chart'}});
   assert.match(out2,/nxp-chartbox/);
   const out3=Screens.renderEngine(base);
   assert.match(out3,/nxp-engine-head/);

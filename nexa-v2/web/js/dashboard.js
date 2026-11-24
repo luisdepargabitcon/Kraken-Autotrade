@@ -84,12 +84,16 @@ function sparkline(ctx,pair){
 }
 function marketTile(ctx,pair){
  const q=market(ctx,pair),tone=n(q.change)===null?'':q.change<0?'negative':'positive';
+ // change24h absoluto 0 es indistinguible del valor hardcodeado upstream:
+ // sin % confirmado y con absoluto 0 → '—', nunca «+$0,00» como si fuera dato.
+ const absOk=n(q.changeAbs)!==null&&n(q.changeAbs)!==0;
  const chg=q.change!=null?percent(q.change)
-  :n(q.changeAbs)!==null?signedUsd(q.changeAbs):'—';
+  :absOk?signedUsd(q.changeAbs):'—';
  return '<button type="button" data-asset="'+pair+'" class="nxh-market-tile '+tone+'"><span><b>'+pair.slice(0,3)+'</b>'+
  '<small>'+out(q.valid?'API · '+(q.m.provider||'mercado'):'Cotización no verificada')+'</small></span>'+
  '<strong>'+usd(q.price)+'</strong>'+sparkline(ctx,pair)+
- '<span class="nxh-market-foot"><b>'+chg+'</b><em>'+(q.change!=null?'Indicadores y operaciones ↗':'Δ 24h absoluto · indicadores ↗')+'</em></span></button>';
+ '<span class="nxh-market-foot"><b>'+chg+'</b><em>'+(q.change!=null?'Indicadores y operaciones ↗':
+   (absOk?'Δ 24h absoluto · indicadores ↗':'Sin variación 24h fiable · indicadores ↗'))+'</em></span></button>';
 }
 function positionRow(x){
  const tone=n(x.gain)===null?'unknown':n(x.gain)<0?'negative':'positive';
@@ -107,8 +111,11 @@ function engineLinks(ctx){
 }
 export function renderDashboard(ctx){
  const s=collectPositions(ctx),summary=ctx.data?.portfolio?.data?.summary||{};
- const classify=x=>{const m=String(x.mode||'').toUpperCase();return ['LIVE','REAL','REAL_LIMITED','REAL_FULL'].includes(m)?'live':
-  ['SIM','SIMULATION','SHADOW','DRY_RUN','LAB','REPLAY'].includes(m)?'sim':'unknown'};
+ // Clasificación de entorno unificada: display-scope.js classifyMode cubre
+ // todos los alias (live/real/production…, simulation/shadow/dry_run…), no un
+ // set local que dejaba modos reales como «unknown».
+ const classify=x=>{const s=classifyMode(x.raw||x,x.mode);
+  return s==='real'?'live':s==='shadow'?'sim':'unknown'};
  const liveCount=s.entries.filter(x=>classify(x)==='live').length,
   simCount=s.entries.filter(x=>classify(x)==='sim').length,
   unknownCount=s.entries.filter(x=>classify(x)==='unknown').length;

@@ -6,6 +6,7 @@ import {candleChart,lineChart,modeBadge} from './ui.js';
 import {ohlcvChart} from './premium-chart.js';
 import {BUILD_INFO} from './build-info.js';
 import {valueExchangeBalances} from './portfolio-view.js';
+import {translateCode} from './event-labels.js';
 
 const NAMES={idca:'IDCA',spot:'SPOT / Swing',grid:'GRID aislado',ama:'AMA'};
 const DESCS={idca:'Acumulación inteligente por ciclos',spot:'Señales y gestión de posiciones',grid:'Órdenes por niveles BUY → SELL',ama:'Mandatos y acumulación macro'};
@@ -29,9 +30,36 @@ const value=v=>v===null||v===undefined||v===''?'—':esc(String(v));
 const moneyClass=v=>num(v)?(v>=0?'nxp-up':'nxp-down'):'nxp-missing';
 // change24h sin sufijo % es un cambio ABSOLUTO del precio, no un porcentaje:
 // se muestra como Δ en USD y nunca se presenta como variación porcentual.
-const chg24=t=>num(t?.change24hPct)?{v:pct(t.change24hPct),cls:moneyClass(t.change24hPct)}
- :num(t?.change24h)?{v:'Δ '+signedUsd(t.change24h),cls:'nxp-missing'}
- :{v:'—',cls:'nxp-missing'};
+// Regla honesta: upstream fija change24h:"0.00" hardcodeado, así que un 0 es
+// indistinguible de «sin dato». Sin change24hPct numérico y con absoluto 0 o
+// ausente → '—' (nunca «Δ +$0,00» como si fuera una lectura real).
+const chg24=t=>{
+ if(num(t?.change24hPct))return {v:pct(t.change24hPct),cls:moneyClass(t.change24hPct),unreliable:false};
+ // num() es predicado booleano: el absoluto se lee del valor crudo.
+ const abs=typeof t?.change24h==='number'&&Number.isFinite(t.change24h)?t.change24h:null;
+ if(abs!==null&&abs!==0)return {v:'Δ '+signedUsd(abs),cls:'nxp-missing',unreliable:false};
+ return {v:'—',cls:'nxp-missing',unreliable:true};
+};
+// Fecha → epoch ms parseable; null si no lo es (nunca se inventa frescura).
+// Acepta ISO, epoch ms, epoch segundos y strings numéricos.
+const parseTs=v=>{
+ if(v===null||v===undefined||v==='')return null;
+ let t=NaN;
+ if(typeof v==='number'&&Number.isFinite(v))t=v;
+ else if(typeof v==='string'){
+  const p=Date.parse(v);
+  t=Number.isFinite(p)?p:(v.trim()!==''&&Number.isFinite(Number(v))?Number(v):NaN);
+ }
+ if(!Number.isFinite(t))return null;
+ return Math.abs(t)<1e12?t*1000:t;
+};
+function marketFresh(m){
+ if(!m||typeof m!=='object')return {txt:null,stale:false};
+ const ts=parseTs(m.ts)??parseTs(m.timestamp)??parseTs(m.lastCandleTs)??parseTs(m.candleTs)??parseTs(m.priceTs);
+ const age=num(m.candleAgeMs)?m.candleAgeMs:null;
+ const txt=ts?'Datos de '+fmtAge(ts):age!==null?'Velas de hace '+fmtAge(Date.now()-age):null;
+ return {txt,stale:m.candlesStale===true||m.dataState==='stale'};
+}
 const raw=(ctx,kind)=>ctx.data?.[kind]?.data||{};
 // 'stale' = última recarga fallida con datos previos válidos: se muestran con
 // su antigüedad (ver data-loader.js), nunca como si fueran lectura nueva.
@@ -84,15 +112,17 @@ function getCandles(m,pair){
 export function chartLevels(m,pair){
  const ind=m?.indicators||{},e=ind.ema||{},bb=ind.bollinger||{},mc=m?.marketContext||{};
  const nn=v=>num(v)?v:num(Number(v))?Number(v):null;
- const L=(price,label)=>nn(price)&&nn(price)>0?{price:nn(price),label}:null;
+ // origin: 'app' = calculado por la app sobre las velas; 'bot' = emitido por
+ // el bot (IDCA); 'derivado' = fórmula de la app, nunca una orden real.
+ const L=(price,label,origin='app')=>nn(price)&&nn(price)>0?{price:nn(price),label,origin}:null;
  const ref=nn(mc.referencePrice),req=nn(mc.requiredDipPct);
  return [
    L(e.ema20,'EMA 20'),L(e.ema50,'EMA 50'),L(e.ema200,'EMA 200'),
    L(bb.upper,'Bollinger sup.'),L(bb.mid,'Bollinger media'),L(bb.lower,'Bollinger inf.'),
-   L(ref,'Referencia IDCA'),
-   L(mc.targetEntryPrice,'Activación (nivel del bot)')||
-   L(mc.nextBuyPrice,'Activación (nivel del bot)')||
-   L(ref&&req?ref*(1-req/100):null,'Umbral derivado (ref. − caída req.)'),
+   L(ref,'Referencia IDCA','bot'),
+   L(mc.targetEntryPrice,'Activación (nivel del bot)','bot')||
+   L(mc.nextBuyPrice,'Activación (nivel del bot)','bot')||
+   L(ref&&req?ref*(1-req/100):null,'Umbral derivado (ref. − caída req.)','derivado'),
  ].filter(Boolean);
 }
 function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=[]}={}){
@@ -109,7 +139,10 @@ function candleSurface(ctx,{pair='BTC/USD',title='Mercado',compact=false,levels=
      <span class="nxp-timeframe" title="Temporalidad de las velas mostradas">${esc(tfLabel)}</span></div>
    ${tfBar}
    ${ready&&candles.length>1?`<div class="nxp-chartcanvas">${ohlcvChart(candles,{height:compact?240:315,levels:levels.filter(x=>num(x.price)),label:pair+' · velas OHLCV '+tfLabel})}</div>`:
-      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado',m.candlesError?('La fuente de velas respondió: '+esc(m.candlesError)+'. No se dibujan curvas ficticias.'):'Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias.')}
+      noDataFrame(ready?'Sin velas válidas':'Esperando el mercado',
+        ready?(m.candlesError?'La fuente de velas respondió: '+esc(m.candlesError)+'. ':'')+
+          'El bot no publica velas por esta vía todavía; el despliegue del backend está pendiente. No se dibujan curvas ficticias.':
+        'Sin datos OHLCV válidos de este par. No se dibujan curvas ficticias.')}
    <div class="nxp-chartfoot">${ready?`Origen: ${esc(m.candlesSource==='kraken-public'?'Kraken OHLC público (fuente externa verificable)':(m.provider||m.source||'API'))} · ${m.ts?esc(fmtAge(m.ts)):'hora no verificada'}`:
      'Precio y velas pendientes de autenticación y fuente'}</div>
  </section>`;
@@ -215,88 +248,150 @@ function indicatorRows(ind){
    ${items.map(([k,v])=>block(k,v)).join('')}</div></details>`).join('');
 }
 // Panel «Niveles»: los mismos chartLevels que se dibujan sobre la gráfica, en
-// texto — referencias informativas, nunca órdenes ni promesa de ejecución.
+// texto — cada nivel declara su ORIGEN (calculado por la app / emitido por el
+// bot / derivado por fórmula). Referencias informativas, nunca órdenes.
+const LEVEL_ORIGIN={app:'Calculado por la app sobre las velas',
+ bot:'Emitido por el bot (IDCA)',derivado:'Fórmula de la app — no es una orden'};
 function levelsPanel(ctx,pair,active){
  const m=raw(ctx,'market'),lv=chartLevels(m,pair);
  return `<section class="nxp-terminal-panel">${section('NIVELES','Niveles etiquetados')}
-  ${active&&lv.length?`<div class="nxp-level-list">`+lv.map(l=>`<div class="nxp-level-row"><span>${esc(l.label)}</span><b>${money(l.price)}</b></div>`).join('')+`</div>`:
+  ${active&&lv.length?`<div class="nxp-level-list">`+lv.map(l=>`<div class="nxp-level-row"><span>${esc(l.label)}<small class="nxp-level-origin">${esc(LEVEL_ORIGIN[l.origin]||'Origen no especificado')}</small></span><b>${money(l.price)}</b></div>`).join('')+`</div>`:
    `<p class="nxp-panel-empty">${active?'Sin niveles calculables con los datos actuales.':'Pendiente de una lectura verificada del mercado.'}</p>`}
-  <p class="nxp-panel-empty">Referencias informativas calculadas por la app o emitidas por el bot; no son órdenes ni compra garantizada.</p>
+  <p class="nxp-panel-empty">Referencias informativas; el «umbral derivado» es una fórmula de la app y nunca una orden ni compra garantizada.</p>
  </section>`;
 }
+// Fuente y frescura reales: proveedor, fuente de velas, edad de la lectura y
+// aviso de velas antiguas. Es la única zona donde vive la proveniencia.
+function freshnessPanel(ctx,m,active){
+ const f=marketFresh(m);
+ return `<section class="nxp-terminal-panel">${section('DATOS','Fuente y frescura')}
+  ${block('Proveedor',active?value(m.provider||m.source):'—')}
+  ${block('Fuente de velas',active?value(m.candlesSource||(m.candleTimeframe?m.candleTimeframe+'m':null)): '—')}
+  ${block('Última lectura',active?(f.txt||'—'):'—')}
+  ${active?block('Estado de datos',m.candlesStale===true?'Velas antiguas':value(m.dataState)):''}
+  ${f.stale?`<p class="nxp-panel-empty">Velas antiguas: la fuente no ha publicado datos recientes; los niveles e indicadores pueden estar desfasados.</p>`:''}
+ </section>`;
+}
+// Cabecera de cotización compartida por las subpestañas: precio, Δ 24h honesto
+// y volumen. Nunca incluye gráfica ni contexto de decisión.
+function quoteLine(ctx,pair,t,active,compact=false){
+ const c24=chg24(t);
+ return `<div class="nxp-quote ${compact?'nxp-quote-compact':''}"><div>${eyebrow(pair+' · PRECIO')}<strong>${active?money(t.price):'—'}</strong></div>
+  <div class="nxp-quote-side">${block('24h',active?c24.v:'—',active?c24.cls:'nxp-missing')}
+  ${block('Volumen 24h',active&&num(t.volume)?fmtNum(t.volume,{dec:2}):'—')}
+  ${active&&c24.unreliable&&(num(t.price)||num(t.change24hPct)||typeof t.change24h==='number')?`<p class="nxp-panel-empty">El bot no reporta una variación 24h fiable.</p>`:''}</div></div>`;
+}
+// Básico — una responsabilidad por subpestaña: Precio = solo cotización;
+// Gráfico = velas; Niveles = niveles con origen. (Indicadores no existe en
+// Básico: la barra inferior lo oculta, pero si llega se muestra compacto.)
 function basicMarket(ctx){
  const pair=ctx.ui?.marketPair||'BTC/USD',m=raw(ctx,'market'),t=getTicker(m,pair);
  const sub=ctx.ui?.marketSub||'price';
  const active=goodCommon(ctx,'market')&&(num(t.price)||getCandles(m,pair).length>1);
+ const book=active&&(num(t.bid)||num(t.ask))?
+  `<div class="nxp-basic-market-indicators">
+   ${block('BID',money(t.bid))}${block('ASK',money(t.ask))}${block('Spread',money(t.spread))}</div>`:'';
  let body='';
- if(sub==='chart') body=candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true});
- else if(sub==='levels') body=levelsPanel(ctx,pair,active);
- else body=`<div class="nxp-market-price"><span>${esc(pair)}</span><h1>${active?money(t.price):'—'}
-   ${num(t.change24hPct)?`<small class="${moneyClass(t.change24hPct)}">${pct(t.change24hPct)}</small>`:num(t.change24h)?`<small class="nxp-missing">Δ ${signedUsd(t.change24h)}</small>`:''}</h1></div>
-   ${candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true})}
-   ${active?`<div class="nxp-basic-market-indicators">
+ if(sub==='chart') body=`${quoteLine(ctx,pair,t,active,true)}${candleSurface(ctx,{pair,title:'Evolución · velas',compact:true})}`;
+ else if(sub==='levels') body=`${quoteLine(ctx,pair,t,active,true)}${levelsPanel(ctx,pair,active)}`;
+ else if(sub==='indicators') body=`${quoteLine(ctx,pair,t,active,true)}<div class="nxp-basic-market-indicators">
     ${block('RSI (14)',num(getInd(m,pair).rsi)?fmtNum(getInd(m,pair).rsi,{dec:1}):'—')}
     ${block('ADX',num(getInd(m,pair).adx)?fmtNum(getInd(m,pair).adx,{dec:1}):'—')}
     ${block('Spread',money(t.spread))}
-   </div>`:offline(ctx,'Consulta mercado BTC/ETH, velas e indicadores')}
+   </div>`;
+ else body=`<div class="nxp-market-price"><span>${esc(pair)}</span>${quoteLine(ctx,pair,t,active)}</div>
+   ${book}${freshnessPanel(ctx,m,active)}
+   ${active?'':offline(ctx,'Precios, velas e indicadores')}
    ${link('engines','Ver estrategias vinculadas')}`;
  return wrap(`${section('COTIZACIONES','Mercado')}
    ${marketPairBar(ctx)}
    ${body}
  </div>`,'nxp-mode-basic nxp-market');
 }
+// Traduce un código de estado/decisión del bot. En Pro se conserva el código
+// crudo en <code> (mismo patrón que scoped-pages); en Básico solo el texto.
+function trCode(ctx,v){
+ if(v===null||v===undefined||v==='')return null;
+ const t=translateCode(v);
+ if(t===null||t==='')return null;
+ const raw=String(v);
+ return ctx.mode==='pro'&&t!==raw?`${esc(t)} <code class="nxp-code">${esc(raw)}</code>`:esc(t);
+}
+// Contexto de decisión — SOLO en la subpestaña «Indicadores». Cada bloque
+// declara su fuente: AMA market-view publica contexto macro únicamente para
+// BTC/USD; IDCA entry-diagnostics aplica por par. Nunca se mezclan en una línea.
+function marketContextPanel(ctx,m,pair,ind){
+ const cx=m.marketContext||{};
+ const pctU=v=>num(v)?fmtPct(v):null; // magnitud en %; la etiqueta indica la dirección
+ const amaRows=[
+  ['Zona macro',trCode(ctx,cx.macroZone)],
+  ['Caída actual',pctU(cx.currentDropPct)],
+  ['Rebote desde mínimo',pctU(cx.reboundFromLowPct)],
+ ].filter(([,v])=>v!=null&&v!=='');
+ const idcaRows=[
+  ['Decisión del bot',trCode(ctx,cx.entryDecision)],
+  ['Régimen de mercado',trCode(ctx,ind.regime)],
+  ['Score de entrada',num(cx.entryScore)?fmtNum(cx.entryScore,{dec:1})+(cx.confidenceGrade?' · grado '+esc(cx.confidenceGrade):''):null],
+  ['Caída detectada / requerida',(num(cx.dipDetectedPct)||num(cx.requiredDipPct))?
+    (num(cx.dipDetectedPct)?fmtPct(cx.dipDetectedPct):'—')+' / '+(num(cx.requiredDipPct)?fmtPct(cx.requiredDipPct):'—'):null],
+  ['Señal de rebote / trailing',trCode(ctx,cx.reboundSignal)],
+  ['Referencia de precio',num(cx.referencePrice)?money(cx.referencePrice):null],
+  ['Activación prevista',num(cx.targetEntryPrice)?money(cx.targetEntryPrice):null],
+  ['Próxima compra',num(cx.nextBuyPrice)?money(cx.nextBuyPrice):null],
+  ['Bloqueo de seguridad',cx.hardBlocked===true?'Sí':cx.hardBlocked===false?'No':null],
+ ].filter(([,v])=>v!=null&&v!=='');
+ const grp=(title,rows,note='')=>`<div class="nxp-ctx-group"><span class="nxp-eyebrow">${esc(title)}</span>
+   ${rows.length?`<div class="nxp-vertical-stats">${rows.map(([k,v])=>block(k,v)).join('')}</div>`:`<p class="nxp-panel-empty">${esc(note)}</p>`}</div>`;
+ const amaNote=pair==='BTC/USD'?'AMA market-view no devolvió contexto macro en esta lectura.':'AMA market-view solo publica BTC/USD; no hay contexto macro para '+pair+'.';
+ return `<section class="nxp-terminal-panel">${section('CONTEXTO','Lectura real de los motores')}
+   ${grp('AMA · mercado (solo BTC/USD)',amaRows,amaNote)}
+   ${grp('IDCA · decisión de entrada',idcaRows,'IDCA entry-diagnostics no devolvió lectura para este par.')}
+   <p class="nxp-panel-empty">Los botones de este panel no lanzan compras ni ventas. Cada motor decide según sus propias reglas.</p>
+   ${link('engines','Ver decisiones de motores')}
+ </section>`;
+}
 function proMarket(ctx){
  const pair=ctx.ui?.marketPair||'BTC/USD',m=raw(ctx,'market'),t=getTicker(m,pair),ind=getInd(m,pair);
  const sub=ctx.ui?.marketSub||'price';
  const active=goodCommon(ctx,'market');
- const c24=chg24(t);
+ const hasQuote=num(t.price)||num(t.bid)||num(t.ask);
+ const quoted=active&&hasQuote;
  const head=`<div class="nxp-terminal-title"><div>${eyebrow('TRADING · ANÁLISIS')}<h1>Mercados</h1></div>${chip(active?'API conectada':'API pendiente',active?'good':'warn')}</div>
   ${marketPairBar(ctx)}`;
  const indicatorsPanel=`<div class="nxp-terminal-panel">${section('ANÁLISIS','Indicadores técnicos')}
       ${active?indicatorRows(ind):`<p class="nxp-panel-empty">Los indicadores están preparados para datos reales del proveedor, sin valores de relleno.</p>`}
     </div>`;
  const bookPanel=`<section class="nxp-terminal-panel">${section('LIBRO DE PRECIO','Bid / Ask / Spread')}
-      <div class="nxp-vertical-stats">${block('Mejor BID',active?money(t.bid):'—')}
-      ${block('Mejor ASK',active?money(t.ask):'—')}${block('Spread',active?money(t.spread):'—')}</div>
+      <div class="nxp-vertical-stats">${block('Mejor BID',quoted?money(t.bid):'—')}
+      ${block('Mejor ASK',quoted?money(t.ask):'—')}${block('Spread',quoted?money(t.spread):'—')}</div>
+      ${pair!=='BTC/USD'&&!num(t.bid)&&!num(t.ask)?`<p class="nxp-panel-empty">Libro de ejecución solo disponible para BTC/USD (AMA market-view).</p>`:''}
     </section>`;
  const sourcesPanel=`<section class="nxp-terminal-panel">${section('Fuentes de datos','Origen y frescura')}
       ${block('Proveedor',active?value(m.provider||m.source):'—')}
-      ${block('Última lectura',active&&m.ts?esc(fmtAge(m.ts)):'—')}
-      ${block('Régimen',active?value(ind.regime):'—')}
+      ${block('Fuente de velas',active?value(m.candlesSource||(m.candleTimeframe?m.candleTimeframe+'m':null)):'—')}
+      ${block('Intervalo',active?value({1:'1m',5:'5m',15:'15m',60:'1h',240:'4h',1440:'1d'}[String(m.candleTimeframe||ctx.ui?.marketTf||'15')]||(m.candleTimeframe||ctx.ui?.marketTf||'15')+'m'):'—')}
+      ${block('Última lectura',active?(marketFresh(m).txt||'—'):'—')}
+      ${active?block('Estado de datos',m.candlesStale===true?'Velas antiguas':value(m.dataState)):''}
+      ${active&&marketFresh(m).stale?`<p class="nxp-panel-empty">Velas antiguas: la fuente no ha publicado datos recientes.</p>`:''}
       ${active&&Array.isArray(m.sources||m.externalSources)&&(m.sources||m.externalSources).length?`<div class="nxp-source-list">`+(m.sources||m.externalSources).map(x=>`<div class="nxp-source-row"><span>${esc(x.name||x.id||'fuente')}</span><small>${esc(x.state||x.role||'')}${x.lastOk?' · '+esc(fmtAge(x.lastOk)):''}</small></div>`).join('')+`</div>`:''}
     </section>`;
- const contextPanel=`<section class="nxp-terminal-panel">${section('CONTEXTO','Lectura real de los motores')}
-      ${(()=>{const cx=m.marketContext||{};const rows=[
-        ['Zona macro · AMA',cx.macroZone],
-        ['Caída actual · AMA',num(cx.currentDropPct)!=null?pct(cx.currentDropPct):null],
-        ['Rebote desde mínimo · AMA',num(cx.reboundFromLowPct)!=null?pct(cx.reboundFromLowPct):null],
-        ['Score de entrada · IDCA',num(cx.entryScore)!=null?fmtNum(cx.entryScore,{dec:1})+(cx.confidenceGrade?' · grado '+cx.confidenceGrade:''):null],
-        ['Decisión IDCA',cx.entryDecision],
-        ['Dip detectado · IDCA',num(cx.dipDetectedPct)!=null?pct(cx.dipDetectedPct):null],
-        ['Señal de rebote · IDCA',cx.reboundSignal],
-        ['Bloqueo de seguridad · IDCA',cx.hardBlocked===true?'Sí':null],
-      ].filter(([,v])=>v!=null&&v!=='');
-      return rows.length?`<div class="nxp-vertical-stats">${rows.map(([k,v])=>block(k,v)).join('')}</div>`:''})()}
-      <p class="nxp-panel-empty">Los botones de este panel no lanzan compras ni ventas. Cada motor decide según sus propias reglas.</p>
-      ${link('engines','Ver decisiones de motores')}
-    </section>`;
  let body='';
- if(sub==='chart') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}</div></div>`;
- else if(sub==='levels') body=levelsPanel(ctx,pair,active);
+ if(sub==='chart') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">
+    ${quoteLine(ctx,pair,t,quoted,true)}
+    ${candleSurface(ctx,{pair,title:'OHLCV · Velas'})}
+   </div></div>`;
+ else if(sub==='levels') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">
+    ${quoteLine(ctx,pair,t,quoted,true)}${levelsPanel(ctx,pair,quoted)}</div></div>`;
  else if(sub==='indicators') body=`<div class="nxp-market-terminal"><div class="nxp-main-column">${indicatorsPanel}</div>
-    <aside class="nxp-side-column">${sourcesPanel}</aside></div>`;
+    <aside class="nxp-side-column">${marketContextPanel(ctx,m,pair,ind)}${sourcesPanel}</aside></div>`;
  else body=`<div class="nxp-market-terminal">
    <div class="nxp-main-column">
-    <div class="nxp-quote"><div>${eyebrow(pair+' · PRECIO')}<strong>${active?money(t.price):'—'}</strong></div>
-    ${block('24h',active?c24.v:'—',active?c24.cls:'nxp-missing')}</div>
-    ${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}
-    ${indicatorsPanel}
+    ${quoteLine(ctx,pair,t,quoted)}
    </div>
    <aside class="nxp-side-column">
     ${bookPanel}
-    ${sourcesPanel}
-    ${!active?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
-    ${contextPanel}
+    ${freshnessPanel(ctx,m,active)}
+    ${!quoted?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
    </aside>
   </div>`;
  return wrap(`${head}${body}

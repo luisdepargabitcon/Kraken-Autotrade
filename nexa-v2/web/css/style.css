@@ -58,6 +58,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .nxp-level-list{display:grid;gap:7px}
 .nxp-level-row{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--line2);border-radius:10px;font-size:12.5px}
 .nxp-level-row span{color:var(--tx2)}
+.nxp-level-origin{display:block;font-size:10px;color:var(--tx3,#6b7a99);margin-top:2px}
+.nxp-ctx-group{margin:10px 0}
+.nxp-ctx-group .nxp-eyebrow{display:block;margin-bottom:6px}
+.nxp-quote-compact .nxp-quote-side{display:none}
+.nxp-quote-side{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 
 /* ---------- Layout primitivos ---------- */
 .grid{display:grid;gap:12px}
