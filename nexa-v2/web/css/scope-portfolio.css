@@ -162,3 +162,45 @@
    (dock); la tira interior .nxf-tabs se oculta para no duplicar la navegación.
    En escritorio (>820px) el dock no existe y .nxf-tabs sigue siendo la vía. */
 @media (max-width:820px){ .nxf-tabs{display:none} }
+
+/* Cartera profesional: composición por activo (barras CSS), polvo agrupado,
+   conciliación con diferencias explícitas y presupuestos internos. */
+.nxw-comp-note{font-size:11px;color:#a9bfd8;line-height:1.6;margin:0}
+.nxw-comp{display:flex;flex-direction:column;gap:8px}
+.nxw-comp-row{display:grid;grid-template-columns:minmax(96px,170px) minmax(0,1fr);gap:12px;align-items:center}
+.nxw-comp-label{display:flex;flex-direction:column;gap:3px;min-width:0}
+.nxw-comp-label b{font-size:12px;color:#eaf2ff;overflow-wrap:anywhere}
+.nxw-comp-label small{font-size:10px;color:#9cb4ce;font-variant-numeric:tabular-nums}
+.nxw-comp-track{height:9px;border-radius:6px;background:#0c1a2b;border:1px solid #294962;overflow:hidden}
+.nxw-comp-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,#2f7fc4,#5cb3e8)}
+.nxw-dust{border:1px dashed #3e5670;border-radius:10px;padding:9px 11px;background:#0f2033}
+.nxw-dust summary{cursor:pointer;font-size:11px;font-weight:700;color:#c9d9ec}
+.nxw-dust-row{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#a9bfd8;padding:5px 0;border-top:1px solid #ffffff10}
+.nxw-dust-row strong{font-variant-numeric:tabular-nums;color:#dbe8f8}
+.nxw-unpriced{font-size:11px;color:#e1be84;line-height:1.7}
+.nxw-subhead{font-size:13px;color:#dbe7f8;margin:4px 0 0;letter-spacing:-.01em}
+.nxw-diff{display:flex;flex-direction:column;gap:8px}
+.nxw-diff-row{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(3,minmax(0,1fr));gap:8px;align-items:center;border:1px solid #2c496a;border-radius:10px;padding:10px 11px;background:#182f49}
+.nxw-diff-row>span{display:flex;flex-direction:column;gap:3px;min-width:0}
+.nxw-diff-row b{font-size:12px;color:#eaf2ff}
+.nxw-diff-row small{font-size:9px;color:#8fa9c4;line-height:1.4}
+.nxw-diff-row strong{font-size:12px;font-variant-numeric:tabular-nums;color:#dbe8f8;text-align:right}
+.nxw-diff-head{background:#12263e;border-style:dashed}
+.nxw-diff-head strong{font-size:10px;color:#9cb4ce;text-transform:uppercase;letter-spacing:.05em}
+.nxw-budget{display:flex;flex-direction:column;gap:7px}
+.nxw-budget-row{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto;gap:10px;align-items:center;border:1px solid #2c496a;border-radius:10px;padding:10px 11px;background:#182f49}
+.nxw-budget-row>span{display:flex;flex-direction:column;gap:3px;min-width:0}
+.nxw-budget-row b{font-size:12px;color:#eaf2ff}
+.nxw-budget-row small{font-size:10px;color:#8fa9c4}
+.nxw-budget-row strong{font-size:12px;font-variant-numeric:tabular-nums;color:#dbe8f8}
+#app[data-scope=shadow] .nxw-comp-track{background:#160f22;border-color:#50395e}
+#app[data-scope=shadow] .nxw-comp-fill{background:linear-gradient(90deg,#8a5cc9,#c29aff)}
+#app[data-scope=shadow] .nxw-dust{background:#1d132b;border-color:#664480}
+#app[data-scope=shadow] .nxw-diff-row,
+#app[data-scope=shadow] .nxw-budget-row{background:#2a1c3b;border-color:#694a7d}
+@media(max-width:650px){
+ .nxw-comp-row{grid-template-columns:1fr;gap:5px}
+ .nxw-diff-row{grid-template-columns:1fr 1fr;gap:6px}
+ .nxw-diff-row>span{grid-column:1/-1}
+ .nxw-budget-row{grid-template-columns:1fr auto;gap:6px}
+}
