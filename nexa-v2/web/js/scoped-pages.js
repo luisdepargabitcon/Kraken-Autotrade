@@ -131,7 +131,7 @@ function marketStatus(ctx,id){
  }).join('')+(Object.keys(contexts).length?'':'<p class="nxs-empty">Este modo todavía no entrega un contexto de entrada por activo.</p>')+'</section>';
 }
 export function renderModesOverview(ctx){
- return '<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(ctx.viewScope))+'</span><h1>Tus modos de inversión</h1><p>Elige un modo para consultar su estado y sus próximas decisiones.</p></div><div class="nxs-overview">'+Object.entries(engines).map(([id,label])=>'<button class="nxs-mode-card" data-nav="engine:'+id+'"><strong>'+esc(label)+'</strong><span>'+esc(meta(ctx,id).state==='ok'?'Lectura disponible':'Lectura parcial o pendiente')+'</span><b>Abrir modo →</b></button>').join('')+'</div></div>';
+ return '<div class="nxs-root"><div class="nxs-heading"><span>MODOS · '+esc(scopeTitle(ctx.viewScope))+'</span><h1>Tus modos de inversión</h1><p>Elige un modo para consultar su estado y sus próximas decisiones.</p></div><div class="nxs-overview">'+Object.entries(engines).map(([id,label])=>'<button class="nxs-mode-card" data-nav="engine:'+id+'"><strong>'+esc(label)+'</strong><span>'+esc(meta(ctx,id).state==='ok'?'Lectura disponible':meta(ctx,id).state==='stale'?'Datos de lectura anterior':'Lectura parcial o pendiente')+'</span><b>Abrir modo →</b></button>').join('')+'</div></div>';
 }
 export function renderScopedEngine(ctx){
  const id=ctx.ui?.engineId||'idca',info=meta(ctx,id),scope=ctx.viewScope||'real';
@@ -150,7 +150,7 @@ export function renderScopedEngine(ctx){
  '<nav class="nxs-mode-tabs" aria-label="Elegir modo">'+Object.entries(engines).map(([key,label])=>
  '<button data-nav="engine:'+key+'" class="'+(id===key?'on':'')+'" aria-current="'+(id===key?'page':'false')+'">'+esc(key.toUpperCase())+'</button>').join('')+'</nav>'+
  facts(ctx,id);
- if(info.state!=='ok'&&info.state!=='partial')html+='<p class="nxs-warning">El motor no está disponible desde la API. No se genera un estado ficticio.</p>';
+ if(info.state!=='ok'&&info.state!=='partial'&&info.state!=='stale')html+='<p class="nxs-warning">El motor no está disponible desde la API. No se genera un estado ficticio.</p>';
  if(active==='panel')html+=marketStatus(ctx,id);
  let globalUnknown=0,total=0;
  for(const x of selected){

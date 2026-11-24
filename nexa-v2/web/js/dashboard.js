@@ -14,7 +14,7 @@ const percent=v=>n(v)===null?'—':signedPct(n(v));
 const id=x=>String(x??'');
 const out=v=>esc(String(v??'—'));
 const engine=(ctx,k)=>ctx.enginesData?.[k]?.data||{};
-const ready=(ctx,k)=>['ok','partial'].includes(ctx.enginesData?.[k]?.state)&&ctx.authenticated;
+const ready=(ctx,k)=>['ok','partial','stale'].includes(ctx.enginesData?.[k]?.state)&&ctx.authenticated;
 const closed=r=>['closed','sold','completed','cancelled','canceled'].includes(String(val(r,'status','state','sellState')||'').toLowerCase())||val(r,'closedAt','sellAt')!=null;
 const asset=v=>{const s=String(v||'').toUpperCase().replace('XBT','BTC');return s.includes('BTC')?'BTC/USD':s.includes('ETH')?'ETH/USD':s||null};
 const matching=(r,pair)=>asset(val(r,'pair','symbol','asset'))===pair;
@@ -56,7 +56,7 @@ export function collectPositions(ctx){
 
 function market(ctx,pair){
  const snap=ctx.data?.marketPairs?.[pair]||ctx.data?.market;
- const m=snap?.data||{},valid=['ok','partial'].includes(snap?.state)&&ctx.authenticated;
+ const m=snap?.data||{},valid=['ok','partial','stale'].includes(snap?.state)&&ctx.authenticated;
  // 'partial' = ticker sin velas: el precio sí es real. change24h absoluto NO
  // es porcentaje; solo se muestra como Δ en USD cuando no hay % confirmado.
  return {m,valid,price:valid?val(m,'price','lastPrice'):null,
@@ -160,6 +160,12 @@ export function renderDashboard(ctx){
  '<div class="nxh-activity">'+(Array.isArray(events)&&events.length?events.slice(0,4).map(e=>
  '<div><b>'+out(val(e,'engine','source')||'BOT')+'</b><span>'+out(val(e,'msg','message','type')||'Evento')+'</span></div>').join(''):
  '<p class="nxh-empty">Sin eventos verificables en la respuesta actual.</p>')+'</div>'+
+ section('MÁS FUNCIONES','Más funciones')+
+ // FISCO no es una sexta raíz: se abre desde aquí (o desde Cartera/Ajustes)
+ // como sección depth 1 con sus propias subpestañas en la barra inferior.
+ // Es contable del bot completo → scope-neutral; el permiso fisco:read lo
+ // gestiona el propio visor.
+ '<div class="nxh-tool-row">'+go('fisco','FISCO / AEAT · informes fiscales')+go('settings','Ajustes y conexión')+'</div>'+
  proExtras+section('ESTRATEGIAS','Motores')+engineLinks(ctx)+'</div>';
 }
 export function renderPositions(ctx){

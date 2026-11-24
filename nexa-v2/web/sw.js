@@ -9,7 +9,7 @@ const SHELL=[
  './js/provider.js','./js/screens.js','./js/premium.js','./js/premium-chart.js',
  './js/adapters.js','./js/auth.js','./js/actions.js','./js/pairing.js',
  './js/build-info.js','./js/dashboard.js','./js/display-scope.js','./js/experience.js',
- './js/fisco-view.js','./js/import-position.js','./js/inspector.js',
+ './js/fisco-view.js','./js/data-loader.js','./js/import-position.js','./js/inspector.js',
  './js/portfolio-view.js','./js/scoped-pages.js','./js/market-candles.js','./js/event-labels.js'
 ];
 self.addEventListener('install',event=>{

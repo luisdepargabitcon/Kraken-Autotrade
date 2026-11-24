@@ -761,3 +761,11 @@ html.nexa-native .topbar{
 .nx-spot-load-more{width:100%;min-height:48px;margin-top:14px;border-radius:12px;border:1px solid #4a78a8;background:#18395b;color:#cce5ff;font-size:13px;font-weight:750;cursor:pointer}
 .nx-spot-load-more:disabled{opacity:.65;cursor:wait}
 .nx-spot-load-more:focus-visible{outline:2px solid #86c1ff;outline-offset:2px}
+
+/* ---------- Insets Android / scroll ---------- */
+/* La cabecera es sticky: al saltar a anclas o hacer focus en .screen el título
+   no debe quedar recortado bajo la barra. */
+html{scroll-padding-top:calc(96px + env(safe-area-inset-top,0px))}
+/* PIN y overlays de ficha: la tarjeta va centrada, pero el padding debe cubrir
+   los bordes laterales/gestos en WebView edge-to-edge. */
+.pin-overlay{padding:calc(20px + env(safe-area-inset-top,0px)) calc(20px + env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) calc(20px + env(safe-area-inset-left,0px))}

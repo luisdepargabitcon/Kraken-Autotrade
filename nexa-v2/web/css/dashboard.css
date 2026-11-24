@@ -190,3 +190,5 @@
 .nxs-tabs,.nx-tabs,.subtab-row{display:flex;gap:6px;overflow-x:auto;white-space:nowrap;
   scrollbar-width:thin;-webkit-overflow-scrolling:touch;padding-bottom:4px}
 .nxs-tabs button,.nx-tabs button{flex:0 0 auto}
+.nxh-tool-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:4px}
+.nxh-tool-row .nxh-link{background:#162d47;border:1px solid #35577b}

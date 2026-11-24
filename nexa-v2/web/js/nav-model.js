@@ -24,6 +24,13 @@ export const SECTION_TABS = {
     ['ledger', 'Movimientos'], ['reservations', 'Reservas'], ['audit', 'Conciliación']],
   activity: [['recent', 'Recientes'], ['executed', 'Ejecuciones'], ['decision', 'Decisiones'],
     ['rejected', 'Rechazadas'], ['error', 'Errores'], ['notices', 'Avisos']],
+  // FISCO no es una raíz (la barra inferior de nivel 0 sigue teniendo 5
+  // secciones): es una sección depth 1 a la que solo se llega por entrada
+  // explícita (tarjeta de Inicio, Cartera o Ajustes). Sus pestañas replican
+  // las del visor fiscal (fisco-view.js). Contable del bot completo:
+  // scope-neutral REAL/SHADOW.
+  fisco: [['summary', 'Resumen'], ['operations', 'Operaciones'], ['lots', 'Lotes'],
+    ['disposals', 'Ventas'], ['annual', 'Informe'], ['validation', 'Validación']],
 };
 
 // En Básico se ocultan estas subpestañas (Indicadores, Conciliación, Reservas;
@@ -89,9 +96,19 @@ export function navMove(nav, i, mode) {
 
 // up(): sube exactamente un nivel. Desde un motor vuelve a Modos (sub=general
 // como en el prototipo); desde cualquier sección vuelve a la raíz (Inicio).
+// Excepción: las secciones abiertas por entrada explícita (hoy solo 'fisco')
+// guardan nav.from con la ruta de origen; al subir a nivel 0 se restaura ESA
+// ruta para que ‹ vuelva a donde se abrió, no siempre a Inicio.
 export function navUp(nav) {
   const depth = Math.max(0, (nav.depth || 0) - 1);
-  if (depth === 0) return navRoot();
+  if (depth === 0) {
+    if (nav.from && typeof nav.from === 'object') {
+      const back = { ...nav.from };
+      delete back.from;
+      return back;
+    }
+    return navRoot();
+  }
   const n = { ...nav, depth, inner: depth < 2 ? null : nav.inner };
   if (nav.section === 'engines') n.sub = 'general';
   return n;
@@ -133,5 +150,6 @@ export function navView(nav) {
   }
   if (section === 'portfolio') return { screen: 'portfolio', ui: { portfolioTab: sub } };
   if (section === 'activity') return { screen: 'activity', ui: { activityCat: ACTIVITY_CAT[sub] || 'all' } };
+  if (section === 'fisco') return { screen: 'fisco', ui: { fiscoTab: sub || 'summary' } };
   return { screen: 'dashboard', ui: {} };
 }

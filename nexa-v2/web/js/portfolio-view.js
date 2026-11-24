@@ -143,7 +143,7 @@ function summaryReal(ctx){
 }
 function summaryShadow(ctx){
  const idca=ctx.enginesData?.idca?.data||{},wallet=idca.simWallet;
- const source=ctx.enginesData?.idca?.state==='ok'&&wallet&&typeof wallet==='object';
+ const source=['ok','partial','stale'].includes(ctx.enginesData?.idca?.state)&&wallet&&typeof wallet==='object';
  return '<div class="nxw-hero nxw-hero-shadow"><span>SHADOW · SALDO VIRTUAL IDCA</span>'+
  '<strong>'+(source?asUSD(one(wallet,'totalUsd','balanceUsd','equityUsd')):'—')+'</strong>'+
  '<p>Esta pantalla muestra exclusivamente simulación. No representa dinero depositado, saldo LIVE ni resultados fiscales.</p>'+

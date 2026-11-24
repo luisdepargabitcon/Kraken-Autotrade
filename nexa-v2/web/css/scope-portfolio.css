@@ -157,3 +157,8 @@
 @media(max-width:580px){.nx-idca-import-cta{align-items:stretch;flex-direction:column}
  .nx-idca-import-cta button{white-space:normal}
  .nx-import-fields{grid-template-columns:1fr}}
+
+/* FISCO depth1: en móvil las subpestañas las ofrece la barra inferior
+   (dock); la tira interior .nxf-tabs se oculta para no duplicar la navegación.
+   En escritorio (>820px) el dock no existe y .nxf-tabs sigue siendo la vía. */
+@media (max-width:820px){ .nxf-tabs{display:none} }

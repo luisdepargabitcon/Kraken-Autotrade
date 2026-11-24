@@ -681,7 +681,7 @@ export function amaConfig(ctx){
 
 // ==================== CARTERA ====================
 function renderPortfolioLegacy(ctx){
-  if(ctx.data.portfolio?.state!=='ok') return connectionEmpty(
+  if(!['ok','partial','stale'].includes(ctx.data.portfolio?.state)) return connectionEmpty(
     'Cartera pendiente de vinculación',
     'El patrimonio, las posiciones y el PnL aparecerán cuando exista una sesión segura con el backend. No mostramos ceros ni balances ficticios.',
     {icon:'▣',action:'Configurar cartera'});
@@ -779,7 +779,7 @@ function evRow(e){
 
 // ==================== FISCO ====================
 function renderFiscoLegacy(ctx){
-  if(ctx.data.fisco?.state!=='ok') return connectionEmpty('Fiscalidad privada',
+  if(!['ok','partial','stale'].includes(ctx.data.fisco?.state)) return connectionEmpty('Fiscalidad privada',
     'Los informes de FISCO/AEAT requieren vinculación segura y permisos específicos. No se publican datos fiscales en el móvil sin autorización.',
     {icon:'▦',action:'Configurar acceso seguro'});
   const f = ctx.data.fisco?.data ?? {};

@@ -113,3 +113,38 @@ test('bottomItems cambia de contenido según el nivel y respeta el modo', () => 
   assert.equal(bottomItems({ depth: 1, section: 'portfolio', sub: 'summary', inner: null }, 'pro').length, 6);
   assert.equal(bottomItems({ depth: 1, section: 'portfolio', sub: 'summary', inner: null }, 'basic').length, 4);
 });
+
+test('FISCO es sección depth 1 fuera de la raíz, con sus pestañas fiscales', () => {
+  // No es una sexta raíz: bottomItems de nivel 0 sigue teniendo 5 secciones.
+  assert.ok(!ROOT_ITEMS.some(x => x.id === 'fisco'));
+  assert.ok(!bottomItems(navRoot(), 'pro').some(x => x.id === 'fisco'));
+  assert.ok(!bottomItems(navRoot(), 'basic').some(x => x.id === 'fisco'));
+  // Pero sí es una sección depth 1 con subpestañas propias en la barra inferior.
+  const nav = { depth: 1, section: 'fisco', sub: 'summary', inner: null };
+  assert.deepEqual(navView(nav), { screen: 'fisco', ui: { fiscoTab: 'summary' } });
+  assert.deepEqual(navView({ ...nav, sub: 'lots' }), { screen: 'fisco', ui: { fiscoTab: 'lots' } });
+  assert.deepEqual(bottomItems(nav, 'pro').map(x => x.id),
+    ['summary', 'operations', 'lots', 'disposals', 'annual', 'validation']);
+  // navMove dentro de FISCO cambia de pestaña sin ganar profundidad.
+  const moved = navMove(nav, 2, 'pro');
+  assert.equal(moved.depth, 1);
+  assert.equal(moved.sub, 'lots');
+  // sanitizeNav corrige una pestaña fiscal desconocida a la primera.
+  const fixed = sanitizeNav({ depth: 1, section: 'fisco', sub: 'bogus', inner: null }, 'pro');
+  assert.equal(fixed.sub, 'summary');
+});
+
+test('‹ desde FISCO vuelve a la sección que lo abrió (nav.from)', () => {
+  const from = { depth: 1, section: 'portfolio', sub: 'balances', inner: null };
+  const nav = { depth: 1, section: 'fisco', sub: 'lots', inner: null, from };
+  const up = navUp(nav);
+  assert.equal(up.section, 'portfolio');
+  assert.equal(up.sub, 'balances');
+  assert.equal(up.from, undefined, 'from no se hereda en cadena');
+  // navMove dentro de FISCO conserva `from` para el siguiente ‹.
+  const moved = navMove(nav, 3, 'pro');
+  assert.equal(moved.sub, 'disposals');
+  assert.deepEqual(moved.from, from);
+  // Sin `from`, una sección depth 1 vuelve a la raíz como antes.
+  assert.deepEqual(navUp({ depth: 1, section: 'portfolio', sub: 'x', inner: null }), navRoot());
+});

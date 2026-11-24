@@ -16,6 +16,7 @@ import { BUILD_INFO } from './build-info.js';
 import {renderFiscalView} from './fisco-view.js';
 import {openImportPositionPreview} from './import-position.js';
 import {renderScopedEngine,renderScopedActivity,renderModesOverview} from './scoped-pages.js';
+import {loadSnapshot} from './data-loader.js';
 import {classifyMode,inScope,SCOPE_SHADOW} from './display-scope.js';
 import {ROOT_ITEMS,bottomItems,navMove,navUp,navRoot,sanitizeNav,navView} from './nav-model.js';
 
@@ -27,7 +28,7 @@ const state = {
   mode: localStorage.getItem('nexa.mode') || 'pro',
   viewScope: localStorage.getItem('nexa.viewScope')==='shadow'?'shadow':'real', // solo pantalla, jamás modo del bot      // basic | pro  (solo presentación)
   nav: navRoot(),          // navegación por profundidad {depth,section,sub,inner}
-  detail: null,            // pantalla fuera del árbol: asset | manage-idca | fisco
+  detail: null,            // pantalla fuera del árbol: asset | manage-idca
   ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD', cycleId:null, positionFilter:'all', portfolioTab:'summary',fiscoTab:'summary',
     activityFilter:{ sev:'all', engine:'all', cat:'all' } },
   provider: createApiProvider(),
@@ -37,6 +38,8 @@ const state = {
   enginesData: {},     // { id: { state, data } }
   spotExtraTrades: [], // páginas de historial GET autenticado ya leídas por el usuario
   spotPageOffset: 100,
+  lastGood: null,       // últimas lecturas válidas por recurso (para 'stale')
+  allError: false,      // true solo si TODOS los recursos fallan a la vez
   refreshTimer: null,
   unlocked: false,             // PIN/biometría comprobados en esta apertura
   deviceEnrolled: false,       // Identidad persistente, independiente del token de 30 min
@@ -73,14 +76,24 @@ function stampCurrent(){
   try{ history.replaceState({ nexa:{ seq:history.state?.nexa?.seq||0, nav:{...state.nav}, detail:state.detail } }, ''); }catch{}
 }
 // navTo traduce los destinos data-nav que ya existen en el contenido al nuevo
-// modelo de profundidad. 'engine:<id>' abre el motor en depth 2; 'fisco',
-// 'asset' y 'manage-idca' son pantallas detalle fuera del árbol de secciones.
+// modelo de profundidad. 'engine:<id>' abre el motor en depth 2; 'fisco' es una
+// sección depth 1 propia (subpestañas fiscales en la barra inferior) accesible
+// solo por entrada explícita — nunca desde bottomItems de raíz; 'asset' y
+// 'manage-idca' son pantallas detalle fuera del árbol de secciones.
 // opts.push=false solo para navegaciones que YA son una entrada de historial
 // (hashchange): apilar otra crearía un paso «atrás» duplicado.
 function navTo(target, opts={}){
   state.detail=null;
   if(target.startsWith('engine:')){ state.nav={depth:2,section:'engines',sub:target.slice(7),inner:'panel'}; }
-  else if(target==='fisco'||target==='asset'||target==='manage-idca'){ state.detail=target; }
+  else if(target==='fisco'){
+    // FISCO = sección depth 1 con sus propias subpestañas en la barra inferior.
+    // `from` recuerda la sección de origen para que ‹ vuelva a donde se abrió.
+    if(state.nav?.section!=='fisco'){
+      const from={...(state.nav||navRoot())};delete from.from;
+      state.nav={depth:1,section:'fisco',sub:'summary',inner:null,from};
+    }
+  }
+  else if(target==='asset'||target==='manage-idca'){ state.detail=target; }
   else if(target==='positions'){ state.nav={depth:1,section:'home',sub:'positions',inner:null}; }
   else if(target==='settings'){ state.nav={depth:1,section:'home',sub:'connection',inner:null}; }
   else {
@@ -123,68 +136,22 @@ window.addEventListener('popstate', e=>{
 });
 
 // ---------- Datos ----------
+// La carga vive en data-loader.js (módulo puro, sin DOM): cada recurso se
+// resuelve de forma independiente — un fallo aísla solo ese recurso, la
+// última lectura válida se conserva como 'stale' y el reset total solo ocurre
+// si TODO falla a la vez (state.allError).
 async function loadData(){
-  const p = state.provider;
-  const [idca, spot, grid, ama, btcMarket, ethMarket, portfolio, activity, fisco] = await Promise.all([
-    p.idca(), p.spot(), p.grid(), p.ama(), p.market('BTC/USD',state.ui.marketTf||'15'), p.market('ETH/USD',state.ui.marketTf||'15'),
-    p.portfolio(), p.activity(), p.fisco(),
-  ]);
-  const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
-  state.enginesData = { idca:pack(idca), spot:pack(spot), grid:pack(grid), ama:pack(ama) };
-  // El refresco de 30 s no debe tirar las páginas históricas ya consultadas.
-  // Se mezclan solo si el GET del historial sigue autorizado; si no, se limpian.
-  const sd=state.enginesData.spot.data;
-  if(sd.resourceStates?.trades==='ok'&&Array.isArray(sd.trades)&&state.spotExtraTrades.length){
-    const key=o=>String(o.id??o.tradeId??'')+'|'+String(o.ts??'');
-    const seen=new Set(sd.trades.map(key));
-    for(const t of state.spotExtraTrades){
-      const k=key(t);
-      if(!seen.has(k)){seen.add(k);sd.trades.push(t);}
-    }
-  }else if(sd.resourceStates?.trades!=='ok'){
-    state.spotExtraTrades=[];state.spotPageOffset=100;
-  }
-  // Actividad global = feed de notificaciones + eventos reales de cada motor,
-  // sin duplicados. Los trades de /trades/closed son globales: engine 'common'.
-  const feed=[...(activity.events?.data??[])];
-  const seen=new Set(feed.map(e=>`${e.engine||'bot'}:${e.id??e.ts}`));
-  const engMode=id=>{const d=state.enginesData?.[id]?.data||{};
-    return d.status?.mode||d.status?.executionMode||d.summary?.mode||d.summary?.executionMode||null;};
-  const push=(arr,engine)=>{for(const e of arr||[]){const k=`${engine}:${e.id??e.ts??e.msg}`;if(!seen.has(k)){
-    seen.add(k);
-    const mode=e.mode??e.executionMode??engMode(engine);
-    feed.push({...e,engine:engine||e.engine,...(mode?{mode}:{})});}}};
-  const gd=state.enginesData.grid.data,ad=state.enginesData.ama.data,id=state.enginesData.idca.data;
-  push(gd?.events,'grid');push(gd?.monitor?.events,'grid');push(gd?.monitor?.alerts,'grid');
-  push(ad?.trace?.decisions,'ama');push(ad?.trace?.events,'ama');push(id?.events,'idca');
-  // Los trades de /trades/closed son globales y sin modo: no se mezclan en el
-  // feed (caerían como «desconocidos»); siguen en la sección Historial SPOT.
-  // Eventos del feed (notificaciones) sin modo propio heredan el de su motor
-  // cuando el backend no lo etiqueta: así el filtro REAL/SHADOW no los pierde.
-  for(const e of feed){
-    if(e.mode==null&&e.executionMode==null){const m=engMode(e.engine);if(m)e.mode=m;}
-  }
-  feed.sort((a,b)=>new Date(b.ts||0)-new Date(a.ts||0));
-  const marketPairs={
-    'BTC/USD':{state:btcMarket.state,data:btcMarket.market?.data??null},
-    'ETH/USD':{state:ethMarket.state,data:ethMarket.market?.data??null},
-  };
-  state.common = {
-    marketPairs,
-    market: marketPairs[state.ui.marketPair]||marketPairs['BTC/USD'],
-    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? null, ledger: portfolio.ledger?.data ?? null, reservations: portfolio.reservations?.data ?? null, budgets: portfolio.budgets?.data ?? null, inventory: portfolio.inventory?.data ?? null, exchangeBalances:portfolio.exchangeBalances?.data??null, prices:portfolio.prices?.data??null,resourceStates:portfolio.resourceStates||{} } },
-    activity: { state: activity.state, data: { events: feed } },
-    fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note,resourceStates:fisco.resourceStates||{} },
-  };
-}
-// Aplana los envoltorios {data,state} del provider a la forma que consumen las pantallas.
-function normalizeEngine(r){
-  const d = {};
-  for(const [k,v] of Object.entries(r||{})){
-    if(k==='state'||k==='latency') continue;
-    d[k] = (v && typeof v==='object' && 'data' in v) ? v.data : v;
-  }
-  return d;
+  const snap = await loadSnapshot(state.provider, {
+    ui: state.ui,
+    prevLastGood: state.lastGood,
+    spotExtraTrades: state.spotExtraTrades,
+    spotPageOffset: state.spotPageOffset,
+  });
+  state.enginesData = snap.enginesData;
+  state.common = snap.common;
+  state.lastGood = snap.lastGood;
+  state.allError = snap.allError;
+  state.spotPageOffset = snap.spotPageOffset;
 }
 
 // ---------- Render ----------
@@ -208,6 +175,7 @@ function render(){
   if(view.ui.marketSub!==undefined)state.ui.marketSub=view.ui.marketSub;
   if(view.ui.engineId){state.ui.engineId=view.ui.engineId;state.ui.subtab=view.ui.subtab;}
   if(view.ui.portfolioTab)state.ui.portfolioTab=view.ui.portfolioTab;
+  if(view.ui.fiscoTab)state.ui.fiscoTab=view.ui.fiscoTab;
   if(view.ui.activityCat)state.ui.activityFilter.cat=view.ui.activityCat;
   const scr2 = state.detail || view.screen;
   let html='';
@@ -265,13 +233,14 @@ function renderStatusline(){
   const authed=!!session.get();
   const states=Object.values(state.enginesData).map(e=>e.state);
   const sourceError=states.some(x=>x==='unavailable'||x==='unreachable'||x==='error'||x==='auth_required');
-  const sourcesPartial=states.some(x=>x==='partial') ||
-    (authed && ['error','unavailable','partial','auth_required'].includes(state.common.portfolio?.state));
+  const sourcesPartial=states.some(x=>x==='partial'||x==='stale') ||
+    (authed && ['error','unavailable','partial','stale','auth_required'].includes(state.common.portfolio?.state));
   const cls=!state.online?'err':(authed&&!sourceError&&!sourcesPartial?'':'warn');
   const linked=state.deviceEnrolled&&!state.repairRequired;
   const connection = !state.online?'Sin red':
     state.repairRequired?'Dispositivo revocado':
     !authed?(linked?'Conexión pendiente':'Dispositivo sin vincular'):
+    state.allError?'Sin datos del backend':
     sourceError||sourcesPartial?'Conectado · datos parciales':'Conectado';
   $('statusline').innerHTML =
     `<span class="dot ${cls}"></span><span>${esc(connection)}</span>`+
@@ -284,7 +253,7 @@ function renderStatusline(){
 // ---------- Sub-renderer de motor ----------
 function renderEngineSub(engineId, subtab){
   const eng = state.enginesData?.[engineId] ?? {state:'unavailable', data:{}};
-  if(eng.state && !['ok','partial'].includes(eng.state)){
+  if(eng.state && !['ok','partial','stale'].includes(eng.state)){
     return `<div class="banner ${eng.state==='auth_required'?'warn':'err'}">
       Motor ${esc(engineId)}: ${esc(stateLabel(eng.state))}.
       ${eng.state==='auth_required'?'Inicia sesión con permisos para verlo.':'Sin datos del backend.'}</div>`;
@@ -296,8 +265,11 @@ function renderEngineSub(engineId, subtab){
     grid: { panel:S.gridPanel, cycles:S.gridCycles, levels:S.gridLevels, monitor:S.gridMonitor, config:S.gridConfig },
     ama:  { panel:S.amaPanel, readiness:S.amaReadiness, mandate:S.amaMandate, trace:S.amaTrace, lab:S.amaLab, config:S.amaConfig },
   }[engineId]?.[subtab];
+  // 'stale' = la última recarga falló pero se muestran los últimos datos
+  // válidos, con su antigüedad. 'partial' = lectura incompleta del backend.
+  const stale=eng.state==='stale'?`<div class="banner warn">Lectura anterior (${esc(fmtAge(eng.readAt))}): el último intento de actualización falló; se muestran los últimos datos válidos.</div>`:'';
   const partial=eng.state==='partial'?'<div class="nx-subview-partial">Lectura parcial: algunos endpoints pueden no estar autorizados o disponibles. Los datos confirmados sí se muestran; los ausentes no equivalen a cero.</div>':'';
-  return fn ? partial+fn(ctx) : `<div class="banner warn">Subvista no implementada: ${esc(engineId)}/${esc(subtab)}</div>`;
+  return fn ? stale+partial+fn(ctx) : `<div class="banner warn">Subvista no implementada: ${esc(engineId)}/${esc(subtab)}</div>`;
 }
 function stateLabel(s){
   return {unreachable:'backend inaccesible',unavailable:'no disponible',error:'error de API',
@@ -638,7 +610,7 @@ function lockNow(){
   state.unlocked=false;
   clearInterval(state.refreshTimer);
   session.clear(); // La clave del dispositivo persiste; nuevo token tras PIN/biometría.
-  state.enginesData={};state.common={};
+  state.enginesData={};state.common={};state.lastGood=null;state.allError=false;
   render();
   pinBuf='';pinDraw();showUnlock();
 }
@@ -654,6 +626,7 @@ function openSettingsApi(){
     try{
       setApiBase(modal.root.querySelector('#api-base').value.trim());
       session.clear(); // A previous bearer token must not be reused on a different server.
+      state.lastGood=null; // 'stale' nunca cruza de servidor: los datos del anterior no aplican.
       modal.close();
       loadData().then(render);
     }catch(err){
@@ -777,7 +750,8 @@ document.addEventListener('click', e=>{
     else if(k==='positionFilter')state.ui.positionFilter=v;
     else if(k==='portfolioTab'){ state.ui.portfolioTab=v;
       if(state.nav.depth===1&&state.nav.section==='portfolio'&&state.nav.sub!==v){ state.nav.sub=v; pushNav(); } }
-    else if(k==='fiscoTab')state.ui.fiscoTab=v;
+    else if(k==='fiscoTab'){ state.ui.fiscoTab=v;
+      if(state.nav.depth===1&&state.nav.section==='fisco'&&state.nav.sub!==v){ state.nav.sub=v; pushNav(); } }
     else if(k==='sev') state.ui.activityFilter.sev=v;
     else if(k==='eng') state.ui.activityFilter.engine=v;
     else if(k==='cat'){ state.ui.activityFilter.cat=v;

@@ -33,8 +33,10 @@ const chg24=t=>num(t?.change24hPct)?{v:pct(t.change24hPct),cls:moneyClass(t.chan
  :num(t?.change24h)?{v:'Δ '+signedUsd(t.change24h),cls:'nxp-missing'}
  :{v:'—',cls:'nxp-missing'};
 const raw=(ctx,kind)=>ctx.data?.[kind]?.data||{};
-const goodCommon=(ctx,kind)=>!!ctx.authenticated&&['ok','fresh','partial'].includes(ctx.data?.[kind]?.state);
-const goodEngine=(ctx,id)=>!!ctx.authenticated && ['ok','fresh','partial'].includes(ctx.enginesData?.[id]?.state);
+// 'stale' = última recarga fallida con datos previos válidos: se muestran con
+// su antigüedad (ver data-loader.js), nunca como si fueran lectura nueva.
+const goodCommon=(ctx,kind)=>!!ctx.authenticated&&['ok','fresh','partial','stale'].includes(ctx.data?.[kind]?.state);
+const goodEngine=(ctx,id)=>!!ctx.authenticated && ['ok','fresh','partial','stale'].includes(ctx.enginesData?.[id]?.state);
 const wrap=(s,cls='')=>`<div class="nxp ${cls}">${s}</div>`;
 const chip=(label,cls='')=>`<span class="nxp-chip ${cls}">${esc(label)}</span>`;
 const eyebrow=t=>`<span class="nxp-eyebrow">${esc(t)}</span>`;
@@ -150,7 +152,7 @@ function basicHome(ctx){
    </section>
    ${section('Tus estrategias','Motores automáticos')}
    <div class="nxp-engine-list">${rows}</div>
-   <div class="nxp-basic-shortcuts">${link('market','Ver mercados')}${link('activity','Actividad reciente')}</div>
+   <div class="nxp-basic-shortcuts">${link('market','Ver mercados')}${link('activity','Actividad reciente')}${link('fisco','FISCO / AEAT')}</div>
    ${connected?`<div class="nxp-inline-note">${block('Exposición',money(s.exposureUsd))}${link('portfolio','Detalle de la cartera')}</div>`:''}
  </div>`,'nxp-mode-basic');
 }
@@ -737,6 +739,11 @@ export function renderSettingsPremium(ctx,legacy){
     <span class="nxp-settings-option-arrow nxp-settings-ready">${ico('shield')}</span>
    </div>
    ${option('activity','Actualizar datos','Consultar de nuevo el estado del bot','refresh')}
+   <button type="button" class="nxp-settings-option" data-nav="fisco">
+    <span class="nxp-settings-option-icon">${ico('shield')}</span>
+    <span class="nxp-settings-option-copy"><strong>FISCO / AEAT</strong><small>Informes fiscales privados · permiso independiente fisco:read</small></span>
+    <span class="nxp-settings-option-arrow" aria-hidden="true">›</span>
+   </button>
    ${authorized?option('key','Cerrar sesión','Desconectar sin borrar tu PIN','logout'):''}
   </div>
   ${ctx.mode==='pro'&&goodCommon(ctx,'settings')?`<details class="nxp-audit"><summary>Configuración técnica <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
