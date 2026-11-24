@@ -27,6 +27,11 @@ const pnl=v=>num(v)?signedUsd(v):'—';
 const pct=v=>num(v)?signedPct(v):'—';
 const value=v=>v===null||v===undefined||v===''?'—':esc(String(v));
 const moneyClass=v=>num(v)?(v>=0?'nxp-up':'nxp-down'):'nxp-missing';
+// change24h sin sufijo % es un cambio ABSOLUTO del precio, no un porcentaje:
+// se muestra como Δ en USD y nunca se presenta como variación porcentual.
+const chg24=t=>num(t?.change24hPct)?{v:pct(t.change24hPct),cls:moneyClass(t.change24hPct)}
+ :num(t?.change24h)?{v:'Δ '+signedUsd(t.change24h),cls:'nxp-missing'}
+ :{v:'—',cls:'nxp-missing'};
 const raw=(ctx,kind)=>ctx.data?.[kind]?.data||{};
 const goodCommon=(ctx,kind)=>!!ctx.authenticated&&['ok','fresh','partial'].includes(ctx.data?.[kind]?.state);
 const goodEngine=(ctx,id)=>!!ctx.authenticated && ['ok','fresh','partial'].includes(ctx.enginesData?.[id]?.state);
@@ -225,7 +230,7 @@ function basicMarket(ctx){
  if(sub==='chart') body=candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true});
  else if(sub==='levels') body=levelsPanel(ctx,pair,active);
  else body=`<div class="nxp-market-price"><span>${esc(pair)}</span><h1>${active?money(t.price):'—'}
-   ${num(t.change24hPct)?`<small class="${moneyClass(t.change24hPct)}">${pct(t.change24hPct)}</small>`:''}</h1></div>
+   ${num(t.change24hPct)?`<small class="${moneyClass(t.change24hPct)}">${pct(t.change24hPct)}</small>`:num(t.change24h)?`<small class="nxp-missing">Δ ${signedUsd(t.change24h)}</small>`:''}</h1></div>
    ${candleSurface(ctx,{pair,title:'Evolución · 15m',compact:true})}
    ${active?`<div class="nxp-basic-market-indicators">
     ${block('RSI (14)',num(getInd(m,pair).rsi)?fmtNum(getInd(m,pair).rsi,{dec:1}):'—')}
@@ -242,6 +247,7 @@ function proMarket(ctx){
  const pair=ctx.ui?.marketPair||'BTC/USD',m=raw(ctx,'market'),t=getTicker(m,pair),ind=getInd(m,pair);
  const sub=ctx.ui?.marketSub||'price';
  const active=goodCommon(ctx,'market');
+ const c24=chg24(t);
  const head=`<div class="nxp-terminal-title"><div>${eyebrow('TRADING · ANÁLISIS')}<h1>Mercados</h1></div>${chip(active?'API conectada':'API pendiente',active?'good':'warn')}</div>
   ${marketPairBar(ctx)}`;
  const indicatorsPanel=`<div class="nxp-terminal-panel">${section('ANÁLISIS','Indicadores técnicos')}
@@ -280,7 +286,7 @@ function proMarket(ctx){
  else body=`<div class="nxp-market-terminal">
    <div class="nxp-main-column">
     <div class="nxp-quote"><div>${eyebrow(pair+' · PRECIO')}<strong>${active?money(t.price):'—'}</strong></div>
-    ${block('24h',active?pct(t.change24hPct):'—',moneyClass(active?t.change24hPct:null))}</div>
+    ${block('24h',active?c24.v:'—',active?c24.cls:'nxp-missing')}</div>
     ${candleSurface(ctx,{pair,title:'OHLCV · Velas 15m'})}
     ${indicatorsPanel}
    </div>

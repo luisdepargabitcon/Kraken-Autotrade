@@ -22,32 +22,37 @@ export const SECTION_TABS = {
   engines: [['general', 'General'], ['idca', 'IDCA'], ['spot', 'SPOT'], ['grid', 'GRID'], ['ama', 'AMA']],
   portfolio: [['summary', 'Resumen'], ['balances', 'Saldos'], ['assets', 'Activos'],
     ['ledger', 'Movimientos'], ['reservations', 'Reservas'], ['audit', 'Conciliación']],
-  activity: [['recent', 'Recientes'], ['executed', 'Ejecuciones'], ['decision', 'Decisiones'], ['notices', 'Avisos']],
+  activity: [['recent', 'Recientes'], ['executed', 'Ejecuciones'], ['decision', 'Decisiones'],
+    ['rejected', 'Rechazadas'], ['error', 'Errores'], ['notices', 'Avisos']],
 };
 
 // En Básico se ocultan estas subpestañas (Indicadores, Conciliación, Reservas;
 // Órdenes se filtra a nivel de motor, no por id de sección).
 const BASIC_HIDDEN = new Set(['indicators', 'reservations', 'audit']);
-export const ACTIVITY_CAT = { recent: 'all', executed: 'executed', decision: 'decision', notices: 'technical' };
+export const ACTIVITY_CAT = { recent: 'all', executed: 'executed', decision: 'decision',
+  rejected: 'rejected', error: 'error', notices: 'technical' };
 
 export function sectionTabs(section, mode) {
   const tabs = SECTION_TABS[section] || [];
   return mode === 'pro' ? tabs : tabs.filter(([id]) => !BASIC_HIDDEN.has(id));
 }
 
-// Secciones internas de un motor a partir de los path reales de STREAM
-// (scoped-pages). Estado=panel siempre; Posiciones=cycles|positions;
-// Historial=history|trades y, si el motor solo expone un log de eventos/
-// decisiones, ese log; Órdenes solo existe en Pro y donde el bot la entrega.
+// Secciones internas de un motor = TODOS los path reales de STREAM, para que la
+// barra inferior cubra la misma navegación que antes ofrecía la tira interior
+// de scoped-pages (que se elimina por redundante). Órdenes solo existe en Pro.
+// Etiquetas cortas para la barra; el contenido conserva el título completo.
+const ENGINE_TAB_LABEL = {
+  cycles: 'Ciclos', positions: 'Posiciones', history: 'Historial',
+  orders: 'Órdenes', events: 'Eventos', trades: 'Historial',
+  'trace.decisions': 'Decisiones', tranches: 'Tramos',
+};
 export function engineTabs(engineId, mode) {
   const paths = STREAM.filter(([e]) => e === engineId).map(([, p]) => p);
   const tabs = [['panel', 'Estado']];
-  const pos = paths.find(p => p === 'cycles' || p === 'positions');
-  if (pos) tabs.push([pos, 'Posiciones']);
-  const hist = paths.find(p => p === 'history' || p === 'trades')
-    || paths.find(p => p === 'events' || p === 'trace.decisions');
-  if (hist) tabs.push([hist, 'Historial']);
-  if (mode === 'pro' && paths.includes('orders')) tabs.push(['orders', 'Órdenes']);
+  for (const p of paths) {
+    if (p === 'orders' && mode !== 'pro') continue;
+    tabs.push([p, ENGINE_TAB_LABEL[p] || p]);
+  }
   return tabs;
 }
 

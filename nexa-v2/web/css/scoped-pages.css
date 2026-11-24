@@ -4,7 +4,11 @@
 .nxs-heading>span{display:block;color:#97bce4;font-size:11px;font-weight:800;letter-spacing:.11em}
 .nxs-heading h1{margin:6px 0;font-size:clamp(24px,6vw,34px);line-height:1.15}
 .nxs-heading p,.nxs-foot{margin:0;color:#a9bfd8;font-size:13px;line-height:1.5}
-.nxs-mode-tabs,.nxs-tabs,.nxs-filters{display:flex;gap:8px;overflow-x:auto;scrollbar-width:thin;padding:3px 0 9px;white-space:nowrap}
+.nxs-mode-tabs,.nxs-tabs,.nxs-filters{display:flex;gap:8px;padding:3px 0 9px}
+.nxs-mode-tabs,.nxs-tabs{overflow-x:auto;scrollbar-width:thin;white-space:nowrap}
+/* Los filtros de Actividad envuelven en varias líneas: nada queda oculto tras
+   scroll horizontal en pantallas de 360 px. */
+.nxs-filters{flex-wrap:wrap}
 .nxs-mode-tabs button,.nxs-tabs button,.nxs-filters button{flex:0 0 auto;min-height:42px;padding:9px 14px;border:1px solid #355579;border-radius:11px;background:#152a43;color:#bfd4ed;font-weight:700}
 .nxs-mode-tabs button.on,.nxs-tabs button.on,.nxs-filters button.on{background:#245992;border-color:#5c9cde;color:white}
 .nxs-engine-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}

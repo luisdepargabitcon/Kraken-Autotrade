@@ -76,9 +76,9 @@ test('las secciones internas del motor derivan de los path reales de STREAM', ()
   // expone aún el dato → la vista lo declara como fuente ausente, no «0 órdenes».
   assert.deepEqual(engineTabs('spot', 'pro').map(([id]) => id), ['panel', 'positions', 'trades', 'orders']);
   assert.deepEqual(engineTabs('spot', 'basic').map(([id]) => id), ['panel', 'positions', 'trades']);
-  assert.deepEqual(engineTabs('idca', 'pro').map(([id]) => id), ['panel', 'cycles', 'history', 'orders']);
+  assert.deepEqual(engineTabs('idca', 'pro').map(([id]) => id), ['panel', 'cycles', 'history', 'orders', 'events']);
   assert.deepEqual(engineTabs('grid', 'pro').map(([id]) => id), ['panel', 'cycles', 'events']);
-  assert.deepEqual(engineTabs('ama', 'pro').map(([id]) => id), ['panel', 'cycles', 'trace.decisions']);
+  assert.deepEqual(engineTabs('ama', 'pro').map(([id]) => id), ['panel', 'cycles', 'tranches', 'trace.decisions']);
   // AMA no tiene 'positions' ni 'orders' → no se inventan pestañas vacías.
   assert.ok(!engineTabs('ama', 'pro').some(([id]) => id === 'orders'));
 });
@@ -97,6 +97,8 @@ test('las subpestañas de Actividad mapean a activityFilter.cat', () => {
   assert.equal(ACTIVITY_CAT.recent, 'all');
   assert.equal(ACTIVITY_CAT.executed, 'executed');
   assert.equal(ACTIVITY_CAT.decision, 'decision');
+  assert.equal(ACTIVITY_CAT.rejected, 'rejected');
+  assert.equal(ACTIVITY_CAT.error, 'error');
   assert.equal(ACTIVITY_CAT.notices, 'technical');
   assert.deepEqual(navView({ depth: 1, section: 'activity', sub: 'notices', inner: null }),
     { screen: 'activity', ui: { activityCat: 'technical' } });

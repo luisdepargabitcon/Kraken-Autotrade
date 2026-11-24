@@ -1,5 +1,5 @@
 // NEXA: scope-aware motor and activity views. No REAL records inside SHADOW.
-import {esc,fmtUsd,fmtTs,signedUsd} from './util.js';
+import {esc,fmtUsd,fmtNum,fmtTs,signedUsd} from './util.js';
 import {classifyMode,inScope,scopeTitle,SCOPE_SHADOW} from './display-scope.js';
 import {eventCategory,describeEvent,eventCode,dedupeEvents,translateCode} from './event-labels.js';
 const n=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&v.trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
@@ -95,6 +95,8 @@ function facts(ctx,id){
 function marketStatus(ctx,id){
  const d=meta(ctx,id).data||{};
  const contexts=d.pairContexts||{};
+ const isPro=ctx.mode==='pro';
+ const tr=v=>{const t=translateCode(v);return t===null?null:(isPro&&v&&t!==v?t+' <code class="nxs-code">'+esc(String(v))+'</code>':esc(t));};
  return '<section class="nxs-group"><h2>Qué está esperando el bot</h2>'+Object.entries(contexts).map(([pair,c])=>{
   const cycles=chosen(ctx,id,'cycles').rows||[];
   const open=cycles.filter(x=>x.row.pair===pair);
@@ -102,19 +104,27 @@ function marketStatus(ctx,id){
   const cur=n(c.currentPrice),tgtN=n(target);
   const dist=Number.isFinite(cur)&&cur>0&&Number.isFinite(tgtN)&&tgtN>0?(((tgtN-cur)/cur)*100):null;
   const tb=c.trailingBuy&&typeof c.trailingBuy==='object'?c.trailingBuy:null;
-  const isPro=ctx.mode==='pro';
-  const tr=v=>{const t=translateCode(v);return t===null?null:(isPro&&v&&t!==v?t+' <code class="nxs-code">'+esc(String(v))+'</code>':esc(t));};
   const fact=(l,v)=>v===null||v===undefined||v===''?'' :'<div><small>'+l+'</small><strong>'+v+'</strong></div>';
   const blockers=(c.hardBlockers||[]).map(x=>translateCode(x)).join(', ');
-  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p>'+(c.hardBlocked?'Entrada bloqueada: '+esc(blockers||'condiciones del mercado'):tr(c.reboundSignal)||'Esperando confirmación de entrada.')+'</p>'+
-   '<div class="nxs-engine-facts"><div><small>Precio actual</small><strong>'+amount(cur)+'</strong></div><div><small>Referencia (ancla)</small><strong>'+amount(c.referencePrice)+(c.reference?' · '+esc(String(c.reference)):'')+'</strong></div>'+
-   fact('Precio de activación',target?amount(tgtN):null)+
-   fact('Distancia a activación',dist===null?null:(dist>0?'+':'')+dist.toFixed(2)+' %')+
-   fact('Caída desde referencia',n(c.dipDetectedPct)===null?null:n(c.dipDetectedPct).toFixed(2)+' %')+
-   fact('Caída requerida',n(c.requiredDipPct)===null?null:n(c.requiredDipPct).toFixed(2)+' %')+
-   fact('Confirmación (trailing)',tr(tb?.state??c.reboundSignal))+
-   fact('Decisión',tr(c.entryDecision))+
-   fact('Régimen',tr(c.regime))+
+  const dec=tr(c.entryDecision),reb=tr(c.reboundSignal),reg=tr(c.regime),conf=tr(tb?.state??c.reboundSignal);
+  // Una sola línea de decisión primero; los datos de contexto quedan compactos.
+  const lead=c.hardBlocked
+   ?'Entrada bloqueada'+(blockers?' por '+blockers:'')+'.'
+   :dec?'Decisión del bot: '+dec+'.'
+   :reb?reb+'.'
+   :'El bot sigue evaluando la entrada; todavía no ha decidido comprar.';
+  const dip=n(c.dipDetectedPct),req=n(c.requiredDipPct);
+  const dipTxt=dip===null?null:fmtNum(dip,{dec:2})+' %'+(req===null?'':' (exigida '+fmtNum(req,{dec:2})+' %)');
+  const actTxt=target?amount(tgtN)+(dist===null?'':' · '+(dist>0?'+':'')+fmtNum(Math.abs(dist),{dec:2})+' %')
+   :(dist===null?null:(dist>0?'+':'')+fmtNum(Math.abs(dist),{dec:2})+' %');
+  return '<article class="nxs-record"><h3>'+esc(pair)+'</h3><p><b>Qué decide ahora:</b> '+lead+'</p>'+
+   '<div class="nxs-engine-facts">'+
+   fact('Precio actual',amount(cur))+
+   fact('Referencia (ancla)',amount(c.referencePrice)+(c.reference?' · '+esc(String(c.reference)):''))+
+   fact('Activación / distancia',actTxt)+
+   fact('Caída desde referencia',dipTxt)+
+   fact('Confirmación (trailing)',conf)+
+   fact('Régimen',reg)+
    fact('Score',n(c.entryScore)===null?null:n(c.entryScore).toFixed(1)+(c.confidenceGrade?' · '+esc(String(c.confidenceGrade)):''))+'</div>'+
    open.map(x=>'<p>Objetivo de venta del ciclo #'+text(x.row.id)+': '+amount(first(x.row,'tpTargetPrice','sellTarget'))+'</p>').join('')+
    '<small>Los precios son referencias del bot; la ejecución depende de sus condiciones y protecciones.</small></article>';
@@ -139,11 +149,7 @@ export function renderScopedEngine(ctx){
  '<p>Estado y actividad del modo en el entorno seleccionado.</p></div>'+
  '<nav class="nxs-mode-tabs" aria-label="Elegir modo">'+Object.entries(engines).map(([key,label])=>
  '<button data-nav="engine:'+key+'" class="'+(id===key?'on':'')+'" aria-current="'+(id===key?'page':'false')+'">'+esc(key.toUpperCase())+'</button>').join('')+'</nav>'+
- facts(ctx,id)+
- '<nav class="nxs-tabs" aria-label="Secciones del motor">'+
- '<button data-ui="subtab:panel" class="'+(active==='panel'?'on':'')+'">Panel</button>'+
- sections.filter(x=>!basic||basicAllowed(x)).map(x=>'<button data-ui="subtab:'+esc(x.path)+'" class="'+(active===x.path?'on':'')+'">'+esc(x.label)+'</button>').join('')+
- '</nav>';
+ facts(ctx,id);
  if(info.state!=='ok'&&info.state!=='partial')html+='<p class="nxs-warning">El motor no está disponible desde la API. No se genera un estado ficticio.</p>';
  if(active==='panel')html+=marketStatus(ctx,id);
  let globalUnknown=0,total=0;
@@ -177,23 +183,63 @@ export function renderScopedEngine(ctx){
  html+='<p class="nxs-foot">No se contabilizan como cero los endpoints que fallen. Se conserva la identidad del motor, el ID y la API original en cada ficha.</p></div>';
  return html;
 }
+// Fuentes de actividad por motor, además del feed de notificaciones. Los
+// trades de /trades/closed son GLOBALES (el backend no atribuye motor): se
+// etiquetan 'common' y nunca se presentan como SPOT.
+const ACTIVITY_PATHS={
+  idca:[['events','events']],
+  grid:[['events','events'],['monitor.events','monitor.events'],['monitor.alerts','monitor.alerts']],
+  ama:[['trace.decisions','trace.decisions'],['trace.events','trace.events']],
+};
+// Une feed + eventos reales de cada motor. Cada fila conserva `_ref`, la ruta
+// exacta (motor:path:índice) que resuelve el inspector sin inventar datos.
+// Deduplica por motor+id+ts+texto para no repetir el mismo evento dos veces.
+export function collectActivity(ctx){
+  const rows=[],seen=new Set(),sources=[];
+  const feed=ctx.data?.activity?.data?.events;
+  const feedIsArray=Array.isArray(feed);
+  if(feedIsArray)sources.push('notifications');
+  const push=(e,engine,ref)=>{
+    if(!e||typeof e!=='object')return;
+    // La fuente conocida (motor dueño del endpoint) manda sobre una etiqueta
+    // `engine` ambigua del payload: el fallback de modo se resuelve por motor.
+    const eng=engine||e.engine||'common';
+    const key=String(eng)+'|'+String(e.id??'')+'|'+String(e.ts??e.executedAt??'')+'|'+String(e.msg??e.message??e.text??e.type??'');
+    if(seen.has(key))return;seen.add(key);
+    rows.push({e:{...e,engine:eng},ref});
+  };
+  if(feedIsArray)feed.forEach((e,i)=>push(e,null,'common:events:'+i));
+  for(const id of Object.keys(ACTIVITY_PATHS)){
+    const d=meta(ctx,id).data||{};
+    for(const [path,inspectPath] of ACTIVITY_PATHS[id]){
+      const arr=getPath(d,path);
+      if(Array.isArray(arr)){sources.push(id+':'+path);arr.forEach((e,i)=>push(e,id,id+':'+inspectPath+':'+i));}
+    }
+  }
+  // Los trades de /trades/closed NO entran aquí: son globales y sin modo
+  // identificado siempre caerían en «desconocidos». Ya se consultan en la
+  // sección «Historial global (origen no atribuido)» del motor SPOT.
+  rows.sort((a,b)=>new Date(b.e.ts||b.e.executedAt||0)-new Date(a.e.ts||a.e.executedAt||0));
+  return {rows,sources};
+}
 export function renderScopedActivity(ctx){
- const all=ctx.data?.activity?.data?.events;
  const scope=ctx.viewScope||'real',f=ctx.ui?.activityFilter||{};
- const visible=Array.isArray(all)?all.map((e,i)=>({e,i})).filter(x=>inScope(x.e,scope))
+ const {rows,sources}=collectActivity(ctx);
+ const fb=e=>modeFallback(ctx,String(e.engine||''));
+ const visible=sources.length?rows.filter(x=>inScope(x.e,scope,fb(x.e)))
    .filter(x=>(f.engine==='all'||!f.engine||String(x.e.engine||'')===f.engine)&&
     (f.sev==='all'||!f.sev||String(x.e.severity||x.e.level||'')===f.sev)&&
     (f.cat==='all'||!f.cat||eventCategory(x.e).id===f.cat)):null;
- const unknown=Array.isArray(all)?all.filter(x=>classifyMode(x)==='unknown').length:null;
+ const unknown=sources.length?rows.filter(x=>classifyMode(x.e,fb(x.e))==='unknown').length:null;
  return '<div class="nxs-root"><div class="nxs-heading"><span>'+esc(scopeTitle(scope))+' · ACTIVIDAD</span>'+
  '<h1>Movimientos del bot</h1><p>Solo eventos identificados de este entorno. Los eventos de modo desconocido se excluyen de ambos modos.</p></div>'+
- '<div class="nxs-filters"><button data-ui="eng:all">Todos</button>'+['idca','spot','grid','ama'].map(x=>
+ '<div class="nxs-filters"><button data-ui="eng:all">Todos</button>'+['idca','spot','grid','ama','common'].map(x=>
  '<button data-ui="eng:'+x+'">'+x.toUpperCase()+'</button>').join('')+'</div>'+
- '<div class="nxs-filters"><button data-ui="cat:all">Todas</button>'+[['executed','Ejecutadas'],['rejected','Rechazadas'],['decision','Decisiones'],['technical','Eventos'],['error','Errores']].map(([k,l])=>
- '<button data-ui="cat:'+k+'" class="'+(f.cat===k?'on':'')+'">'+l+'</button>').join('')+'</div>'+
- (visible?dedupeEvents(visible.map(x=>({...x.e,_sourceIndex:x.i}))).slice(0,100).map(e=>recordCard(String(e.engine||'common'),'events',e,e._sourceIndex,ctx)
-    .replace('data-inspect="'+esc(String(e.engine||'common')+':events:'+e._sourceIndex)+'"',
-      'data-inspect="common:events:'+e._sourceIndex+'"')).join('')||
+ (visible?dedupeEvents(visible.map(x=>({...x.e,_ref:x.ref}))).slice(0,100).map(e=>{
+   const fake=esc(String(e.engine||'common')+':events:0');
+   return recordCard(String(e.engine||'common'),'events',e,0,ctx)
+    .replace('data-inspect="'+fake+'"','data-inspect="'+esc(e._ref)+'"');
+  }).join('')||
   '<p class="nxs-empty">Sin eventos verificados de este entorno en la lectura actual.</p>':
  '<p class="nxs-empty">La API no devuelve el historial de eventos. No significa que no existan.</p>')+
  (unknown?'<p class="nxs-warning">'+unknown+' eventos no tienen modo operativo identificable; no se han atribuido a REAL ni SHADOW.</p>':'')+'</div>';

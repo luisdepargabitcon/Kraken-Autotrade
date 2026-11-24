@@ -56,8 +56,12 @@ export function collectPositions(ctx){
 
 function market(ctx,pair){
  const snap=ctx.data?.marketPairs?.[pair]||ctx.data?.market;
- const m=snap?.data||{},valid=snap?.state==='ok'&&ctx.authenticated;
- return {m,valid,price:valid?val(m,'price','lastPrice'):null,change:valid?val(m,'change24hPct','pct24h'):null,
+ const m=snap?.data||{},valid=['ok','partial'].includes(snap?.state)&&ctx.authenticated;
+ // 'partial' = ticker sin velas: el precio sí es real. change24h absoluto NO
+ // es porcentaje; solo se muestra como Δ en USD cuando no hay % confirmado.
+ return {m,valid,price:valid?val(m,'price','lastPrice'):null,
+  change:valid?val(m,'change24hPct','pct24h'):null,
+  changeAbs:valid?val(m,'change24h'):null,
   indicators:valid?m.indicators||{}:{},state:snap?.state||'unavailable'};
 }
 function candles(ctx,pair){
@@ -80,10 +84,12 @@ function sparkline(ctx,pair){
 }
 function marketTile(ctx,pair){
  const q=market(ctx,pair),tone=n(q.change)===null?'':q.change<0?'negative':'positive';
+ const chg=q.change!=null?percent(q.change)
+  :n(q.changeAbs)!==null?signedUsd(q.changeAbs):'—';
  return '<button type="button" data-asset="'+pair+'" class="nxh-market-tile '+tone+'"><span><b>'+pair.slice(0,3)+'</b>'+
  '<small>'+out(q.valid?'API · '+(q.m.provider||'mercado'):'Cotización no verificada')+'</small></span>'+
  '<strong>'+usd(q.price)+'</strong>'+sparkline(ctx,pair)+
- '<span class="nxh-market-foot"><b>'+percent(q.change)+'</b><em>Indicadores y operaciones ↗</em></span></button>';
+ '<span class="nxh-market-foot"><b>'+chg+'</b><em>'+(q.change!=null?'Indicadores y operaciones ↗':'Δ 24h absoluto · indicadores ↗')+'</em></span></button>';
 }
 function positionRow(x){
  const tone=n(x.gain)===null?'unknown':n(x.gain)<0?'negative':'positive';
@@ -113,7 +119,9 @@ export function renderDashboard(ctx){
   valueExchangeBalances(portfolio.exchangeBalances,portfolio.prices).totalUsd:null;
  const nav=null; // resumen presupuestario interno sin partición: jamás sumarlo
  const corr=pearson(ctx);
- const events=(ctx.data?.activity?.data?.events||[]).filter(e=>inScope(e,ctx.viewScope||'real'));
+ const evFb=e=>{const d=ctx.enginesData?.[e?.engine]?.data||{};
+  return d.status?.mode||d.status?.executionMode||d.summary?.mode||d.summary?.executionMode||null;};
+ const events=(ctx.data?.activity?.data?.events||[]).filter(e=>inScope(e,ctx.viewScope||'real',evFb(e)));
  const verifiedPortfolio=false; // no hay PnL global confirmado por entorno, no mezclar
  const proExtras=ctx.mode==='pro'?
   section('RIESGO Y CONTABILIDAD','Lectura profesional')+

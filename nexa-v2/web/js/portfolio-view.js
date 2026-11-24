@@ -163,17 +163,13 @@ function balancesScreen(ctx,shadow){
 }
 export function renderPortfolioView(ctx){
  const p=portfolioData(ctx),shadow=ctx.viewScope===SCOPE_SHADOW,tab=ctx.mode==='basic'&&!['summary','balances','assets','ledger'].includes(ctx.ui?.portfolioTab)?'summary':ctx.ui?.portfolioTab||'summary';
- const allTabs=[['summary','Resumen'],['balances','Saldos'],['assets','Activos'],['ledger','Movimientos'],['reservations','Reservas'],['audit','Conciliación']];
- // Básico oculta Reservas y Conciliación (contabilidad interna y fiscalidad),
- // pero conserva Activos y Movimientos igual que el prototipo de controles.
- const tabs=ctx.mode==='basic'?allTabs.filter(([key])=>!['reservations','audit'].includes(key)):allTabs;
  const internal=p.summary||{},holds=p.holdings,ledger=p.ledger,reservations=p.reservations;
  const source=p.resourceStates||{};
+ // Las secciones se navegan desde la barra inferior (portfolio depth1); la
+ // tira interior duplicaba esa navegación y se retira.
  const top='<div class="nxw-title"><span>'+(shadow?'SHADOW / SIMULACIÓN':'CARTERA / REAL')+'</span>'+
  '<h1>Mi cartera</h1><p>'+scopeSubtitle(ctx.viewScope)+'</p></div>'+
- (shadow?summaryShadow(ctx):summaryReal(ctx))+
- '<nav class="nxw-tabs" aria-label="Secciones de cartera">'+tabs.map(([k,t])=>
- '<button data-ui="portfolioTab:'+k+'" aria-current="'+(tab===k?'page':'false')+'" class="'+(tab===k?'on':'')+'">'+t+'</button>').join('')+'</nav>';
+ (shadow?summaryShadow(ctx):summaryReal(ctx));
  let body='';
  if(tab==='balances')body=balancesScreen(ctx,shadow);
  else if(tab==='assets')body=shadow?

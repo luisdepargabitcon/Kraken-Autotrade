@@ -69,7 +69,7 @@ function context(scope){
  annualReport:{year:2026,is_safe_for_report:false,critical_errors_count:1,section_a:{ganancias_eur:200}},
  finalizationStatus:{report_can_be_finalized:false,blockers:[{code:'TEST',detail:'Fuente sin conciliar'}]}} },
  activity:{data:{events:[{engine:'idca',mode:'live',msg:'Real'},{engine:'idca',mode:'shadow',msg:'Virtual'},
- {engine:'idca',msg:'Sin modo'}]}}}};
+ {engine:'idca',type:'buy_filled',msg:'Sin modo'},{msg:'Sin motor ni modo'}]}}}};
 }
 test('Cartera SHADOW usa wallet virtual, nunca saldos del exchange',()=>{
  const real=renderPortfolioView(context('real'));
@@ -91,6 +91,9 @@ test('FISCO oculta completamente fiscalidad real dentro de SHADOW',()=>{
 test('Actividad filtrada a modo específico, sin atribuir eventos desconocidos',()=>{
  const real=renderScopedActivity(context('real')),shadow=renderScopedActivity(context('shadow'));
  assert.match(real,/Real/);assert.doesNotMatch(real,/Virtual/);
+ // Un evento etiquetado con su motor hereda el modo verificado de ese motor:
+ // es la ficha common:events:2 (el feed conserva el índice original).
+ assert.match(real,/common:events:2/);assert.doesNotMatch(shadow,/common:events:2/);
  assert.match(shadow,/Virtual/);assert.doesNotMatch(shadow,/>Real</);
  assert.match(shadow,/1 eventos no tienen modo/);
 });

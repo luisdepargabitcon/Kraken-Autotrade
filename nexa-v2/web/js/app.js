@@ -144,12 +144,26 @@ async function loadData(){
   }else if(sd.resourceStates?.trades!=='ok'){
     state.spotExtraTrades=[];state.spotPageOffset=100;
   }
-  // Actividad global = feed de notificaciones + eventos reales de cada motor, sin duplicados.
+  // Actividad global = feed de notificaciones + eventos reales de cada motor,
+  // sin duplicados. Los trades de /trades/closed son globales: engine 'common'.
   const feed=[...(activity.events?.data??[])];
   const seen=new Set(feed.map(e=>`${e.engine||'bot'}:${e.id??e.ts}`));
-  const push=(arr,engine)=>{for(const e of arr||[]){const k=`${engine}:${e.id??e.ts??e.msg}`;if(!seen.has(k)){seen.add(k);feed.push({...e,engine:e.engine||engine});}}};
+  const engMode=id=>{const d=state.enginesData?.[id]?.data||{};
+    return d.status?.mode||d.status?.executionMode||d.summary?.mode||d.summary?.executionMode||null;};
+  const push=(arr,engine)=>{for(const e of arr||[]){const k=`${engine}:${e.id??e.ts??e.msg}`;if(!seen.has(k)){
+    seen.add(k);
+    const mode=e.mode??e.executionMode??engMode(engine);
+    feed.push({...e,engine:engine||e.engine,...(mode?{mode}:{})});}}};
   const gd=state.enginesData.grid.data,ad=state.enginesData.ama.data,id=state.enginesData.idca.data;
-  push(gd?.events,'grid');push(ad?.trace?.decisions,'ama');push(id?.events,'idca');
+  push(gd?.events,'grid');push(gd?.monitor?.events,'grid');push(gd?.monitor?.alerts,'grid');
+  push(ad?.trace?.decisions,'ama');push(ad?.trace?.events,'ama');push(id?.events,'idca');
+  // Los trades de /trades/closed son globales y sin modo: no se mezclan en el
+  // feed (caerían como «desconocidos»); siguen en la sección Historial SPOT.
+  // Eventos del feed (notificaciones) sin modo propio heredan el de su motor
+  // cuando el backend no lo etiqueta: así el filtro REAL/SHADOW no los pierde.
+  for(const e of feed){
+    if(e.mode==null&&e.executionMode==null){const m=engMode(e.engine);if(m)e.mode=m;}
+  }
   feed.sort((a,b)=>new Date(b.ts||0)-new Date(a.ts||0));
   const marketPairs={
     'BTC/USD':{state:btcMarket.state,data:btcMarket.market?.data??null},
@@ -768,10 +782,14 @@ document.addEventListener('click', e=>{
     else if(k==='eng') state.ui.activityFilter.engine=v;
     else if(k==='cat'){ state.ui.activityFilter.cat=v;
       if(state.nav.depth===1&&state.nav.section==='activity'){
-        const inv={all:'recent',executed:'executed',decision:'decision',technical:'notices'};
+        const inv={all:'recent',executed:'executed',decision:'decision',rejected:'rejected',error:'error',technical:'notices'};
         if(inv[v]&&state.nav.sub!==inv[v]){state.nav.sub=inv[v];pushNav();}
       } }
-    render(); return;
+    render();
+    // Cambios de sección (subpestaña de motor, pestaña de cartera/fiscal) son
+    // navegación: vuelven arriba para que el título de la sección sea visible.
+    if(k==='subtab'||k==='portfolioTab'||k==='fiscoTab')window.scrollTo?.(0,0);
+    return;
   }
   const act = e.target.closest('[data-action]');
   if(act){
@@ -796,8 +814,8 @@ document.addEventListener('keydown', e=>{
 });
 // Modo Básico/Pro = preferencia persistente: NO crea entrada de historial; solo
 // se re-sella la entrada actual por si sanitizeNav cambió la ruta (p. ej. Órdenes).
-$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); state.nav=sanitizeNav(state.nav,'basic'); stampCurrent(); render(); });
-$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); state.nav=sanitizeNav(state.nav,'pro'); stampCurrent(); render(); });
+$('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); state.nav=sanitizeNav(state.nav,'basic'); stampCurrent(); render(); window.scrollTo?.(0,0); });
+$('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); state.nav=sanitizeNav(state.nav,'pro'); stampCurrent(); render(); window.scrollTo?.(0,0); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
 $('back').addEventListener('click', backOne);

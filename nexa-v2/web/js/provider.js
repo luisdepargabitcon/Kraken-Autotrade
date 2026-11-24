@@ -11,6 +11,13 @@ import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder, no
 import { computeIndicators } from './market-candles.js';
 import { freshness } from './util.js';
 
+// num() es privado de adapters.js; entryContexts lo necesita aquí. Sin esta
+// definición el ReferenceError rompía idca() → loadData() → TODA la app vacía.
+const num = v => {
+  const n = typeof v==='string' && v.trim()!=='' ? Number(v) : v;
+  return (typeof n==='number' && Number.isFinite(n)) ? n : null;
+};
+
 function pathOf(route){
   // 'GET /institutional-dca/summary' -> '/institutional-dca/summary'
   return '/' + route.split(' ')[1].replace(/^\/+/,'');
@@ -50,7 +57,7 @@ async function readEntryDiagnostics(){
  }).finally(()=>{entryFlight=null;});
  return entryFlight;
 }
-function entryContexts(raw){
+export function entryContexts(raw){
  const pairs=raw?.pairs;
  if(!pairs||typeof pairs!=='object'||Array.isArray(pairs))return null;
  return Object.fromEntries(Object.entries(pairs).map(([pair,x])=>{
@@ -66,7 +73,9 @@ function entryContexts(raw){
     requiredDipPct:num(x.requiredDistancePct),
     reference:x.referenceMethod??null,referencePrice:num(x.referencePrice),
     reboundSignal:tb.state??null,trailingBuy:tb,
-    entryDecision:x.decisionClass??null,
+    // La decisión puede llegar como decisionClass u otro campo según versión
+    // del backend; nunca se inventa una decisión que el payload no traiga.
+    entryDecision:x.decisionClass??x.entryDecision??x.decision??x.action??null,
     scoreBreakdown:x.familyScores||null,
     hardBlocked:x.hardBlocked===true,
     hardBlockers:Array.isArray(x.hardBlockers)?x.hardBlockers:[],
