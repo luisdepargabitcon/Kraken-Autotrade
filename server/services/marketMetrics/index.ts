@@ -4,6 +4,8 @@
 
 export { marketMetricsService } from "./MarketMetricsService";
 export { marketMetricsEngine } from "./MarketMetricsEngine";
+export { evaluateMarketMetricsAdvisory } from "./marketMetricsAdvisory";
+export { analyzeMarketMetricsAchievability } from "./marketMetricsAlcanzabilidad";
 export type {
   MarketMetricsDecision,
   MetricsEvalContext,
@@ -12,5 +14,7 @@ export type {
   MetricsMode,
   RiskLevel,
   Bias,
+  MarketMetricsDecisionStatus,
+  MarketMetricDataQuality,
 } from "./MarketMetricsTypes";
 export { DEFAULT_METRICS_CONFIG, makePassthroughDecision } from "./MarketMetricsTypes";
