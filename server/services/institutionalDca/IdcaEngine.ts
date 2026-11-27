@@ -50,6 +50,7 @@ import type {
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
 import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
+import { resolveIdcaEntryPolicy } from "./IdcaEntryPolicy";
 import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
@@ -533,15 +534,78 @@ function getDynamicTpConfig(config: InstitutionalDcaConfigRow): DynamicTpConfig 
   return { ...DEFAULT_DYNAMIC_TP_CONFIG, ...raw };
 }
 
-function getReboundStrength(pair: string): "none" | "weak" | "strong" {
+const REBOUND_CANDLE_TIMEFRAME_MS = 60 * 60 * 1000;
+
+function selectReboundCandles(
+  candles: TimestampedCandle[],
+  variant: "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined",
+  nowMs: number = Date.now(),
+): OhlcCandle[] {
+  const causalCandles = variant === "legacy"
+    ? candles
+    : candles.filter(candle => candle.time + REBOUND_CANDLE_TIMEFRAME_MS <= nowMs);
+  return causalCandles.slice(-5).map(candle => ({
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  }));
+}
+
+function resolveEngineReboundVariant(
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined" {
+  return resolveIdcaEntryPolicy(config, mode).reboundVariant;
+}
+
+interface EngineReboundEvaluationInput {
+  pair: string;
+  currentPrice: number;
+  config: InstitutionalDcaConfigRow;
+  mode: IdcaMode;
+  reboundMinPct?: number;
+  includeCurrentPriceInLocalLow?: boolean;
+  nowMs?: number;
+}
+
+function evaluateEngineRebound(input: EngineReboundEvaluationInput): {
+  variant: "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined";
+  result: smart.ReboundDetailedResult;
+} {
+  const variant = resolveEngineReboundVariant(input.config, input.mode);
+  const candles = ohlcCache.get(input.pair) || [];
+  const recentCandles = selectReboundCandles(candles, variant, input.nowMs);
+  const candleLows = recentCandles.map(candle => candle.low);
+  const localLow = Math.min(
+    ...candleLows,
+    ...(input.includeCurrentPriceInLocalLow || candleLows.length === 0 ? [input.currentPrice] : []),
+  );
+  return {
+    variant,
+    result: smart.detectReboundDetailed({
+      recentCandles,
+      currentPrice: input.currentPrice,
+      localLow,
+      reboundMinPct: input.reboundMinPct,
+    }, variant),
+  };
+}
+
+function getReboundStrength(
+  pair: string,
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "none" | "weak" | "strong" {
   const candles = ohlcCache.get(pair) || [];
   if (candles.length < 3) return "none";
-  const recentCandles = candles.slice(-5);
-  const localLow = Math.min(...recentCandles.map(c => c.low));
-  const currentPrice = priceCache.get(pair) || recentCandles[recentCandles.length - 1]?.close || 0;
-  const isRebound = smart.detectRebound({ recentCandles, currentPrice, localLow });
-  if (!isRebound) return "none";
-  const bounceFromLow = currentPrice > 0 ? ((currentPrice - localLow) / localLow) * 100 : 0;
+  const recentForPrice = candles.slice(-5);
+  const currentPrice = priceCache.get(pair) || recentForPrice[recentForPrice.length - 1]?.close || 0;
+  const evaluation = evaluateEngineRebound({ pair, currentPrice, config, mode });
+  if (!evaluation.result.confirmed) return "none";
+  const selectedLows = selectReboundCandles(candles, evaluation.variant).map(candle => candle.low);
+  const localLow = selectedLows.length > 0 ? Math.min(...selectedLows) : currentPrice;
+  const bounceFromLow = currentPrice > 0 && localLow > 0 ? ((currentPrice - localLow) / localLow) * 100 : 0;
   return bounceFromLow > 1.5 ? "strong" : "weak";
 }
 
@@ -2260,7 +2324,7 @@ async function checkEntry(
       buyCount: 1,
       marketScore: check.marketScore || 50,
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -3073,15 +3137,16 @@ async function checkSafetyBuy(
   // Price has reached the next safety buy level
   // Check rebound if required
   if (assetConfig.requireReboundConfirmation) {
-    const candles = ohlcCache.get(pair) || [];
-    const recentCandles = candles.slice(-5).map(c => ({
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-    const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
     const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
-    if (!smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin })) {
+    const evaluation = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      reboundMinPct: reboundMin,
+      includeCurrentPriceInLocalLow: true,
+    });
+    if (!evaluation.result.confirmed) {
       return; // No rebound confirmed yet
     }
   }
@@ -3267,7 +3332,7 @@ async function checkSafetyBuy(
       buyCount: newBuyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -4633,13 +4698,14 @@ async function performEntryCheck(
   // Rebound confirmation
   let reboundConfirmed = true;
   if (assetConfig.requireReboundConfirmation && entryDipPct >= minDip) {
-    const reboundCandles = ohlcCache.get(pair) || [];
-    const recentCandles = reboundCandles.slice(-5);
-    const localLow = recentCandles.length > 0
-      ? Math.min(...recentCandles.map(c => c.low))
-      : currentPrice;
     const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
-    reboundConfirmed = smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin });
+    reboundConfirmed = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      reboundMinPct: reboundMin,
+    }).result.confirmed;
     if (!reboundConfirmed) {
       blocks.push({ code: "no_rebound_confirmed", message: `Waiting for rebound confirmation (minBounce=${reboundMin}%)`, timestamp: now });
     }
@@ -4777,6 +4843,12 @@ async function performEntryCheck(
 
 
 export const performEntryCheckForTest = performEntryCheck;
+export const getReboundStrengthForTest = getReboundStrength;
+export const selectReboundCandlesForTest = selectReboundCandles;
+export const resolveEngineReboundVariantForTest = resolveEngineReboundVariant;
+export const evaluateEngineReboundForTest = evaluateEngineRebound;
+export const checkSafetyBuyForTest = checkSafetyBuy;
+export const checkRecoveryActivationForTest = checkRecoveryActivation;
 export const evaluatePairForTest = evaluatePair;
 export function __setIdcaOhlcCacheForTest(pair: string, candles: TimestampedCandle[]): void {
   ohlcCache.set(pair, candles);
@@ -5700,7 +5772,7 @@ async function checkPlusActivation(
 
   // 4) Rebound confirmation if required
   if (plusCfg.requireReboundConfirmation) {
-    const strength = getReboundStrength(pair);
+    const strength = getReboundStrength(pair, config, mode);
     if (strength === "none") return;
   }
 
@@ -5738,7 +5810,7 @@ async function checkPlusActivation(
       buyCount: 1,
       marketScore: parseFloat(String(mainCycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -6124,7 +6196,7 @@ async function checkPlusSafetyBuy(
       buyCount: newBuyCount,
       marketScore: parseFloat(String(plusCycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -6509,7 +6581,7 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
       buyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -6751,7 +6823,7 @@ export async function editImportedCycle(
       buyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -7038,12 +7110,14 @@ async function checkRecoveryActivation(
 
   // 4g) Rebound confirmation
   if (rcfg.requireReboundConfirmation) {
-    const candles = ohlcCache.get(pair) || [];
-    const recentCandles = candles.slice(-5).map(c => ({
-      high: c.high, low: c.low, close: c.close,
-    }));
-    const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
-    if (!smart.detectRebound({ recentCandles, currentPrice, localLow })) {
+    const evaluation = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      includeCurrentPriceInLocalLow: true,
+    });
+    if (!evaluation.result.confirmed) {
       blockReasons.push("no_rebound_confirmed");
     }
   }
