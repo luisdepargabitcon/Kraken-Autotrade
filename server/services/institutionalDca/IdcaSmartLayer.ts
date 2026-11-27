@@ -14,6 +14,7 @@ import type {
   SafetyOrderLevel,
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
+import { emaStrict as indicatorEmaStrict } from "../indicators/core";
 
 // ─── Market Score (0-100) ──────────────────────────────────────────
 
@@ -282,19 +283,8 @@ export function computeEmaStrict(
   values: number[],
   period: number,
   opts: { warmupFactor?: number } = {},
-): { available: true; series: number[]; warmup: number } | { available: false; reason: "insufficient_history"; have: number; need: number } {
-  const factor = opts.warmupFactor ?? EMA_WARMUP_FACTOR;
-  const need = period * factor;
-  const clean = values.filter(v => Number.isFinite(v));
-  if (clean.length < need) return { available: false, reason: "insufficient_history", have: clean.length, need };
-  const k = 2 / (period + 1);
-  const seed = clean.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  const series: number[] = new Array(period - 1).fill(NaN);
-  series.push(seed);
-  for (let i = period; i < clean.length; i++) {
-    series.push(clean[i] * k + series[i - 1] * (1 - k));
-  }
-  return { available: true, series, warmup: need };
+) {
+  return indicatorEmaStrict(values, period, opts);
 }
 
 // ─── RSI Calculation ───────────────────────────────────────────────
