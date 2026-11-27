@@ -57,6 +57,14 @@ class MarketMetricsService {
     ...(process.env.COINGLASS_API_KEY ? [coinGlassProvider] : [binanceFuturesProvider]),
   ];
 
+  private readonly diagnosticProviders: IMetricsProvider[] = [
+    deFiLlamaProvider,
+    coinMetricsProvider,
+    whaleAlertProvider,
+    binanceFuturesProvider,
+    coinGlassProvider,
+  ];
+
   // ---- Configuración (cargada desde bot_config o DEFAULT) ----
   async getConfig(): Promise<MarketMetricsConfig> {
     try {
@@ -305,7 +313,7 @@ class MarketMetricsService {
   // ---- Estado de los proveedores para UI ----
   getProviderStatuses(): Record<string, ProviderStatus & { name: string }> {
     const result: Record<string, ProviderStatus & { name: string }> = {};
-    for (const provider of this.providers) {
+    for (const provider of this.diagnosticProviders) {
       const status = this.providerStatus.get(provider.name) ?? {
         lastFetch: null,
         lastError: null,
