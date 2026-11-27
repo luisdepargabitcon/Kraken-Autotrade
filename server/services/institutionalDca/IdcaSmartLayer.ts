@@ -15,6 +15,7 @@ import type {
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
 import { emaStrict as indicatorEmaStrict, rsiWilder as indicatorRsiWilder } from "../indicators/core";
+import type { IdcaReboundVariant } from "./IdcaEntryPolicy";
 
 // ─── Market Score (0-100) ──────────────────────────────────────────
 
@@ -530,35 +531,165 @@ export interface ReboundInput {
   reboundMinPct?: number;       // configurable bounce threshold (default 0.3%)
 }
 
-export function detectRebound(input: ReboundInput): boolean {
-  if (input.recentCandles.length < 2) return false;
+export interface ReboundDetailedResult {
+  confirmed: boolean;
+  status: "CONFIRMED" | "PENDING" | "NOT_REQUIRED" | "INVALID";
+  reasons: {
+    wick: boolean;
+    recovery: boolean;
+    slowing: boolean;
+  };
+  invalidReason?: string;
+}
+
+function legacyReboundReasons(input: ReboundInput): ReboundDetailedResult["reasons"] {
+  const empty = { wick: false, recovery: false, slowing: false };
+  if (input.recentCandles.length < 2) return empty;
 
   const last = input.recentCandles[input.recentCandles.length - 1];
   const prev = input.recentCandles[input.recentCandles.length - 2];
 
-  // Condition 1: Relevant lower wick (wick > 40% of candle range)
+  let wick = false;
   const range = last.high - last.low;
   if (range > 0) {
     const lowerWick = Math.min(last.close, last.high) - last.low;
-    if (lowerWick / range > 0.4) return true;
+    wick = lowerWick / range > 0.4;
   }
 
-  // Condition 2: Close separated from local low (bounced > reboundMinPct)
   const minBounce = input.reboundMinPct ?? 0.3;
   const bounceFromLow = ((input.currentPrice - input.localLow) / input.localLow) * 100;
-  if (bounceFromLow > minBounce && last.close > prev.close) return true;
+  const recovery = bounceFromLow > minBounce && last.close > prev.close;
 
-  // Condition 3: Bearish momentum decelerating (smaller red candles)
+  let slowing = false;
   if (input.recentCandles.length >= 3) {
     const c3 = input.recentCandles[input.recentCandles.length - 3];
     const prevDrop = Math.abs(prev.close - c3.close);
     const lastDrop = Math.abs(last.close - prev.close);
-    if (prevDrop > 0 && lastDrop < prevDrop * 0.5 && last.close >= prev.close * 0.998) {
-      return true;
-    }
+    slowing = prevDrop > 0 && lastDrop < prevDrop * 0.5 && last.close >= prev.close * 0.998;
   }
 
-  return false;
+  return { wick, recovery, slowing };
+}
+
+function positiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function validateReboundInput(input: ReboundInput, requireOpen: boolean): string | null {
+  if (!positiveFinite(input.currentPrice)) return "currentPrice_not_finite_positive";
+  if (!positiveFinite(input.localLow)) return "localLow_not_finite_positive";
+  if (input.recentCandles.length < 2) return "insufficient_candles";
+
+  const used = input.recentCandles.slice(-3);
+  for (let index = 0; index < used.length; index++) {
+    const candle = used[index];
+    if (!positiveFinite(candle.high) || !positiveFinite(candle.low) || !positiveFinite(candle.close)) {
+      return `candle_${index}_ohlc_not_finite_positive`;
+    }
+    if (requireOpen && !positiveFinite(candle.open)) {
+      return `candle_${index}_open_missing_or_invalid`;
+    }
+    const upperReference = requireOpen
+      ? Math.max(candle.open as number, candle.close)
+      : candle.close;
+    const lowerReference = requireOpen
+      ? Math.min(candle.open as number, candle.close)
+      : candle.close;
+    if (candle.high < upperReference) return `candle_${index}_high_below_body`;
+    if (candle.low > lowerReference) return `candle_${index}_low_above_body`;
+  }
+  return null;
+}
+
+function correctedWickReason(input: ReboundInput): boolean {
+  const last = input.recentCandles[input.recentCandles.length - 1];
+  const range = last.high - last.low;
+  if (range <= 0 || !positiveFinite(last.open)) return false;
+  const lowerWick = Math.min(last.open, last.close) - last.low;
+  return lowerWick / range > 0.4;
+}
+
+function recoveryReason(input: ReboundInput): boolean {
+  if (input.recentCandles.length < 2) return false;
+  const last = input.recentCandles[input.recentCandles.length - 1];
+  const prev = input.recentCandles[input.recentCandles.length - 2];
+  const minBounce = input.reboundMinPct ?? 0.3;
+  const bounceFromLow = ((input.currentPrice - input.localLow) / input.localLow) * 100;
+  return bounceFromLow > minBounce && last.close > prev.close;
+}
+
+function legacySlowingReason(input: ReboundInput): boolean {
+  return legacyReboundReasons(input).slowing;
+}
+
+function slowingRealFallReason(input: ReboundInput): boolean {
+  if (input.recentCandles.length < 3) return false;
+  const last = input.recentCandles[input.recentCandles.length - 1];
+  const prev = input.recentCandles[input.recentCandles.length - 2];
+  const c3 = input.recentCandles[input.recentCandles.length - 3];
+  if (!(c3.close > prev.close)) return false;
+  const prevDrop = c3.close - prev.close;
+  const lastDrop = Math.max(0, prev.close - last.close);
+  return prevDrop > 0 && lastDrop < prevDrop * 0.5 && last.close >= prev.close * 0.998;
+}
+
+/**
+ * Evalúa rebote con estados explícitos. `legacy` conserva exactamente la
+ * semántica booleana anterior; las variantes a1* son candidatas aisladas.
+ */
+export function detectReboundDetailed(
+  input: ReboundInput,
+  variant: IdcaReboundVariant = "legacy",
+): ReboundDetailedResult {
+  if (variant === "legacy") {
+    const reasons = legacyReboundReasons(input);
+    const confirmed = reasons.wick || reasons.recovery || reasons.slowing;
+    return {
+      confirmed,
+      status: confirmed ? "CONFIRMED" : "NOT_REQUIRED",
+      reasons,
+    };
+  }
+
+  const requiresOpen = variant === "a1a_wick_geometry" || variant === "a1c_combined";
+  const invalidReason = validateReboundInput(input, requiresOpen);
+  if (invalidReason) {
+    return {
+      confirmed: false,
+      status: "INVALID",
+      reasons: { wick: false, recovery: false, slowing: false },
+      invalidReason,
+    };
+  }
+
+  const useCorrectedWick = variant === "a1a_wick_geometry" || variant === "a1c_combined";
+  const useRealFallSlowing = variant === "a1b_slowing_real_fall" || variant === "a1c_combined";
+  const reasons = {
+    wick: useCorrectedWick ? correctedWickReason(input) : legacyReboundReasons(input).wick,
+    recovery: recoveryReason(input),
+    slowing: useRealFallSlowing ? slowingRealFallReason(input) : legacySlowingReason(input),
+  };
+
+  if (variant === "a1c_combined") {
+    const confirmed = reasons.recovery && (reasons.wick || reasons.slowing);
+    const anyPartialSignal = reasons.recovery || reasons.wick || reasons.slowing;
+    return {
+      confirmed,
+      status: confirmed ? "CONFIRMED" : anyPartialSignal ? "PENDING" : "NOT_REQUIRED",
+      reasons,
+    };
+  }
+
+  const confirmed = reasons.wick || reasons.recovery || reasons.slowing;
+  return {
+    confirmed,
+    status: confirmed ? "CONFIRMED" : "NOT_REQUIRED",
+    reasons,
+  };
+}
+
+export function detectRebound(input: ReboundInput): boolean {
+  return detectReboundDetailed(input, "legacy").confirmed;
 }
 
 // ─── Base Price Computation (deterministic entry reference) ────────
