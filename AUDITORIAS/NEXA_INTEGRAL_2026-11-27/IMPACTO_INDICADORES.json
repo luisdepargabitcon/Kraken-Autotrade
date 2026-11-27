@@ -1,38 +1,143 @@
 {
-  "generatedAt": "2026-11-27T20:38:17.238Z",
-  "limits": "Muestra pequeña (~720 velas 1h), proxy analítico, no replay ni evidencia de rentabilidad/causalidad.",
-  "datasets": [
+  "generatedAt": "2026-11-27T20:48:09.251Z",
+  "limits": "Muestra corta (~720 velas 1h, ~30 días), ventanas solapadas, proxy analítico del score; no es replay de ciclos ni evidencia de rentabilidad/causalidad con compras reales.",
+  "method": {
+    "weights": {
+      "ema20_distance": 15,
+      "ema50_distance": 10,
+      "ema20_slope": 10,
+      "ema50_slope": 10,
+      "rsi": 15,
+      "relative_volume": 10,
+      "drawdown_from_high": 15,
+      "btc_condition": 15
+    },
+    "oldScore": "replica del cálculo previo (EMA50 BTC = EMA20 desplazada, volumen 1/1, semilla legacy)",
+    "newScore": "evaluateEntryMarketScoreQuality real del motor (EMA estricta con warm-up, volumen relativo real, estado de calidad)"
+  },
+  "snapshots": [
+    {
+      "url": "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60",
+      "fetchedAt": "2026-11-27T20:38:17.073Z",
+      "candles": 720,
+      "first": "2026-10-28T21:00:00.000Z",
+      "last": "2026-11-27T20:00:00.000Z",
+      "sha256": "96e2e1517719e6e660beb085d70c9216480537ae4c18673e3f0b60c192e521e2"
+    },
+    {
+      "url": "https://api.kraken.com/0/public/OHLC?pair=ETHUSD&interval=60",
+      "fetchedAt": "2026-11-27T20:38:17.149Z",
+      "candles": 720,
+      "first": "2026-10-28T21:00:00.000Z",
+      "last": "2026-11-27T20:00:00.000Z",
+      "sha256": "c7c67cd8f8779425b9ae86c0c986381ecd90927e15ea18122671b07ad51f6664"
+    }
+  ],
+  "indicators": [
     {
       "pair": "BTC/USD",
       "candles": 720,
       "sha256": "96e2e1517719e6e660beb085d70c9216480537ae4c18673e3f0b60c192e521e2",
-      "macdLastFull": -261.5923015754088,
-      "macdLastTruncated": -261.95411000838067,
-      "macdAbsDiff": 0.36180843297188403,
-      "macdSignDisagreementPct": 0.15,
-      "flatTickCount": 0,
-      "atrSma": 583.1357142857144,
-      "atrWilder": 524.8937641810726,
-      "atrDiffPct": 11.096
+      "range": [
+        "2026-10-28T21:00:00.000Z",
+        "2026-11-27T20:00:00.000Z"
+      ],
+      "macdLastFull": -261.5923,
+      "macdLastTruncated": -261.9541,
+      "macdAbsDiff": 0.3618,
+      "macdHistogramSignDisagreementPct": 0.15,
+      "macdWindows": 660,
+      "flatCloseTransitions": 0,
+      "atrSma": 583.1357,
+      "atrWilder": 524.8938,
+      "atrSmaMinusWilderPct": 11.096
     },
     {
       "pair": "ETH/USD",
       "candles": 720,
       "sha256": "c7c67cd8f8779425b9ae86c0c986381ecd90927e15ea18122671b07ad51f6664",
-      "macdLastFull": -9.831510329688399,
-      "macdLastTruncated": -9.841655173489698,
-      "macdAbsDiff": 0.01014484380129943,
-      "macdSignDisagreementPct": 0.15,
-      "flatTickCount": 0,
-      "atrSma": 18.062142857142867,
-      "atrWilder": 16.827131354946623,
-      "atrDiffPct": 7.339
+      "range": [
+        "2026-10-28T21:00:00.000Z",
+        "2026-11-27T20:00:00.000Z"
+      ],
+      "macdLastFull": -9.8315,
+      "macdLastTruncated": -9.8417,
+      "macdAbsDiff": 0.0101,
+      "macdHistogramSignDisagreementPct": 0.15,
+      "macdWindows": 660,
+      "flatCloseTransitions": 0,
+      "atrSma": 18.0621,
+      "atrWilder": 16.8271,
+      "atrSmaMinusWilderPct": 7.339
     }
   ],
-  "ethScoreProxy": {
-    "strictEma50": 63,
-    "legacyShortHistoryProxy": null,
-    "delta": null,
-    "crosses50": null
+  "scoreOldVsNewByWindowLength": [
+    {
+      "windowCandles": 60,
+      "windows": 661,
+      "statusOk": 0,
+      "statusDegraded": 661,
+      "statusUnavailable": 0,
+      "comparableWindows": 661,
+      "meanDelta_newMinusOld": -0.113,
+      "maxAbsDelta": 13,
+      "crossOldLt50_to_newGe50": 15,
+      "crossOldGe50_to_newLt50": 20
+    },
+    {
+      "windowCandles": 80,
+      "windows": 641,
+      "statusOk": 0,
+      "statusDegraded": 641,
+      "statusUnavailable": 0,
+      "comparableWindows": 641,
+      "meanDelta_newMinusOld": -0.128,
+      "maxAbsDelta": 13,
+      "crossOldLt50_to_newGe50": 16,
+      "crossOldGe50_to_newLt50": 16
+    },
+    {
+      "windowCandles": 100,
+      "windows": 621,
+      "statusOk": 621,
+      "statusDegraded": 0,
+      "statusUnavailable": 0,
+      "comparableWindows": 621,
+      "meanDelta_newMinusOld": -0.425,
+      "maxAbsDelta": 6,
+      "crossOldLt50_to_newGe50": 14,
+      "crossOldGe50_to_newLt50": 13
+    },
+    {
+      "windowCandles": 200,
+      "windows": 521,
+      "statusOk": 521,
+      "statusDegraded": 0,
+      "statusUnavailable": 0,
+      "comparableWindows": 521,
+      "meanDelta_newMinusOld": -0.543,
+      "maxAbsDelta": 6,
+      "crossOldLt50_to_newGe50": 10,
+      "crossOldGe50_to_newLt50": 7
+    }
+  ],
+  "volumeAblation": {
+    "windowCandles": 200,
+    "baselineWindows": 521,
+    "unitVolume_vs_real": {
+      "sideOf50Flips": 17,
+      "towardEntry": 7,
+      "towardNoEntry": 10,
+      "meanDelta": 0.62,
+      "maxAbsDelta": 6
+    },
+    "excludedRenormalized_vs_real": {
+      "sideOf50Flips": 17,
+      "towardEntry": 7,
+      "towardNoEntry": 10,
+      "meanDelta": 1.497,
+      "maxAbsDelta": 9,
+      "statusNotOkWindows": 0
+    }
   }
 }
