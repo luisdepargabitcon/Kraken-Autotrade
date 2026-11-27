@@ -70,14 +70,21 @@ describe("GRID SHADOW LOW_API workload", () => {
     vi.useRealTimers();
   });
 
-  it("caracteriza el comportamiento previo: una valoración directa por ciclo genera una petición privada por ciclo", async () => {
+  it("caracteriza el comportamiento previo: la ruta sin BalanceSource genera una petición privada por ciclo", async () => {
     const getBalance = vi.fn(async () => ({ USD: 1_000 }));
+    getTradingExchangeMock.mockReturnValue({
+      isInitialized: () => true,
+      getBalance,
+    });
+    const allocator = new GridCapitalAllocator();
     const cyclesInSixHoursAtFiveMinutes = 72;
 
-    // Characterization of the pre-WP5 planner shape: each planning cycle valued
-    // capital by calling the private balance endpoint itself.
+    // Characterization of the pre-WP5 planner call shape: no mode/BalanceSource
+    // was supplied, so every allocation valued capital through the private
+    // exchange balance endpoint. The same non-SHADOW path is still required for REAL.
     for (let cycle = 0; cycle < cyclesInSixHoursAtFiveMinutes; cycle++) {
-      await getBalance();
+      await allocator.allocate("balanced", 10, 0.5, { maxCapitalPerCycleUsd: 500 });
+      vi.advanceTimersByTime(5 * 60_000);
     }
 
     expect(getBalance).toHaveBeenCalledTimes(cyclesInSixHoursAtFiveMinutes);
