@@ -1,0 +1,18 @@
+import{normalizeEpochToMs}from'./epochNormalizer';
+export const CONTRACT_VERSION='market-data/1.0.0';
+export type MarketDataQuality={validity:'valid'|'stale'|'invalid'|'unknown';reason:string;dataQuality:'good'|'degraded'|'poor'|'unknown';ageMs:number|null;missing:string[]};
+export type CandlePoint={pair:string;base:string;quote:string;source:string;venue:string;timeframe:string;openTime:number;closeTime:number;providerTs:number|null;receivedAt:number;cachedAt:number|null;isClosed:boolean;open:number;high:number;low:number;close:number;volume:number|null;origin:'live'|'db_fallback'|'cache'};
+export type CandleSeries={contractVersion:string;pair:string;base:string;quote:string;source:string;venue:string;timeframe:string;timeframeMs:number;candles:CandlePoint[];quality:MarketDataQuality;gaps:number;duplicates:number;referenceCount:number;lastClosedTime:number|null;origin:'live'|'db_fallback'|'cache'};
+export type PricePoint={contractVersion:string;pair:string;base:string;quote:string;source:string;venue:string;price:number|null;providerTs:number|null;receivedAt:number;cachedAt:number|null;ageMs:number|null;validity:'valid'|'stale'|'invalid'|'unknown';reason:string;dataQuality:'good'|'degraded'|'poor'|'unknown';origin:'live'|'db_fallback'|'cache'};
+function parts(pair:string){const[a,b]=pair.split('/');return[ a??'',b??'']}
+export function validateCandleSeries(raw:any[],o:{timeframeMs:number;nowMs:number;source:string;venue:string;pair:string;timeframe:string;minCandles?:number;staleAfterMs?:number;origin?:'live'|'db_fallback'|'cache';receivedAt?:number;cachedAt?:number|null}):CandleSeries{
+ const[base,quote]=parts(o.pair),recv=o.receivedAt??o.nowMs,origin=o.origin??'live',missing:string[]=[],seen=new Map<number,string>();let duplicates=0,gaps=0;const rows:any[]=[];
+ for(const x of raw){const n=normalizeEpochToMs(x.time??x.timestamp,{nowMs:o.nowMs});if(!n.ok)continue;const open=+x.open,high=+x.high,low=+x.low,close=+x.close,vol=x.volume==null?null:+x.volume;
+  if(![open,high,low,close].every(Number.isFinite)||open<=0||high<=0||low<=0||close<=0||low>Math.min(open,close)||high<Math.max(open,close)||(vol!=null&&(!Number.isFinite(vol)||vol<0))){duplicates++;continue}
+  const key=JSON.stringify([open,high,low,close,vol]);if(seen.has(n.ms)){if(seen.get(n.ms)!==key){duplicates++;continue}continue}seen.set(n.ms,key);rows.push({...x,ms:n.ms,open,high,low,close,volume:vol})}
+ rows.sort((a,b)=>a.ms-b.ms);for(let i=1;i<rows.length;i++)if(rows[i].ms-rows[i-1].ms!==o.timeframeMs)gaps++;
+ const candles=rows.map(r=>({pair:o.pair,base,quote,source:o.source,venue:o.venue,timeframe:o.timeframe,openTime:r.ms,closeTime:r.ms+o.timeframeMs,providerTs:r.ms,receivedAt:recv,cachedAt:o.cachedAt??null,isClosed:r.ms+o.timeframeMs<=o.nowMs,open:r.open,high:r.high,low:r.low,close:r.close,volume:r.volume,origin}));
+ const closed=candles.filter(c=>c.isClosed),last=closed.at(-1)??null,ageMs=last?o.nowMs-last.closeTime:null,min=o.minCandles??1;if(closed.length<min)missing.push('warmup');if(gaps)missing.push('gaps');if(duplicates)missing.push('duplicates_or_invalid');
+ const validity=missing.includes('duplicates_or_invalid')?'invalid':ageMs!=null&&ageMs>(o.staleAfterMs??o.timeframeMs*2)?'stale':closed.length>=min?'valid':'unknown';
+ return{contractVersion:CONTRACT_VERSION,pair:o.pair,base,quote,source:o.source,venue:o.venue,timeframe:o.timeframe,timeframeMs:o.timeframeMs,candles,quality:{validity,reason:missing[0]??(validity==='stale'?'stale_after_expected_close':'ok'),dataQuality:validity==='valid'?'good':validity==='stale'?'degraded':validity==='invalid'?'poor':'unknown',ageMs,missing},gaps,duplicates,referenceCount:closed.length,lastClosedTime:last?.openTime??null,origin};
+}

@@ -22,6 +22,7 @@
 import { ExchangeFactory } from "./exchanges/ExchangeFactory";
 import type { OHLC, Ticker } from "./exchanges/IExchangeService";
 import { MarketCandleRepository } from "./marketData/MarketCandleRepository";
+import { validateCandleSeries, CONTRACT_VERSION, type CandleSeries, type PricePoint } from "./marketData/marketDataContract";
 import { isFiscoRebuildActive } from "./fisco/rebuild-state";
 
 // ─── Public types ─────────────────────────────────────────────────
@@ -214,6 +215,19 @@ class MarketDataServiceClass {
 
   putCandles(pair: string, tf: Timeframe, candles: OHLC[]): void {
     this.candleCache.set(this.candleKey(pair, tf), { candles, fetchedAt: Date.now() });
+  }
+
+  async getCandleSeries(pair: string, tf: Timeframe, opts: { minCandles?: number } = {}): Promise<CandleSeries> {
+    const candles = await this.getCandles(pair, tf);
+    const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 60) * 60_000;
+    const cached = this.candleCache.get(this.candleKey(pair, tf));
+    return validateCandleSeries(candles, { pair, timeframe: tf, timeframeMs: tfMs, nowMs: Date.now(), source: "KRAKEN_MARKET_DATA", venue: "KRAKEN", minCandles: opts.minCandles ?? 1, cachedAt: cached?.fetchedAt ?? null, origin: cached ? "cache" : "live" });
+  }
+
+  async getPricePoint(pair: string): Promise<PricePoint> {
+    const [base, quote] = pair.split("/");
+    const snap = await this.getFreshTickerSnapshot(pair);
+    return { contractVersion: CONTRACT_VERSION, pair, base: base ?? "", quote: quote ?? "", source: snap?.source ?? "KRAKEN_MARKET_DATA", venue: snap?.marketDataVenue ?? "KRAKEN", price: snap?.ticker?.last ?? null, providerTs: snap ? snap.fetchedAt.getTime() : null, receivedAt: Date.now(), cachedAt: snap ? snap.fetchedAt.getTime() : null, ageMs: snap?.ageMs ?? null, validity: snap ? (snap.fresh ? "valid" : "stale") : "unknown", reason: snap ? "ok" : "unavailable", dataQuality: snap?.fresh ? "good" : "unknown", origin: snap?.cached ? "cache" : "live" };
   }
 
   /**
