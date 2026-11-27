@@ -257,6 +257,49 @@ export const orderIntents = pgTable("order_intents", {
   reservedQuoteUsd: decimal("reserved_quote_usd", { precision: 18, scale: 8 }),
 });
 
+
+// Auth v2 durable device/pairing/session state. Only hashes of bearer secrets are stored.
+export const nexaAuthDevices = pgTable("nexa_auth_devices", {
+  deviceId: text("device_id").primaryKey(),
+  publicKeySpkiB64: text("public_key_spki_b64").notNull(),
+  roles: jsonb("roles").notNull().$type<string[]>(),
+  pairedAt: timestamp("paired_at").notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+  label: text("label"),
+  platform: text("platform"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const nexaAuthPairCodes = pgTable("nexa_auth_pair_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  roles: jsonb("roles").notNull().$type<string[]>(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedByDeviceId: text("used_by_device_id"),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const nexaAuthChallenges = pgTable("nexa_auth_challenges", {
+  nonceHash: text("nonce_hash").primaryKey(),
+  deviceId: text("device_id").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const nexaAuthSessions = pgTable("nexa_auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  deviceId: text("device_id").notNull(),
+  roles: jsonb("roles").notNull().$type<string[]>(),
+  csrfHash: text("csrf_hash").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+});
+
+export type NexaAuthDeviceRow = typeof nexaAuthDevices.$inferSelect;
+export type NexaAuthSessionRow = typeof nexaAuthSessions.$inferSelect;
+
 export const hybridReentryWatches = pgTable("hybrid_reentry_watches", {
   id: serial("id").primaryKey(),
   exchange: varchar("exchange", { length: 32 }).notNull(),

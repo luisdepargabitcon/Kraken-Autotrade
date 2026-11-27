@@ -100,22 +100,23 @@ class TerminalWebSocketServer {
       
       const expectedToken = process.env.TERMINAL_TOKEN;
 
-      // TERMINAL_TOKEN is required for terminal websocket (security: can execute commands and view sensitive logs)
-      if (!expectedToken) {
+      const authV2Validated = (req as any).authV2WsValidated === true;
+      // TERMINAL_TOKEN is required for terminal websocket unless the upgrade already validated an auth v2 session.
+      if (!authV2Validated && !expectedToken) {
         log(`[WS-LOGS] TERMINAL_TOKEN no configurado - conexión rechazada. Configura TERMINAL_TOKEN en variables de entorno. (ip: ${clientIp})`, "websocket");
         this.sendMessage(client, { type: "ERROR", payload: { message: "TERMINAL_TOKEN no configurado en el servidor", reason: "TOKEN_NOT_CONFIGURED" } });
         client.close(4001, "Unauthorized - Token not configured on server");
         return;
       }
 
-      if (!token) {
+      if (!authV2Validated && !token) {
         log(`[WS-LOGS] Conexión rechazada - token ausente (path: ${WS_PATH}, source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
         this.sendMessage(client, { type: "ERROR", payload: { message: "Token ausente", reason: "MISSING_TOKEN", path: WS_PATH } });
         client.close(4001, "Unauthorized - Missing Token");
         return;
       }
 
-      if (token !== expectedToken) {
+      if (!authV2Validated && token !== expectedToken) {
         log(`[WS-LOGS] Conexión rechazada - token incorrecto (path: ${WS_PATH}, source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
         this.sendMessage(client, { type: "ERROR", payload: { message: "Token incorrecto", reason: "INVALID_TOKEN", path: WS_PATH } });
         client.close(4001, "Unauthorized - Invalid Token");

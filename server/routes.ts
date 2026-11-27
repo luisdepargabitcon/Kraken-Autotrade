@@ -9,6 +9,7 @@ import { TradingEngine } from "./services/tradingEngine";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { terminalWsServer as spotTerminalWsServer } from "./services/spot/spotTerminalStream";
+import { positionsWs } from "./services/positionsWebSocket";
 import { environment } from "./services/environment";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
@@ -26,6 +27,8 @@ import { db } from "./db";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { createAuthV2Enforcement, createAuthV2WebSocketUpgradeHandler } from "./services/authV2/authV2Enforcement";
+import { getAuthV2Service } from "./services/authV2/authV2Runtime";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -81,19 +84,18 @@ export function initializeWebSockets(httpServer: Server): void {
   eventsWs.initialize(httpServer);
   terminalWsServer.initialize(httpServer);
   spotTerminalWsServer.initialize(httpServer);
-  
+  positionsWs.initialize(httpServer);
+
   httpServer.on("upgrade", (req, socket, head) => {
-    const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
-    
-    if (pathname === "/ws/events") {
-      eventsWs.handleUpgrade(req, socket, head);
-    } else if (pathname === "/ws/logs") {
-      terminalWsServer.handleUpgrade(req, socket, head);
-    } else if (pathname === "/ws/spot-terminal") {
-      spotTerminalWsServer.handleUpgrade(req, socket, head);
-    } else {
-      socket.destroy();
-    }
+    void (async () => {
+      const service = await getAuthV2Service();
+      createAuthV2WebSocketUpgradeHandler(service, {
+        "/ws/events": (q, sck, h) => eventsWs.handleUpgrade(q, sck, h),
+        "/ws/logs": (q, sck, h) => terminalWsServer.handleUpgrade(q, sck, h),
+        "/ws/spot-terminal": (q, sck, h) => spotTerminalWsServer.handleUpgrade(q, sck, h),
+        "/ws/positions": (q, sck, h) => { positionsWs.handleUpgrade(q, sck, h); },
+      })(req, socket, head);
+    })().catch(() => socket.destroy());
   });
 }
 
@@ -101,7 +103,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+  app.use(createAuthV2Enforcement({ service: await getAuthV2Service() }));
+
   // Shared dependencies for modular route files
   const routerDeps: RouterDeps = {
     tradingEngine,
@@ -198,14 +201,18 @@ export async function registerRoutes(
     const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
     registerInstitutionalDcaRoutes(app);
 
-    // NEXA v2 authentication contract (server-side). Registration of these
-    // endpoints does not by itself enforce auth on legacy routes; enforcement
-    // is wired per-route in the hardening phase to preserve client compat.
-    const { registerAuthV2Routes } = await import('./routes/authV2.routes');
-    registerAuthV2Routes(app);
     console.log('[startup] Institutional DCA routes registered');
   } catch (e: any) {
     console.error('[startup] Failed to register Institutional DCA routes:', e?.message || e);
+  }
+
+  // NEXA v2 authentication contract. Global deny-by-default enforcement is
+  // installed before all API routes above.
+  try {
+    const { registerAuthV2Routes } = await import('./routes/authV2.routes');
+    registerAuthV2Routes(app);
+  } catch (e: any) {
+    console.error('[startup] Failed to register auth v2 routes:', e?.message || e);
   }
 
   // Register IDCA Hybrid Intelligent Layers routes

@@ -44,8 +44,11 @@ class EventsWebSocketServer {
       const tokenSource = queryToken ? "query" : (headerToken ? "header" : "none");
       
       const expectedToken = process.env.WS_ADMIN_TOKEN;
+      const authV2Validated = (req as any).authV2WsValidated === true;
 
-      if (!expectedToken) {
+      if (authV2Validated) {
+        log(`[WS] Sesión auth v2 validada en upgrade (path: ${WS_PATH}, ip: ${clientIp})`, "websocket");
+      } else if (!expectedToken) {
         log(`[WS] WS_ADMIN_TOKEN no configurado - conexión sin autenticación permitida (desarrollo) desde ${clientIp}`, "websocket");
       } else if (!token) {
         log(`[WS] Conexión rechazada - token ausente (path: ${WS_PATH}, source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");

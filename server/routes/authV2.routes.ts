@@ -1,126 +1,133 @@
 /**
- * Auth v2 routes — NEXA contract implemented server-side.
- *
- *   POST /v2/pair/redeem       — pair a device with a one-time pairing code
- *   POST /v2/pair/issue        — issue a pairing code (requires admin session)
- *   POST /v2/session/challenge — request a login challenge
- *   POST /v2/session/redeem    — redeem signed challenge for a session token
- *   POST /v2/auth/logout       — revoke the current session
- *   GET  /v2/auth/introspect   — report session validity/roles (no side effects)
- *
- * Rate limiting is applied per-IP on the unauthenticated endpoints. Errors are
- * generic: no oracle about which devices or codes exist.
+ * Auth v2 routes implementing the NEXA v2 BFF device contract.
+ * Canonical mount: /api/v2.
  */
 import type { Express, Request, Response } from "express";
-import { authV2Service } from "../services/authV2/authV2Service";
-import { requireAuthV2, requirePermission, type AuthV2Request } from "../services/authV2/authV2Middleware";
-import type { AuthV2Role } from "../services/authV2/authV2Service";
+import type { AuthV2Service } from "../services/authV2/authV2Service";
+import { validAuthV2PublicKey, validRoles, safeEqual, sha256Hex } from "../services/authV2/authV2Service";
+import { getAuthV2Service } from "../services/authV2/authV2Runtime";
+import { AuthV2RateLimiter } from "../services/authV2/authV2RateLimit";
 
-// Minimal fixed-window per-IP rate limiter (no external dependency).
-function makeRateLimiter(maxAttempts: number, windowMs: number) {
-  const attempts = new Map<string, { count: number; resetAt: number }>();
-  return (req: Request, res: Response, next: () => void): void => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const entry = attempts.get(ip);
-    if (!entry || entry.resetAt < now) {
-      attempts.set(ip, { count: 1, resetAt: now + windowMs });
-      next();
-      return;
-    }
-    entry.count++;
-    if (entry.count > maxAttempts) {
-      res.status(429).json({ error: "rate_limited" });
-      return;
-    }
-    next();
-  };
+function ipOf(req: Request): string { return req.ip || req.socket.remoteAddress || "unknown"; }
+function limited(req: Request, res: Response, limiter: AuthV2RateLimiter): boolean {
+  const r = limiter.hit(`ip:${ipOf(req)}`);
+  if (r.allowed) return false;
+  res.status(429).json({ error: "rate_limited" });
+  return true;
+}
+function bearer(req: Request): string | null {
+  const h = req.headers.authorization || "";
+  return h.startsWith("Bearer ") ? h.slice(7) : null;
+}
+function asyncRoute(fn: (req: Request, res: Response) => Promise<void>) {
+  return (req: Request, res: Response) => { fn(req, res).catch(() => res.status(500).json({ error: "internal_error" })); };
 }
 
-const authAttemptLimiter = makeRateLimiter(30, 60_000); // 30/min per IP
+async function requireAdminSession(service: AuthV2Service, req: Request): Promise<boolean> {
+  const token = bearer(req);
+  if (!token) return false;
+  const session = await service.getSessionByToken(token);
+  if (!session || !service.hasPermission(session.roles, "admin", req.method)) return false;
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !(await service.validateCsrf(session, req.headers["x-csrf-token"]))) return false;
+  return true;
+}
 
-export function registerAuthV2Routes(app: Express): void {
-  // ─── Pairing: redeem a one-time code ───
-  app.post("/v2/pair/redeem", authAttemptLimiter, (req: Request, res: Response) => {
-    const { code, deviceId, publicKey, platform, label } = req.body ?? {};
-    if (typeof code !== "string" || typeof deviceId !== "string" || typeof publicKey !== "string") {
-      res.status(400).json({ error: "invalid_request" });
+async function issueHandler(service: AuthV2Service, req: Request, res: Response, limiter: AuthV2RateLimiter): Promise<void> {
+  if (limited(req, res, limiter)) return;
+  const hasAdmin = await service.store.hasActiveAdminDevice();
+  let roles = Array.isArray(req.body?.roles) ? req.body.roles : ["read"];
+  if (!validRoles(roles)) { res.status(400).json({ error: "invalid_roles" }); return; }
+  if (!hasAdmin) {
+    const configured = process.env.NXV2_BOOTSTRAP_CODE;
+    const presented = typeof req.headers["x-bootstrap-code"] === "string" ? req.headers["x-bootstrap-code"] as string : "";
+    const ok = !!configured && safeEqual(sha256Hex(presented), sha256Hex(configured));
+    if (!ok) {
+      const locked = limiter.recordFailure(`bootstrap:${ipOf(req)}`);
+      res.status(locked.allowed ? 403 : 429).json({ error: locked.allowed ? "forbidden" : "rate_limited" });
       return;
     }
-    const result = authV2Service.redeemPairing(
-      code.trim(),
-      deviceId.trim(),
-      publicKey.trim(),
-      typeof label === "string" ? label.slice(0, 120) : undefined,
-      typeof platform === "string" ? platform.slice(0, 40) : undefined
-    );
-    if (!result) {
-      res.status(401).json({ error: "pair_failed" });
-      return;
-    }
-    res.json({ ok: true, roles: result.roles });
-  });
+    limiter.recordSuccess(`bootstrap:${ipOf(req)}`);
+    roles = ["admin"];
+  } else if (!(await requireAdminSession(service, req))) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  try {
+    const issued = await service.issuePairingCode(roles);
+    service.audit("pair_issue", hasAdmin ? "admin" : "bootstrap");
+    res.json({ code: issued.code, expiresIn: 600 });
+  } catch {
+    res.status(400).json({ error: "invalid_roles" });
+  }
+}
 
-  // ─── Pairing: issue a code (admin only) ───
-  app.post("/v2/pair/issue", requirePermission("admin"), (req: AuthV2Request, res: Response) => {
-    const requested = (req.body?.roles as AuthV2Role[] | undefined) ?? ["reader"];
-    const valid = requested.filter((r): r is AuthV2Role => ["admin", "operator", "reader"].includes(r));
-    if (valid.length === 0) {
-      res.status(400).json({ error: "invalid_roles" });
-      return;
-    }
-    // Only admins can mint admin-capable pairing codes (already enforced by
-    // requirePermission("admin")); roles are always server-assigned.
-    const { code, expiresAt } = authV2Service.issuePairingCode(valid);
-    res.json({ ok: true, code, expiresAt });
-  });
+export function registerAuthV2Routes(app: Express, injectedService?: AuthV2Service): void {
+  const limiter = new AuthV2RateLimiter(60_000, 30, 10 * 60_000, 8);
+  const serviceOf = async () => injectedService || getAuthV2Service();
+  app.post("/api/v2/pair/issue", asyncRoute(async (req, res) => issueHandler(await serviceOf(), req, res, limiter)));
 
-  // ─── Session: challenge ───
-  app.post("/v2/session/challenge", authAttemptLimiter, (req: Request, res: Response) => {
-    const { deviceId } = req.body ?? {};
-    if (typeof deviceId !== "string" || deviceId.length < 8) {
-      res.status(400).json({ error: "invalid_request" });
-      return;
-    }
-    const challenge = authV2Service.createChallenge(deviceId);
-    if (!challenge) {
-      // Generic error: no oracle about device existence.
-      res.status(401).json({ error: "challenge_failed" });
-      return;
-    }
-    res.json({ nonce: challenge.nonce, expiresAt: challenge.expiresAt });
-  });
+    app.post("/api/v2/pair/redeem", asyncRoute(async (req, res) => {
+      if (limited(req, res, limiter)) return;
+      const service = await serviceOf();
+      const { code, deviceId, publicKey, platform, label } = req.body ?? {};
+      if (!deviceId || !publicKey) { res.status(400).json({ error: "device_and_key_required" }); return; }
+      if (typeof publicKey !== "string" || !validAuthV2PublicKey(publicKey)) { res.status(400).json({ error: "invalid_public_key" }); return; }
+      const result = typeof code === "string"
+        ? await service.redeemPairing(code, String(deviceId), publicKey, typeof label === "string" ? label : undefined, typeof platform === "string" ? platform : undefined)
+        : null;
+      if (!result) { res.status(403).json({ error: "invalid_or_expired_code" }); return; }
+      res.json({ ok: true, roles: result.roles });
+    }));
 
-  // ─── Session: redeem ───
-  app.post("/v2/session/redeem", authAttemptLimiter, (req: Request, res: Response) => {
-    const { deviceId, nonce, signature } = req.body ?? {};
-    if (typeof deviceId !== "string" || typeof nonce !== "string" || typeof signature !== "string") {
-      res.status(400).json({ error: "invalid_request" });
-      return;
-    }
-    const session = authV2Service.redeemChallenge(deviceId, nonce, signature);
-    if (!session) {
-      res.status(401).json({ error: "redeem_failed" });
-      return;
-    }
-    res.json({
-      token: session.token,
-      expiresAt: session.expiresAt,
-      roles: session.roles,
-      // Bearer-token auth is not ambient (no cookies), so CSRF tokens are not
-      // required for authenticity; field kept for client-contract compatibility.
-      csrf: null,
-    });
-  });
+    app.post("/api/v2/session/challenge", asyncRoute(async (req, res) => {
+      if (limited(req, res, limiter)) return;
+      const service = await serviceOf();
+      const deviceId = req.body?.deviceId;
+      if (typeof deviceId !== "string" || deviceId.length < 8) { res.status(403).json({ error: "device_unknown_or_revoked" }); return; }
+      const deviceLimit = limiter.hit(`device:${deviceId}`);
+      if (!deviceLimit.allowed) { res.status(429).json({ error: "rate_limited" }); return; }
+      const challenge = await service.createChallenge(deviceId);
+      if (!challenge) { res.status(403).json({ error: "device_unknown_or_revoked" }); return; }
+      res.json({ nonce: challenge.nonce, expiresIn: 60 });
+    }));
 
-  // ─── Logout: revoke current session ───
-  app.post("/v2/auth/logout", requireAuthV2, (req: AuthV2Request, res: Response) => {
-    if (req.authV2) authV2Service.revokeToken(req.authV2.token);
-    res.json({ ok: true });
-  });
+    app.post("/api/v2/session/redeem", asyncRoute(async (req, res) => {
+      if (limited(req, res, limiter)) return;
+      const service = await serviceOf();
+      const { deviceId, nonce, signature } = req.body ?? {};
+      if (typeof deviceId !== "string" || typeof nonce !== "string" || typeof signature !== "string") { res.status(401).json({ error: "challenge_invalid" }); return; }
+      const deviceLimit = limiter.hit(`device:${deviceId}`);
+      if (!deviceLimit.allowed) { res.status(429).json({ error: "rate_limited" }); return; }
+      const session = await service.redeemChallenge(deviceId, nonce, signature);
+      if (!session) { res.status(401).json({ error: "challenge_invalid" }); return; }
+      res.json({ token: session.token, expiresAt: session.expiresAt, roles: session.roles, csrf: session.csrf });
+    }));
 
-  // ─── Introspect: session validity check for clients ───
-  app.get("/v2/auth/introspect", requireAuthV2, (req: AuthV2Request, res: Response) => {
-    res.json({ ok: true, deviceId: req.authV2!.deviceId, roles: req.authV2!.roles });
-  });
+    app.get("/api/v2/devices", asyncRoute(async (req, res) => {
+      const service = await serviceOf();
+      const devices = await service.listDevices();
+      res.json(devices.map(d => ({ id: d.deviceId, label: d.label || "", platform: d.platform || "web", roles: d.roles, revoked: !!d.revokedAt, pairedAt: d.pairedAt })));
+    }));
+
+    app.post("/api/v2/devices/:id/revoke", asyncRoute(async (req, res) => {
+      const service = await serviceOf();
+      const ok = await service.revokeDevice(req.params.id);
+      if (!ok) { res.status(404).json({ error: "not_found" }); return; }
+      res.json({ ok: true });
+    }));
+
+    app.post("/api/v2/auth/logout", asyncRoute(async (req, res) => {
+      const service = await serviceOf();
+      const token = bearer(req);
+      if (token) await service.revokeToken(token);
+      res.json({ ok: true });
+    }));
+
+    app.get("/api/v2/auth/session", asyncRoute(async (req, res) => {
+      const service = await serviceOf();
+      const token = bearer(req);
+      const session = token ? await service.getSessionByToken(token) : null;
+      if (!session) { res.status(401).json({ error: "auth_required" }); return; }
+      res.json({ user: `device:${session.deviceId.slice(0, 8)}`, deviceId: session.deviceId, roles: session.roles, expiresAt: session.expiresAt });
+    }));
 }

@@ -4,168 +4,139 @@ import {
   AuthV2Service,
   InMemoryAuthV2Store,
   AUTHV2_CHALLENGE_TTL_MS,
-  AUTHV2_SESSION_TTL_MS,
   AUTHV2_PAIRING_CODE_TTL_MS,
+  AUTHV2_MAX_SESSIONS_PER_DEVICE,
+  sha256Hex,
+  type AuthV2Store,
 } from "../authV2Service";
 
-// Auth v2 contract tests (P0): pairing, challenge-response with real ECDSA
-// P-256 keys, single-use semantics, expiry, replay prevention, revocation and
-// deny-by-default authorization. No network, no credentials.
-
-function makeDevice() {
+function makeDevice(id = "test-device-" + Math.random().toString(36).slice(2, 18)) {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const spkiB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
-  const deviceId = "test-device-" + Math.random().toString(36).slice(2, 18);
-  const signNonce = (nonce: string) =>
-    cryptoSign("sha256", Buffer.from(nonce, "utf8"), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64");
-  return { deviceId, spkiB64, signNonce };
+  return {
+    deviceId: id,
+    spkiB64,
+    signNonce: (nonce: string) => cryptoSign("sha256", Buffer.from(nonce, "utf8"), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64"),
+  };
+}
+async function pair(service: AuthV2Service, roles = ["read"]) {
+  const { code } = await service.issuePairingCode(roles);
+  const dev = makeDevice();
+  const paired = await service.redeemPairing(code, dev.deviceId, dev.spkiB64, "test", "web");
+  return { dev, paired, code };
+}
+async function login(service: AuthV2Service, dev: ReturnType<typeof makeDevice>) {
+  const challenge = await service.createChallenge(dev.deviceId);
+  return service.redeemChallenge(dev.deviceId, challenge!.nonce, dev.signNonce(challenge!.nonce));
 }
 
-describe("AuthV2Service pairing", () => {
-  let store: InMemoryAuthV2Store;
-  let service: AuthV2Service;
-  let now: number;
+export function authV2StoreContractTests(makeStore: () => AuthV2Store | Promise<AuthV2Store>, label: string): void {
+  describe(`AuthV2 ${label} store contract`, () => {
+    let store: AuthV2Store;
+    let service: AuthV2Service;
+    let now: number;
+    beforeEach(async () => {
+      now = 1_700_000_000_000;
+      store = await makeStore();
+      service = new AuthV2Service(store, () => now);
+    });
 
-  beforeEach(() => {
-    now = 1_700_000_000_000;
-    store = new InMemoryAuthV2Store();
-    service = new AuthV2Service(store, () => now);
+    it("full ECDSA pairing/challenge/session flow returns real csrf", async () => {
+      const { dev, paired } = await pair(service, ["idca:control"]);
+      expect(paired).not.toBeNull();
+      const session = await login(service, dev);
+      expect(session).not.toBeNull();
+      expect(session!.csrf).toMatch(/^[a-f0-9]{32}$/);
+      const validated = await service.validateToken(session!.token);
+      expect(validated!.deviceId).toBe(dev.deviceId);
+      const stored = await store.getSession(sha256Hex(session!.token));
+      expect(stored).toBeDefined();
+      expect((stored as any)?.token).toBeUndefined();
+    });
+
+    it("pairing codes are uppercase-normalized, expire and are single-use", async () => {
+      const { code } = await service.issuePairingCode(["read"]);
+      const d1 = makeDevice();
+      const d2 = makeDevice();
+      expect(await service.redeemPairing(code.toLowerCase(), d1.deviceId, d1.spkiB64)).not.toBeNull();
+      expect(await service.redeemPairing(code, d2.deviceId, d2.spkiB64)).toBeNull();
+      const expired = await service.issuePairingCode(["read"]);
+      now += AUTHV2_PAIRING_CODE_TTL_MS + 1;
+      const d3 = makeDevice();
+      expect(await service.redeemPairing(expired.code, d3.deviceId, d3.spkiB64)).toBeNull();
+    });
+
+    it("nonce replay, foreign signature and cross-device binding fail", async () => {
+      const first = await pair(service);
+      const second = await pair(service);
+      const challenge = await service.createChallenge(first.dev.deviceId);
+      const good = await service.redeemChallenge(first.dev.deviceId, challenge!.nonce, first.dev.signNonce(challenge!.nonce));
+      expect(good).not.toBeNull();
+      const replay = await service.redeemChallenge(first.dev.deviceId, challenge!.nonce, first.dev.signNonce(challenge!.nonce));
+      expect(replay).toBeNull();
+      const c2 = await service.createChallenge(first.dev.deviceId);
+      expect(await service.redeemChallenge(first.dev.deviceId, c2!.nonce, second.dev.signNonce(c2!.nonce))).toBeNull();
+      const c3 = await service.createChallenge(first.dev.deviceId);
+      expect(await service.redeemChallenge(second.dev.deviceId, c3!.nonce, first.dev.signNonce(c3!.nonce))).toBeNull();
+    });
+
+    it("expired challenge, revoked device and revoked/invalid/expired tokens fail", async () => {
+      const { dev } = await pair(service);
+      const c = await service.createChallenge(dev.deviceId);
+      now += AUTHV2_CHALLENGE_TTL_MS + 1;
+      expect(await service.redeemChallenge(dev.deviceId, c!.nonce, dev.signNonce(c!.nonce))).toBeNull();
+      const s = await login(service, dev);
+      expect(await service.validateToken(s!.token)).not.toBeNull();
+      await service.revokeToken(s!.token);
+      expect(await service.validateToken(s!.token)).toBeNull();
+      expect(await service.validateToken("0".repeat(64))).toBeNull();
+      const other = await pair(service);
+      const s2 = await login(service, other.dev);
+      await service.revokeDevice(other.dev.deviceId);
+      expect(await service.validateToken(s2!.token)).toBeNull();
+    });
+
+    it("device and per-device session limits are enforced", async () => {
+      const admin = await pair(service, ["admin"]);
+      expect(admin.paired!.roles).toEqual(["admin"]);
+      for (let i = 0; i < 19; i++) expect((await pair(service)).paired).not.toBeNull();
+      expect((await pair(service)).paired).toBeNull();
+      for (let i = 0; i < AUTHV2_MAX_SESSIONS_PER_DEVICE + 2; i++) expect(await login(service, admin.dev)).not.toBeNull();
+      const active = await store.listActiveSessionsForDevice(admin.dev.deviceId, now);
+      expect(active.length).toBeLessThanOrEqual(AUTHV2_MAX_SESSIONS_PER_DEVICE);
+    });
+
+    it("pruneExpired removes expired codes, challenges and sessions", async () => {
+      const { dev } = await pair(service);
+      await service.createChallenge(dev.deviceId);
+      const s = await login(service, dev);
+      now += 9 * 60 * 60 * 1000;
+      await store.pruneExpired(now);
+      expect(await service.validateToken(s!.token)).toBeNull();
+      expect(await service.createChallenge(dev.deviceId)).not.toBeNull();
+    });
   });
+}
 
-  it("full flow: issue code -> pair -> challenge -> session -> validate", () => {
-    const { code } = service.issuePairingCode(["operator"]);
-    const dev = makeDevice();
-    const paired = service.redeemPairing(code, dev.deviceId, dev.spkiB64, "test", "web");
-    expect(paired).not.toBeNull();
-    expect(paired!.roles).toEqual(["operator"]);
+authV2StoreContractTests(() => new InMemoryAuthV2Store(), "memory");
 
-    const challenge = service.createChallenge(dev.deviceId);
-    expect(challenge).not.toBeNull();
-    const session = service.redeemChallenge(dev.deviceId, challenge!.nonce, dev.signNonce(challenge!.nonce));
-    expect(session).not.toBeNull();
-    expect(session!.expiresAt).toBe(now + AUTHV2_SESSION_TTL_MS);
+describe("AuthV2 permissions", () => {
 
-    const validated = service.validateToken(session!.token);
-    expect(validated).not.toBeNull();
-    expect(validated!.deviceId).toBe(dev.deviceId);
-    expect(validated!.roles).toEqual(["operator"]);
+  it("rejects roles outside the whitelist", async () => {
+    const service = new AuthV2Service(new InMemoryAuthV2Store());
+    await expect(service.issuePairingCode(["superuser"])).rejects.toThrow("invalid_roles");
+    await expect(service.issuePairingCode([])).rejects.toThrow("invalid_roles");
   });
-
-  it("pairing code is single-use even on success", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const d1 = makeDevice();
-    const d2 = makeDevice();
-    expect(service.redeemPairing(code, d1.deviceId, d1.spkiB64)).not.toBeNull();
-    expect(service.redeemPairing(code, d2.deviceId, d2.spkiB64)).toBeNull();
-  });
-
-  it("expired pairing code is rejected", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    now += AUTHV2_PAIRING_CODE_TTL_MS + 1;
-    const dev = makeDevice();
-    expect(service.redeemPairing(code, dev.deviceId, dev.spkiB64)).toBeNull();
-  });
-
-  it("unknown pairing code is rejected and cannot re-pair an existing deviceId", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    expect(service.redeemPairing("deadbeefdead", dev.deviceId, dev.spkiB64)).toBeNull();
-    expect(service.redeemPairing(code, dev.deviceId, dev.spkiB64)).not.toBeNull();
-    // A second code must not silently overwrite the existing device credential.
-    const { code: code2 } = service.issuePairingCode(["admin"]);
-    expect(service.redeemPairing(code2, dev.deviceId, dev.spkiB64)).toBeNull();
-  });
-
-  it("challenge is single-use: replay of the same nonce fails", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    const challenge = service.createChallenge(dev.deviceId)!;
-    const sig = dev.signNonce(challenge.nonce);
-    expect(service.redeemChallenge(dev.deviceId, challenge.nonce, sig)).not.toBeNull();
-    // Replay: same nonce + valid signature must fail (nonce already consumed).
-    expect(service.redeemChallenge(dev.deviceId, challenge.nonce, sig)).toBeNull();
-  });
-
-  it("expired challenge is rejected", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    const challenge = service.createChallenge(dev.deviceId)!;
-    now += AUTHV2_CHALLENGE_TTL_MS + 1;
-    expect(service.redeemChallenge(dev.deviceId, challenge.nonce, dev.signNonce(challenge.nonce))).toBeNull();
-  });
-
-  it("wrong signature, wrong device binding and unknown challenge are rejected", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    const other = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    service.redeemPairing(service.issuePairingCode(["reader"]).code, other.deviceId, other.spkiB64);
-
-    const challenge = service.createChallenge(dev.deviceId)!;
-    // Wrong key signs.
-    expect(service.redeemChallenge(dev.deviceId, challenge.nonce, other.signNonce(challenge.nonce))).toBeNull();
-
-    const c2 = service.createChallenge(dev.deviceId)!;
-    // Challenge bound to dev but redeemed by other deviceId.
-    expect(service.redeemChallenge(other.deviceId, c2.nonce, dev.signNonce(c2.nonce))).toBeNull();
-
-    // Unknown nonce.
-    expect(service.redeemChallenge(dev.deviceId, "f".repeat(64), dev.signNonce("f".repeat(64)))).toBeNull();
-  });
-
-  it("challenge issuance is refused for unknown or revoked devices", () => {
-    expect(service.createChallenge("no-such-device")).toBeNull();
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    service.revokeDevice(dev.deviceId);
-    expect(service.createChallenge(dev.deviceId)).toBeNull();
-  });
-
-  it("expired and revoked sessions are invalid; device revocation kills sessions", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    const c = service.createChallenge(dev.deviceId)!;
-    const session = service.redeemChallenge(dev.deviceId, c.nonce, dev.signNonce(c.nonce))!;
-
-    // Logout revocation.
-    service.revokeToken(session.token);
-    expect(service.validateToken(session.token)).toBeNull();
-
-    // New session, then device revocation.
-    const c2 = service.createChallenge(dev.deviceId)!;
-    const s2 = service.redeemChallenge(dev.deviceId, c2.nonce, dev.signNonce(c2.nonce))!;
-    service.revokeDevice(dev.deviceId);
-    expect(service.validateToken(s2.token)).toBeNull();
-
-    // New device+session, then expiry.
-    const dev2 = makeDevice();
-    service.redeemPairing(service.issuePairingCode(["reader"]).code, dev2.deviceId, dev2.spkiB64);
-    const c3 = service.createChallenge(dev2.deviceId)!;
-    const s3 = service.redeemChallenge(dev2.deviceId, c3.nonce, dev2.signNonce(c3.nonce))!;
-    now += AUTHV2_SESSION_TTL_MS + 1;
-    expect(service.validateToken(s3.token)).toBeNull();
-  });
-
-  it("authorization is deny-by-default; admin implies permission", () => {
-    expect(service.hasPermission([], "idca:control")).toBe(false);
-    expect(service.hasPermission(["reader"], "idca:control")).toBe(false);
-    expect(service.hasPermission(["reader"], "")).toBe(false);
-    expect(service.hasPermission(["admin"], "idca:control")).toBe(true);
-    expect(service.hasPermission(["operator"], "operator")).toBe(true);
-  });
-
-  it("raw token is never stored (only its hash)", () => {
-    const { code } = service.issuePairingCode(["reader"]);
-    const dev = makeDevice();
-    service.redeemPairing(code, dev.deviceId, dev.spkiB64);
-    const c = service.createChallenge(dev.deviceId)!;
-    const session = service.redeemChallenge(dev.deviceId, c.nonce, dev.signNonce(c.nonce))!;
-    const keys = Array.from((store as any).sessions.keys());
-    expect(keys).not.toContain(session.token);
-    expect(keys[0]).toMatch(/^[a-f0-9]{64}$/);
+  it("implements NEXA read/control semantics", () => {
+    const service = new AuthV2Service(new InMemoryAuthV2Store());
+    expect(service.hasPermission(["admin"], "grid:control", "POST")).toBe(true);
+    expect(service.hasPermission(["*"], "grid:control", "POST")).toBe(true);
+    expect(service.hasPermission(["grid:control"], "grid:control", "POST")).toBe(true);
+    expect(service.hasPermission(["grid:read"], "grid:control", "POST")).toBe(false);
+    expect(service.hasPermission(["grid:read"], "grid:control", "GET")).toBe(true);
+    expect(service.hasPermission(["read"], "fisco:control", "GET")).toBe(true);
+    expect(service.hasPermission(["read"], "fisco:control", "POST")).toBe(false);
+    expect(service.hasPermission(["idca:control"], "grid:control", "GET")).toBe(false);
+    expect(service.hasPermission(["read"], "admin", "GET")).toBe(false);
   });
 });

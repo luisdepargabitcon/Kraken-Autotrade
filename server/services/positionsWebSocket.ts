@@ -56,7 +56,8 @@ class PositionsWebSocketServer {
                     req.headers.authorization?.replace("Bearer ", "");
       const expectedToken = process.env.WS_ADMIN_TOKEN;
 
-      if (expectedToken && token !== expectedToken) {
+      const authV2Validated = (req as any).authV2WsValidated === true;
+      if (!authV2Validated && expectedToken && token !== expectedToken) {
         log(`[WS/positions] Rejected - invalid token from ${clientIp}`, "websocket");
         client.close(4001, "Unauthorized");
         return;
