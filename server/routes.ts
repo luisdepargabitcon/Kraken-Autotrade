@@ -29,6 +29,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { createAuthV2Enforcement, createAuthV2WebSocketUpgradeHandler } from "./services/authV2/authV2Enforcement";
 import { getAuthV2Service } from "./services/authV2/authV2Runtime";
+import { createAuthV2Idempotency } from "./services/authV2/authV2Idempotency";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -104,6 +105,7 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   app.use(createAuthV2Enforcement({ service: await getAuthV2Service() }));
+  app.use(createAuthV2Idempotency());
 
   // Shared dependencies for modular route files
   const routerDeps: RouterDeps = {

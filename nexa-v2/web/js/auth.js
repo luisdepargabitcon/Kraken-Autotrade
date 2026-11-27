@@ -42,6 +42,7 @@ export async function apiFetch(path, {method='GET', body, headers={}, timeoutMs}
       'Accept':'application/json',
       ...(body!==undefined ? {'Content-Type':'application/json'} : {}),
       ...(s ? {'Authorization':`Bearer ${s.token}`} : {}),
+      ...(s?.csrf && !['GET','HEAD'].includes(method) ? {'X-CSRF-Token':s.csrf} : {}),
       ...headers,
     },
     body: body!==undefined ? JSON.stringify(body) : undefined,

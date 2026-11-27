@@ -17,14 +17,18 @@ export const AUTHV2_ROUTE_POLICY: AuthV2PolicyEntry[] = [
 
   { path: "/api/scan/diagnostic", permission: "admin" },
 
+  { method: "GET", path: "/api/institutional-dca/config", permission: "idca:control" },
   { path: "/api/institutional-dca/config", permission: "admin" },
   { path: "/api/institutional-dca/telegram/test", permission: "admin" },
+  { method: "GET", path: "/api/institutional-dca/entry-diagnostics", permission: "idca:control" },
   { path: "/api/institutional-dca/entry-diagnostics", permission: "admin" },
   { path: "/api/idca/hybrid/config", permission: "admin" },
   { path: "/api/idca/hybrid/alert-config", permission: "admin" },
   { path: "/api/idca/hybrid/mode", permission: "admin" },
 
+  { method: "GET", path: "/api/grid-isolated/config", permission: "grid:control" },
   { path: "/api/grid-isolated/config", permission: "admin" },
+  { method: "POST", path: "/api/grid-isolated/mode", permission: "grid:control", exact: true },
   { path: "/api/grid-isolated/mode", permission: "admin" },
   { path: "/api/grid-isolated/activate", permission: "admin" },
   { path: "/api/grid-isolated/shadow-open-cycles/diagnose", permission: "admin" },
@@ -36,6 +40,7 @@ export const AUTHV2_ROUTE_POLICY: AuthV2PolicyEntry[] = [
   { path: "/api/ama/real/authorization", permission: "admin" },
 
   { path: "/api/spot/mode", permission: "admin" },
+  { method: "GET", path: "/api/positions/smart-exit-diagnostics", permission: "spot:control" },
   { path: "/api/positions/smart-exit-diagnostics", permission: "admin" },
   { path: "/api/market-metrics/config", permission: "admin" },
   { path: "/api/fisco/config", permission: "admin" },
@@ -46,6 +51,7 @@ export const AUTHV2_ROUTE_POLICY: AuthV2PolicyEntry[] = [
 
   { method: "POST", path: "/api/institutional-dca/emergency", permission: "idca:emergency" },
   { method: "POST", path: "/api/institutional-dca/cycles", permission: "idca:control" },
+  { method: "DELETE", path: "/api/institutional-dca/cycles/:id/manual", permission: "idca:control" },
   { method: "DELETE", path: "/api/institutional-dca/cycles", permission: "idca:emergency" },
   { path: "/api/institutional-dca", permission: "idca:control" },
   { path: "/api/idca", permission: "idca:control" },
@@ -107,7 +113,10 @@ function matches(entry: AuthV2PolicyEntry, method: string, path: string): boolea
   if (entry.method && entry.method !== method) return false;
   const p = normalize(path);
   const e = normalize(entry.path);
-  return entry.exact ? p === e : (p === e || p.startsWith(e + "/"));
+  const patternSegments = e.split("/");
+  const pathSegments = p.split("/");
+  const segmentMatch = patternSegments.length === pathSegments.length && patternSegments.every((seg, i) => seg.startsWith(":") || seg === pathSegments[i]);
+  return entry.exact ? (p === e || segmentMatch) : (p === e || segmentMatch || p.startsWith(e + "/"));
 }
 export function resolveAuthV2RoutePermission(method: string, path: string, policy: AuthV2PolicyEntry[] = AUTHV2_ROUTE_POLICY): string | null {
   const m = method.toUpperCase();
