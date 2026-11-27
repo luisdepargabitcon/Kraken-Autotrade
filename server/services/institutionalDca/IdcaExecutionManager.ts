@@ -10,6 +10,8 @@
 import { InstitutionalDcaCycle, InstitutionalDcaAssetConfigRow } from "@shared/schema";
 import { idcaMarketContextService, MarketContext } from "./IdcaMarketContextService";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+import * as repo from "./IdcaRepository";
 
 export interface ExecutionConfig {
   // Estrategia de ejecución
@@ -126,6 +128,13 @@ class IdcaExecutionManager {
     // desconocido — falla cerrado antes de cualquier efecto.
     if (request.mode !== "live") {
       throw new Error(`IDCA_EXECUTION_MODE_GUARD: executeOrder requires exact mode "live", got ${JSON.stringify(request.mode)}`);
+    }
+    if (request.cycleId > 0) {
+      const cycle = await repo.getCycleById(request.cycleId);
+      const scope = resolveIdcaExecutionScope(cycle, request.mode);
+      if (!scope.ok) {
+        throw new Error(`IDCA_EXECUTION_MODE_GUARD: execution scope mismatch or invalid persisted mode (${scope.reason})`);
+      }
     }
     const startTime = Date.now();
     const state = this.initializeExecutionState(request);

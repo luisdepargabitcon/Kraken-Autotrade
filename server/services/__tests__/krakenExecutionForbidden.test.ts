@@ -63,11 +63,12 @@ describe("ExchangeFactory fail-closed venue selection (P0)", () => {
     expect(dataEx.exchangeName).toBe("kraken");
   });
 
-  it("initializeFromConfig coerces persisted kraken trading selection to revolutx fail-closed", async () => {
+  it("initializeFromConfig rejects persisted kraken trading selection without coercing to another venue", async () => {
     await ExchangeFactory.initializeFromConfig({
       tradingExchange: "kraken",
       activeExchange: "kraken",
     });
-    expect(ExchangeFactory.getTradingExchangeType()).toBe("revolutx");
+    expect(ExchangeFactory.getTradingExchangeType()).toBeNull();
+    expect(ExchangeFactory.getDiagnostics().forbiddenSelection?.reason).toBe("forbidden_selection");
   });
 });

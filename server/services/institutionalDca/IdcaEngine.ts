@@ -57,6 +57,7 @@ import { runStartupReconciliation, isSafeToStartAfterReconciliation } from "./Id
 import { tradeSnapshotService, type IdcaCycleContext } from "../TradeSnapshotService";
 import { tradeMetricsTracker } from "../TradeMetricsTracker";
 import { idcaHybridDecisionService } from "./IdcaHybridDecisionService";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
 
 const TAG = "[IDCA]";
 
@@ -200,11 +201,13 @@ export function isLiveExecutionMode(mode: unknown): mode is "live" {
   return mode === "live";
 }
 
+export { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+
 /**
  * Ejecuta una salida basada en señal del ExitManager
  * GUARD CRÍTICO: Solo cierra ciclo en BD si hay confirmación de venta real (orderId/filled)
  */
-async function executeExit(
+export async function executeExit(
   cycle: InstitutionalDcaCycle,
   signal: any, // ExitSignal type
   config: InstitutionalDcaConfigRow,
@@ -213,6 +216,12 @@ async function executeExit(
 ): Promise<void> {
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
+
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeExit");
+    return;
+  }
 
   let sellVolume = totalQty; // may be adjusted by dust tolerance below
 
@@ -237,11 +246,9 @@ async function executeExit(
       }
     }
 
-    // ─── STRICT MODE GUARD (P0) ───
-    // Solo el modo exacto "live" puede enviar ordenes reales al venue.
-    // Cualquier otro valor (simulation, undefined, null, corrupto, desconocido)
-    // se ejecuta de forma estrictamente simulada: sin contacto con el exchange.
-    const isLiveMode = isLiveExecutionMode(mode);
+    // Scope ya validado: solo "live" contacta el venue; solo "simulation"
+    // ejecuta contabilidad simulada. No existe fallback entre modos.
+    const isLiveMode = scope.mode === "live";
 
     let sellOrder: { success: boolean; orderId?: string; txid?: string };
     if (isLiveMode) {
@@ -622,6 +629,43 @@ async function createHumanEvent(
   });
 }
 
+async function emitInvalidExecutionScopeEvent(
+  cycle: InstitutionalDcaCycle,
+  requestedMode: unknown,
+  reason: string,
+  source: string
+): Promise<void> {
+  let requested: string;
+  if (typeof requestedMode === "string") {
+    requested = requestedMode;
+  } else if (requestedMode === undefined) {
+    requested = "undefined";
+  } else {
+    try {
+      requested = JSON.stringify(requestedMode) ?? String(requestedMode);
+    } catch {
+      requested = String(requestedMode);
+    }
+  }
+  console.error(
+    `${TAG}[EXECUTION_SCOPE_BLOCKED] source=${source} cycleId=${cycle.id} pair=${cycle.pair} ` +
+    `requested=${requested} persisted=${String(cycle.mode)} reason=${reason}`
+  );
+  await createHumanEvent({
+    cycleId: cycle.id,
+    pair: cycle.pair,
+    mode: String(cycle.mode),
+    eventType: "execution_scope_blocked",
+    severity: "critical",
+    message: `Ejecución bloqueada por scope de modo inválido (${reason}). No se envió orden ni se modificó contabilidad.`,
+    payloadJson: { source, requestedMode: requested, persistedMode: cycle.mode, reason },
+  }, {
+    eventType: "execution_scope_blocked",
+    pair: cycle.pair,
+    mode: String(cycle.mode),
+  });
+}
+
 // ─── Public API ────────────────────────────────────────────────────
 
 export function getHealthStatus() {
@@ -961,7 +1005,18 @@ export function getMacroContext(pair: string): IdcaMacroContext | undefined {
 export async function emergencyCloseAll(): Promise<number> {
   const config = await repo.getIdcaConfig();
   const mode = config.mode as IdcaMode;
-  if (mode === "disabled") return 0;
+
+  if (mode !== "live" && mode !== "simulation") {
+    console.error(`${TAG}[EXECUTION_SCOPE_BLOCKED] source=emergencyCloseAll requested=${String(mode)} reason=requested_mode_invalid`);
+    await createHumanEvent({
+      eventType: "execution_scope_blocked",
+      severity: "critical",
+      mode: String(mode),
+      message: "Emergency close bloqueado por scope de modo inválido. No se envió orden ni se modificó contabilidad.",
+      payloadJson: { source: "emergencyCloseAll", requestedMode: String(mode), reason: "requested_mode_invalid" },
+    }, { eventType: "execution_scope_blocked", mode: String(mode) });
+    return 0;
+  }
 
   console.log(`${TAG}[EMERGENCY_CLOSE] Closing all positions for mode=${mode}`);
 
@@ -971,29 +1026,42 @@ export async function emergencyCloseAll(): Promise<number> {
     prices[pair] = await getCurrentPrice(pair);
   }
 
+  const activeCyclesBefore = await repo.getAllActiveCycles();
+  const scopedCycles: InstitutionalDcaCycle[] = [];
+  for (const cycle of activeCyclesBefore) {
+    const scope = resolveIdcaExecutionScope(cycle, mode);
+    if (!scope.ok) {
+      await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "emergencyCloseAll");
+      continue;
+    }
+    scopedCycles.push(cycle);
+  }
+
   // ─── Lote 4: Cancel all pending exit instructions before bulk close ───
   try {
-    const activeCyclesBefore = await repo.getAllActiveCycles(mode);
-    for (const c of activeCyclesBefore) {
+    for (const c of scopedCycles) {
       await exitRepo.cancelActiveExitInstructionForCycle(c.id, "emergency_close_all");
     }
   } catch (cancelErr: any) {
     console.error(`${TAG}[EMERGENCY_CLOSE] Failed to cancel exit instructions: ${cancelErr.message}`);
   }
 
-  const closed = await repo.closeCyclesBulk(mode, "emergency_close_all", prices);
-
-  // If live mode, attempt market sells
-  if (mode === "live") {
-    const activeCycles = await repo.getAllActiveCycles("live");
-    for (const cycle of activeCycles) {
-      if (parseFloat(String(cycle.totalQuantity)) > 0) {
-        try {
-          await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true);
-        } catch (e: any) {
-          console.error(`${TAG}[EMERGENCY_CLOSE] Error selling ${cycle.pair}:`, e.message);
-        }
+  let closed = 0;
+  for (const cycle of scopedCycles) {
+    try {
+      if (mode === "live" && parseFloat(String(cycle.totalQuantity)) > 0) {
+        await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true, mode);
       }
+      const price = prices[cycle.pair] || 0;
+      await repo.updateCycle(cycle.id, {
+        status: "closed",
+        closeReason: "emergency_close_all",
+        currentPrice: price.toFixed(8),
+        closedAt: new Date(),
+      });
+      closed++;
+    } catch (e: any) {
+      console.error(`${TAG}[EMERGENCY_CLOSE] Error closing ${cycle.pair} cycle #${cycle.id}:`, e.message);
     }
   }
 
@@ -3235,6 +3303,12 @@ async function armTakeProfit(
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "armTakeProfit");
+    return;
+  }
+
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd));
@@ -3272,7 +3346,7 @@ async function armTakeProfit(
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "partial_sell", partialQty, false);
+    await executeRealSell(cycle, "partial_sell", partialQty, false, mode);
   }
 
   const remainingQty = totalQty - partialQty;
@@ -3374,6 +3448,12 @@ async function executeTrailingExit(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeTrailingExit");
+    return;
+  }
+
   const pair = cycle.pair;
   const requestedQty = parseFloat(String(cycle.totalQuantity));
   const asset = pair.split("/")[0];
@@ -3437,7 +3517,7 @@ async function executeTrailingExit(
   // Prevents fake sell history if the exchange call fails.
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "final_sell", actualSellQty, true);
+      await executeRealSell(cycle, "final_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[TRAILING_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -3571,6 +3651,12 @@ async function executeBreakevenExit(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeBreakevenExit");
+    return;
+  }
+
   const pair = cycle.pair;
   const requestedQty = parseFloat(String(cycle.totalQuantity));
   const asset = pair.split("/")[0];
@@ -3630,7 +3716,7 @@ async function executeBreakevenExit(
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "breakeven_sell", actualSellQty, true);
+      await executeRealSell(cycle, "breakeven_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[BREAKEVEN_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -4943,6 +5029,36 @@ async function executeRealBuyWithGuard(
 ): Promise<BuyExecutionResult> {
   const intendedUsd = intendedQty * price;
 
+  if (!isLiveExecutionMode(mode)) {
+    return {
+      success: false,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: false,
+      originalQty: intendedQty,
+      rejectionReason: `execution_scope_invalid: requested_mode_invalid`,
+    };
+  }
+
+  if (cycleId > 0) {
+    const scopedCycle = await repo.getCycleById(cycleId);
+    const scope = resolveIdcaExecutionScope(scopedCycle, mode);
+    if (!scope.ok) {
+      return {
+        success: false,
+        executedQty: 0,
+        executedUsd: 0,
+        avgPrice: 0,
+        feeUsd: 0,
+        wasAdjusted: false,
+        originalQty: intendedQty,
+        rejectionReason: `execution_scope_invalid: ${scope.reason}`,
+      };
+    }
+  }
+
   // ─── FASE 1: Validar intención con ExecutionGuard ───
   const validation = await liveGuard.validateLiveBuyIntention({
     pair,
@@ -5200,7 +5316,17 @@ async function executeSafetyBuyLiveSafe(
   };
 }
 
-async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false): Promise<void> {
+async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false, requestedMode: unknown = cycle.mode): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, requestedMode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, scope.reason, "executeRealSell");
+    throw new Error(`IDCA_EXECUTION_SCOPE_GUARD: ${scope.reason}`);
+  }
+  if (scope.mode !== "live") {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, "real_order_requires_live", "executeRealSell");
+    throw new Error("IDCA_EXECUTION_SCOPE_GUARD: real_order_requires_live");
+  }
+
   try {
     // HOTFIX: Validar balance base real antes de vender
     const cycleQty = parseFloat(String(cycle.totalQuantity));
@@ -5902,6 +6028,12 @@ async function closePlusCycle(
   mode: IdcaMode,
   reason: string
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(plusCycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(plusCycle, mode, scope.reason, "closePlusCycle");
+    return;
+  }
+
   const pair = plusCycle.pair;
   const totalQty = parseFloat(String(plusCycle.totalQuantity || "0"));
   const capitalUsed = parseFloat(String(plusCycle.capitalUsedUsd || "0"));
@@ -5951,7 +6083,7 @@ async function closePlusCycle(
   }
 
   if (mode === "live") {
-    await executeRealSell(plusCycle, "final_sell", totalQty, true);
+    await executeRealSell(plusCycle, "final_sell", totalQty, true, mode);
   }
 
   await createHumanEvent({
@@ -7233,6 +7365,12 @@ async function closeRecoveryCycle(
   mode: IdcaMode,
   closeReason: string
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(recoveryCycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(recoveryCycle, mode, scope.reason, "closeRecoveryCycle");
+    return;
+  }
+
   const pair = recoveryCycle.pair;
   const remainingQty = parseFloat(String(recoveryCycle.totalQuantity));
   const capitalUsed = parseFloat(String(recoveryCycle.capitalUsedUsd || "0"));
@@ -7273,7 +7411,7 @@ async function closeRecoveryCycle(
     });
 
     if (mode === "live") {
-      await executeRealSell(recoveryCycle, "final_sell", remainingQty, true);
+      await executeRealSell(recoveryCycle, "final_sell", remainingQty, true, mode);
     }
   }
 
@@ -7349,6 +7487,14 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   if (!cycle) throw new Error(`Ciclo #${cycleId} no encontrado`);
   if (cycle.status === "closed") throw new Error("El ciclo ya está cerrado");
 
+  const config = await repo.getIdcaConfig();
+  const requestedMode = config.mode;
+  const scope = resolveIdcaExecutionScope(cycle, requestedMode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, scope.reason, "manualCloseCycle");
+    throw new Error(`IDCA_EXECUTION_SCOPE_GUARD: ${scope.reason}`);
+  }
+
   // ─── Lote 4: Check for blocking exit instruction ───
   const activeInstr = await exitRepo.getActiveExitInstruction(cycleId);
   if (activeInstr && activeInstr.status === "failed_requires_review") {
@@ -7360,7 +7506,6 @@ export async function manualCloseCycle(cycleId: number): Promise<{
 
   const pair = cycle.pair;
   const mode = cycle.mode as IdcaMode;
-  const config = await repo.getIdcaConfig();
 
   const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
   if (totalQty <= 0) throw new Error("El ciclo no tiene cantidad disponible para vender");
@@ -7406,7 +7551,7 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "manual_sell", totalQty, true);
+    await executeRealSell(cycle, "manual_sell", totalQty, true, mode);
   }
 
   // Lote 4: zero capitalUsedUsd on full close; preserve totalCostBasisUsd as historical

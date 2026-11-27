@@ -15,6 +15,7 @@ import type {
 } from "@shared/schema";
 import type { IdcaExitInstruction } from "@shared/schema";
 import type { IdcaMode } from "./IdcaTypes";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
 
 const TAG = "[IDCA_EXIT_EXEC]";
 const EXECUTING_TIMEOUT_MINUTES = 5;
@@ -310,6 +311,30 @@ export async function executeExitInstruction(
   const mode = instr.mode as IdcaMode;
   const cycleId = instr.cycleId;
   const closePct = parseFloat(String(instr.closePct));
+
+  const cycleForScope = (await repo.getCycleById(cycleId)) ?? null;
+  const scope = resolveIdcaExecutionScope(cycleForScope, mode);
+  if (!scope.ok) {
+    console.error(
+      `${TAG} #${instructionId} EXECUTION_SCOPE_BLOCKED: requested=${String(mode)} ` +
+      `persisted=${String(cycleForScope?.mode)} reason=${scope.reason}`
+    );
+    await repo.createEvent({
+      cycleId,
+      pair: instr.pair,
+      mode: String(instr.mode),
+      eventType: "execution_scope_blocked",
+      severity: "critical",
+      message: `Instrucción de salida #${instructionId} bloqueada por scope de modo inválido (${scope.reason}).`,
+      payloadJson: {
+        instructionId,
+        requestedMode: String(mode),
+        persistedMode: cycleForScope?.mode ?? null,
+        reason: scope.reason,
+      },
+    });
+    return;
+  }
 
   // 2. Generate clientOrderId + mark executing
   const clientOrderId = `IDCA_EXIT_${cycleId}_${instructionId}_${Date.now()}`;

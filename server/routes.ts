@@ -265,11 +265,11 @@ export async function registerRoutes(
         revolutxApiKey: apiConfig.revolutxApiKey ?? undefined,
         revolutxPrivateKey: apiConfig.revolutxPrivateKey ?? undefined,
         revolutxEnabled: apiConfig.revolutxEnabled ?? false,
-        activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx") ?? "kraken",
-        tradingExchange: ((apiConfig as any).tradingExchange as "kraken" | "revolutx") ?? "kraken",
-        dataExchange: ((apiConfig as any).dataExchange as "kraken" | "revolutx") ?? "kraken",
+        activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx" | null) ?? undefined,
+        tradingExchange: ((apiConfig as any).tradingExchange as "kraken" | "revolutx" | null) ?? undefined,
+        dataExchange: ((apiConfig as any).dataExchange as "kraken" | "revolutx" | null) ?? undefined,
       });
-      console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType()}`);
+      console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType() ?? 'none'}`);
       
       if (apiConfig.krakenApiKey && apiConfig.krakenApiSecret && apiConfig.krakenConnected) {
         krakenService.initialize({
@@ -610,6 +610,13 @@ export async function registerRoutes(
       
       if (activeExchange === "revolutx" && !config?.revolutxConnected) {
         return res.status(400).json({ error: "Revolut X no está conectado. Configura las credenciales primero." });
+      }
+
+      if (activeExchange === "revolutx") {
+        const revolutStatus = ExchangeFactory.getExchangeStatus().find((status) => status.name === "revolutx");
+        if (!revolutStatus?.enabled || !revolutStatus.configured) {
+          return res.status(400).json({ error: "VENUE_UNAVAILABLE: Revolut X debe estar habilitado e inicializado antes de seleccionarlo" });
+        }
       }
 
       // Update ExchangeFactory runtime state
@@ -1630,7 +1637,12 @@ export async function registerRoutes(
     let prices: Record<string, { price: string; change: string }> = {};
 
     const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
-    const tradingExchange = ExchangeFactory.getTradingExchange();
+    let tradingExchange: ReturnType<typeof ExchangeFactory.getDataExchange> | null = null;
+    try {
+      tradingExchange = ExchangeFactory.getTradingExchange();
+    } catch (e: any) {
+      console.error('[dashboard] Execution venue unavailable:', e?.message || e);
+    }
     const dataExchange = ExchangeFactory.getDataExchange();
 
     const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
@@ -1660,11 +1672,11 @@ export async function registerRoutes(
     // Fetch balance + stale tickers with hard 3s timeout
     await Promise.race([
       Promise.all([
-        tradingExchange.isInitialized()
+        tradingExchange?.isInitialized()
           ? tradingExchange.getBalance()
               .then(raw => {
                 for (const [asset, amount] of Object.entries(raw)) {
-                  const sym = normalizeSymbol(asset, tradingExchangeType);
+                  const sym = normalizeSymbol(asset, tradingExchangeType ?? 'none');
                   if (activeAssets.has(sym)) balances[sym] = (balances[sym] || 0) + amount;
                 }
               })
@@ -1685,10 +1697,10 @@ export async function registerRoutes(
       new Promise<void>(r => setTimeout(r, DASHBOARD_COLD_TIMEOUT)),
     ]);
 
-    const exchangeConnected = tradingExchange.isInitialized();
+    const exchangeConnected = tradingExchange?.isInitialized() === true;
     const responseData = {
       exchangeConnected,
-      tradingExchange: tradingExchangeType,
+      tradingExchange: tradingExchangeType ?? 'none',
       dataExchange: ExchangeFactory.getDataExchangeType(),
       krakenConnected: krakenService.isInitialized(),
       telegramConnected: apiConfig?.telegramConnected || false,

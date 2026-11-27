@@ -721,7 +721,7 @@ export class TradingEngine {
 
     await this.expireHybridWatchesIfNeeded();
 
-    const exchange = this.getTradingExchangeType();
+    const exchange = (this.getTradingExchangeType() ?? "none");
     const ttlMinutes = Number(cfg?.ttlMinutes ?? 120);
     const cooldownMinutes = Number(cfg?.cooldownMinutes ?? 0);
     const maxActiveWatchesPerPair = Number(cfg?.maxActiveWatchesPerPair ?? 1);
@@ -819,7 +819,7 @@ export class TradingEngine {
     
     // Initialize SpreadFilter with host adapter
     this.spreadFilter = new SpreadFilter({
-      getTradingExchangeType: () => this.getTradingExchangeType(),
+      getTradingExchangeType: () => (this.getTradingExchangeType() ?? "none"),
       getDataExchangeType: () => ExchangeFactory.getDataExchangeType(),
       sendAlertWithSubtype: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat, sub),
       isTelegramInitialized: () => this.telegramService.isInitialized(),
@@ -838,7 +838,7 @@ export class TradingEngine {
     log(`[REGIME_PARAMS] enter=${REGIME_CONFIG.ADX_TREND_ENTRY} exit=${REGIME_CONFIG.ADX_TREND_EXIT} hardExit=${REGIME_CONFIG.ADX_HARD_EXIT} confirm=${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} minHold=${REGIME_CONFIG.MIN_HOLD_MINUTES} cooldown=${REGIME_CONFIG.NOTIFY_COOLDOWN_MS / 60000}min`, "trading");
     
     // Log exchange configuration
-    log(`[EXCHANGE] Trading: ${ExchangeFactory.getTradingExchangeType()}, Data: ${ExchangeFactory.getDataExchangeType()}`, "trading");
+    log(`[EXCHANGE] Trading: ${(ExchangeFactory.getTradingExchangeType() ?? "none")}, Data: ${ExchangeFactory.getDataExchangeType()}`, "trading");
   }
 
   private createExitHost(): IExitManagerHost {
@@ -851,7 +851,7 @@ export class TradingEngine {
       updatePositionHighestPriceByLotId: (lotId, price) => this.updatePositionHighestPriceByLotId(lotId, price),
       getTradingExchange: () => this.getTradingExchange(),
       getDataExchange: () => this.getDataExchange(),
-      getTradingExchangeType: () => this.getTradingExchangeType(),
+      getTradingExchangeType: () => (this.getTradingExchangeType() ?? "none"),
       getTradingFees: () => this.getTradingFees(),
       getOrderMin: (pair) => this.getOrderMin(pair),
       getAssetBalance: (pair, balances) => this.getAssetBalance(pair, balances),
@@ -946,7 +946,7 @@ export class TradingEngine {
     } catch { return []; }
   }
 
-  private getTradingExchangeType(): ExchangeType {
+  private getTradingExchangeType(): ExchangeType | null {
     return ExchangeFactory.getTradingExchangeType();
   }
 
@@ -1140,7 +1140,7 @@ export class TradingEngine {
     const botConfigCheck = await storage.getBotConfig();
     const positionMode = botConfigCheck?.positionMode || "SINGLE";
     const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
-    const exchangeForGate = this.getTradingExchangeType();
+    const exchangeForGate = (this.getTradingExchangeType() ?? "none");
     const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
 
     const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGate, pair);
@@ -1245,7 +1245,7 @@ export class TradingEngine {
 
   private async recoverPendingFillPositionsFromDB() {
     try {
-      const exchange = this.getTradingExchangeType();
+      const exchange = (this.getTradingExchangeType() ?? "none");
       const pendingPositions = await storage.getPendingFillPositions(exchange);
       if (!pendingPositions || pendingPositions.length === 0) return;
 
@@ -1942,7 +1942,7 @@ export class TradingEngine {
       try {
         await this.expireHybridWatchesIfNeeded();
         activeHybridWatch = await storage.getActiveHybridReentryWatch({
-          exchange: this.getTradingExchangeType(),
+          exchange: (this.getTradingExchangeType() ?? "none"),
           pair,
           strategy: `momentum_candles_${timeframe}`,
         });
@@ -2378,9 +2378,15 @@ export class TradingEngine {
       return;
     }
 
-    const tradingExchange = this.getTradingExchange();
+    let tradingExchange: IExchangeService;
+    try {
+      tradingExchange = this.getTradingExchange();
+    } catch (error: any) {
+      log(`Execution venue unavailable (${error?.message || error}); trading engine not started`, "trading");
+      return;
+    }
     if (!tradingExchange.isInitialized()) {
-      log(`${ExchangeFactory.getTradingExchangeType()} no está configurado, no se puede iniciar el trading`, "trading");
+      log(`${ExchangeFactory.getTradingExchangeType() ?? "none"} no está configurado, no se puede iniciar el trading`, "trading");
       return;
     }
 
@@ -2758,7 +2764,7 @@ ${positionsList}
     try {
       await storage.saveOpenPositionByLotId({
         lotId: position.lotId,
-        exchange: this.getTradingExchangeType(),
+        exchange: (this.getTradingExchangeType() ?? "none"),
         pair,
         entryPrice: position.entryPrice.toString(),
         amount: position.amount.toString(),
@@ -4463,7 +4469,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           if (alerts?.enabled !== false && alerts?.reentrySignal !== false) {
             this.telegramService.sendHybridGuardReentrySignal({
               pair,
-              exchange: this.getTradingExchangeType(),
+              exchange: (this.getTradingExchangeType() ?? "none"),
               reason: hgInfo.reason,
               watchId: hgInfo.watchId,
               currentPrice,
@@ -4497,7 +4503,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           regime: currentRegimeForSizing,
           signalConfidence: signal.confidence,
           signalReason: signal.reason,
-          exchange: this.getTradingExchangeType(),
+          exchange: (this.getTradingExchangeType() ?? "none"),
         });
         if (cycleGate.blocked) {
           log(`[ENTRY_HARD_GUARD_BLOCK] ${pair}: pipeline=cycle decisionId=${cycleGate.decisionId} blockers=[${cycleGate.blockers.join(' | ')}]`, "trading");
@@ -4552,7 +4558,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             if (alerts?.enabled !== false && alerts?.orderExecuted !== false) {
               this.telegramService.sendHybridGuardOrderExecuted({
                 pair,
-                exchange: this.getTradingExchangeType(),
+                exchange: (this.getTradingExchangeType() ?? "none"),
                 reason: hgInfo.reason,
                 watchId: hgInfo.watchId,
                 price: currentPrice,
@@ -4578,7 +4584,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
               hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
             this.telegramService.sendBuyExecutedSnapshot({
               pair,
-              exchange: this.getTradingExchangeType(),
+              exchange: (this.getTradingExchangeType() ?? "none"),
               price: currentPrice,
               volume: finalVolumeCycle.toFixed(8),
               totalUsd: tradeAmountUSD,
@@ -5497,7 +5503,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           if (alerts?.enabled !== false && alerts?.reentrySignal !== false) {
             this.telegramService.sendHybridGuardReentrySignal({
               pair,
-              exchange: this.getTradingExchangeType(),
+              exchange: (this.getTradingExchangeType() ?? "none"),
               reason: hgInfo.reason,
               watchId: hgInfo.watchId,
               currentPrice,
@@ -5715,7 +5721,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             if (alerts?.enabled !== false && alerts?.orderExecuted !== false) {
               this.telegramService.sendHybridGuardOrderExecuted({
                 pair,
-                exchange: this.getTradingExchangeType(),
+                exchange: (this.getTradingExchangeType() ?? "none"),
                 reason: hgInfo.reason,
                 watchId: hgInfo.watchId,
                 price: currentPrice,
@@ -5733,7 +5739,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
           this.telegramService.sendBuyExecutedSnapshot({
             pair,
-            exchange: this.getTradingExchangeType(),
+            exchange: (this.getTradingExchangeType() ?? "none"),
             price: currentPrice,
             volume: finalVolumeCandles.toFixed(8),
             totalUsd: tradeAmountUSD,
@@ -6715,7 +6721,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       
       // Generate clientOrderId for bot order attribution (used to match synced trades)
       const clientOrderId = crypto.randomUUID();
-      const exchange = this.getTradingExchangeType();
+      const exchange = (this.getTradingExchangeType() ?? "none");
       
       // PERSIST ORDER INTENT: Store intent BEFORE sending to exchange for attribution
       try {
@@ -7764,7 +7770,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
         // Registrar el trade de cierre
         const tradeId = `MANUAL-${Date.now()}`;
-        const exchange = this.getTradingExchangeType();
+        const exchange = (this.getTradingExchangeType() ?? "none");
         await storage.createTrade({
           tradeId,
           exchange,
@@ -7877,7 +7883,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
           type: "sell",
           volume: sellAmountFinal.toFixed(8),
           error: errorMsg,
-          exchange: this.getTradingExchangeType()
+          exchange: (this.getTradingExchangeType() ?? "none")
         });
         return {
           success: false,
@@ -7899,7 +7905,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
 
       // Registrar el trade de cierre
       const tradeId = `MANUAL-${Date.now()}`;
-      const exchange = this.getTradingExchangeType();
+      const exchange = (this.getTradingExchangeType() ?? "none");
       await storage.createTrade({
         tradeId,
         exchange,
