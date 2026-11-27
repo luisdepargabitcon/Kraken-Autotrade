@@ -109,7 +109,8 @@ export function computeRelativeVolumeInputs(
   nowMs: number = Date.now()
 ): { currentVolume: number; avgVolume: number } | null {
   const closed = candles.filter(
-    (c) => Number.isFinite(c.volume) && c.volume > 0 && c.time + candleDurationMs <= nowMs
+    (c): c is TimestampedCandle & { volume: number } =>
+      typeof c.volume === "number" && Number.isFinite(c.volume) && c.volume > 0 && c.time + candleDurationMs <= nowMs
   );
   if (closed.length < 2) return null;
   const measured = closed[closed.length - 1];
