@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-11-27T20:48:09.251Z",
+  "files": [
+    {
+      "url": "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60",
+      "fetchedAt": "2026-11-27T20:38:17.073Z",
+      "candles": 720,
+      "first": "2026-10-28T21:00:00.000Z",
+      "last": "2026-11-27T20:00:00.000Z",
+      "sha256": "96e2e1517719e6e660beb085d70c9216480537ae4c18673e3f0b60c192e521e2"
+    },
+    {
+      "url": "https://api.kraken.com/0/public/OHLC?pair=ETHUSD&interval=60",
+      "fetchedAt": "2026-11-27T20:38:17.149Z",
+      "candles": 720,
+      "first": "2026-10-28T21:00:00.000Z",
+      "last": "2026-11-27T20:00:00.000Z",
+      "sha256": "c7c67cd8f8779425b9ae86c0c986381ecd90927e15ea18122671b07ad51f6664"
+    }
+  ]
+}
