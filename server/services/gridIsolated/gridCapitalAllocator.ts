@@ -19,6 +19,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { MarketDataService } from "../MarketDataService";
 import {
   CAPITAL_PROFILES,
   type CapitalProfile,
@@ -70,14 +71,18 @@ class GridCapitalAllocator {
       const usdBalance = balance["USD"] || 0;
       const btcBalance = balance["BTC"] || 0;
 
-      // Convert BTC to USD using current ticker if available
+      // Convert BTC to USD using the PUBLIC reference price (Kraken via MDS cache).
+      // LOW_API doctrine: never use a signed Revolut X ticker for planning/valuation;
+      // the execution venue is not a market-data provider.
       let btcValueUsd = 0;
       if (btcBalance > 0) {
         try {
-          const ticker = await exchange.getTicker("BTC/USD");
-          btcValueUsd = btcBalance * ticker.last;
+          const referencePrice = await MarketDataService.getPrice("BTC/USD");
+          if (referencePrice && Number.isFinite(referencePrice) && referencePrice > 0) {
+            btcValueUsd = btcBalance * referencePrice;
+          }
         } catch {
-          // If ticker fails, just use USD balance
+          // If reference price fails, just use USD balance
         }
       }
 

@@ -91,6 +91,36 @@ export function computeMarketScore(
   return clamp(Math.round(weighted / totalWeight), 0, 100);
 }
 
+// ─── Relative volume inputs (H-017 correction) ─────────────────────
+
+/**
+ * Compute real relative-volume inputs from candles of ONE source/timeframe.
+ * - The measured volume is the most recent CLOSED candle.
+ * - The average is the mean of up to `window` CLOSED candles BEFORE the
+ *   measured one (the measured candle is never included in its own average).
+ * - A candle counts as closed when its open time + candleDurationMs <= nowMs.
+ * - Returns null when volume data is missing or degenerate: callers must
+ *   degrade (exclude the volume weight) instead of feeding an artificial 1/1.
+ */
+export function computeRelativeVolumeInputs(
+  candles: TimestampedCandle[],
+  candleDurationMs: number = 3_600_000,
+  window: number = 20,
+  nowMs: number = Date.now()
+): { currentVolume: number; avgVolume: number } | null {
+  const closed = candles.filter(
+    (c) => Number.isFinite(c.volume) && c.volume > 0 && c.time + candleDurationMs <= nowMs
+  );
+  if (closed.length < 2) return null;
+  const measured = closed[closed.length - 1];
+  const refStart = Math.max(0, closed.length - 1 - window);
+  const reference = closed.slice(refStart, closed.length - 1);
+  if (reference.length === 0) return null;
+  const avg = reference.reduce((s, c) => s + c.volume, 0) / reference.length;
+  if (!(avg > 0) || !Number.isFinite(avg)) return null;
+  return { currentVolume: measured.volume, avgVolume: avg };
+}
+
 // ─── Volatility-based Trailing ─────────────────────────────────────
 
 export interface VolatilityTrailingInput {

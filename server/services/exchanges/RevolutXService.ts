@@ -520,11 +520,12 @@ export class RevolutXService implements IExchangeService {
   async getBalance(): Promise<Record<string, number>> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    // Check balance cache first
+    // Check balance cache first; concurrent misses share ONE upstream call
+    // (single-flight coalescing, LOW_API doctrine).
     const cached = balanceCache.get('revolutx');
     if (cached) return cached;
 
-    return this.scheduleRL(async () => {
+    return balanceCache.getOrFetchCoalesced('revolutx', () => this.scheduleRL(async () => {
       const path = '/api/1.0/balances';
       const headers = this.getHeaders('GET', path);
 
@@ -555,7 +556,7 @@ export class RevolutXService implements IExchangeService {
         console.error('[revolutx] getBalance error:', error.message);
         throw error;
       }
-    });
+    }));
   }
 
   async getTicker(pair: string): Promise<Ticker> {

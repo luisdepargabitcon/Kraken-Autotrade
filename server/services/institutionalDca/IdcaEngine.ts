@@ -4321,22 +4321,34 @@ async function performEntryCheck(
         if (btcScoreCandles.length >= 20) {
           const btcCloses = btcScoreCandles.map(c => c.close);
           const btcEma20 = smart.computeEMA(btcCloses, 20);
+          // H-016: EMA50 must be the real 50-period EMA of BTC, not a shifted EMA20.
+          const btcEma50 = smart.computeEMA(btcCloses, Math.min(50, btcCloses.length));
           const btcRsi = smart.computeRSI(btcCloses);
+          // H-017: real relative volume; when unavailable, degrade by dropping
+          // the volume weight instead of feeding an artificial 1/1 ratio.
+          const btcVolInputs = smart.computeRelativeVolumeInputs(btcScoreCandles);
+          const btcWeights = { ...(config.marketScoreWeightsJson as any) };
+          if (!btcVolInputs) btcWeights.relative_volume = 0;
           btcScore = smart.computeMarketScore({
             currentPrice: btcCloses[btcCloses.length - 1],
             ema20: btcEma20[btcEma20.length - 1],
-            ema50: btcEma20[Math.max(0, btcEma20.length - 2)],
+            ema50: btcEma50[btcEma50.length - 1],
             prevEma20: btcEma20[Math.max(0, btcEma20.length - 2)],
-            prevEma50: btcEma20[Math.max(0, btcEma20.length - 3)],
+            prevEma50: btcEma50[Math.max(0, btcEma50.length - 2)],
             rsi: btcRsi,
-            currentVolume: 1,
-            avgVolume: 1,
+            currentVolume: btcVolInputs?.currentVolume ?? 0,
+            avgVolume: btcVolInputs?.avgVolume ?? 0,
             localHigh: Math.max(...btcCloses.slice(-60)),
-          }, config.marketScoreWeightsJson as any);
+          }, btcWeights);
           btcScoreForConfluence = btcScore;
         }
       }
 
+      // H-017: real relative volume; degrade by dropping the volume weight
+      // when volume data is missing instead of feeding an artificial 1/1.
+      const volInputs = smart.computeRelativeVolumeInputs(scoreCandles);
+      const pairWeights = { ...(config.marketScoreWeightsJson as any) };
+      if (!volInputs) pairWeights.relative_volume = 0;
       marketScore = smart.computeMarketScore({
         currentPrice,
         ema20: ema20[ema20.length - 1],
@@ -4344,11 +4356,11 @@ async function performEntryCheck(
         prevEma20: ema20[Math.max(0, ema20.length - 2)],
         prevEma50: ema50[Math.max(0, ema50.length - 2)],
         rsi,
-        currentVolume: 1,
-        avgVolume: 1,
+        currentVolume: volInputs?.currentVolume ?? 0,
+        avgVolume: volInputs?.avgVolume ?? 0,
         localHigh: scoreLocalHigh,
         btcScore,
-      }, config.marketScoreWeightsJson as any);
+      }, pairWeights);
 
       if (marketScore < 50) {
         blocks.push({ code: "market_score_too_low", message: `Score ${marketScore} < 50`, timestamp: now });
