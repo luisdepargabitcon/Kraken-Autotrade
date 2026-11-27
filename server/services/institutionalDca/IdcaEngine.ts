@@ -1239,19 +1239,31 @@ function emitPairDisabledLog(pair: string, mode: string): void {
 
 // ─── Exit-price alert throttling ─────────────────────────────────────
 const EXIT_PRICE_ALERT_THROTTLE_MS = 15 * 60 * 1000;
-const exitPriceAlertState = new Map<string, { type: "exit_price_degraded" | "exit_price_unavailable"; lastAtMs: number }>();
+type ExitPriceAlertType = "exit_price_degraded" | "exit_price_unavailable";
+const exitPriceAlertState = new Map<string, { lastAtMs: number }>();
 
-function shouldEmitExitPriceAlert(pair: string, type: "exit_price_degraded" | "exit_price_unavailable", nowMs: number): boolean {
-  const previous = exitPriceAlertState.get(pair);
-  if (!previous || previous.type !== type || nowMs - previous.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
-    exitPriceAlertState.set(pair, { type, lastAtMs: nowMs });
+function exitPriceAlertKey(pair: string, type: ExitPriceAlertType): string {
+  return `${pair}::${type}`;
+}
+
+function shouldEmitExitPriceAlert(pair: string, type: ExitPriceAlertType, nowMs: number): boolean {
+  for (const [key, state] of exitPriceAlertState) {
+    if (nowMs - state.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
+      exitPriceAlertState.delete(key);
+    }
+  }
+  const key = exitPriceAlertKey(pair, type);
+  const previous = exitPriceAlertState.get(key);
+  if (!previous || nowMs - previous.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
+    exitPriceAlertState.set(key, { lastAtMs: nowMs });
     return true;
   }
   return false;
 }
 
 function clearExitPriceAlertState(pair: string): void {
-  exitPriceAlertState.delete(pair);
+  exitPriceAlertState.delete(exitPriceAlertKey(pair, "exit_price_degraded"));
+  exitPriceAlertState.delete(exitPriceAlertKey(pair, "exit_price_unavailable"));
 }
 
 // ─── Pair Evaluation ───────────────────────────────────────────────
@@ -1261,6 +1273,7 @@ async function evaluatePair(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const evaluationNowMs = Date.now();
   console.log(`${TAG}[EVAL_START] pair=${pair}`);
   const assetConfig = await repo.getAssetConfig(pair);
   if (!assetConfig) {
@@ -1279,10 +1292,10 @@ async function evaluatePair(
     emitPairDisabledLog(pair, mode);
   }
 
-  const exitPriceResolution = await resolveExitPriceForPair(pair);
+  const exitPriceResolution = await resolveExitPriceForPair(pair, evaluationNowMs);
   if (exitPriceResolution.price === null) {
     console.error(`${TAG}[EXIT_PRICE_UNAVAILABLE] ${pair}: no valid realtime/fallback price — exits not evaluated`);
-    if (shouldEmitExitPriceAlert(pair, "exit_price_unavailable", Date.now())) {
+    if (shouldEmitExitPriceAlert(pair, "exit_price_unavailable", evaluationNowMs)) {
       await createHumanEvent({
         pair,
         mode,
@@ -1296,7 +1309,7 @@ async function evaluatePair(
   }
   if (exitPriceResolution.degraded) {
     console.warn(`${TAG}[EXIT_PRICE_DEGRADED] ${pair}: source=${exitPriceResolution.source} alert=${exitPriceResolution.alert}`);
-    if (shouldEmitExitPriceAlert(pair, "exit_price_degraded", Date.now())) {
+    if (shouldEmitExitPriceAlert(pair, "exit_price_degraded", evaluationNowMs)) {
       await createHumanEvent({
         pair,
         mode,
@@ -4776,6 +4789,9 @@ export function __clearExitPriceAlertThrottleForTest(): void {
   priceCache.clear();
   priceCacheMeta.clear();
 }
+export function __shouldEmitExitPriceAlertForTest(pair: string, type: ExitPriceAlertType, nowMs: number): boolean {
+  return shouldEmitExitPriceAlert(pair, type, nowMs);
+}
 
 // ─── Module Drawdown Check ─────────────────────────────────────────
 
@@ -4853,8 +4869,7 @@ function resolveSimulationFeePct(config: InstitutionalDcaConfigRow): number {
 
 const priceCacheMeta = new Map<string, { price: number; atMs: number }>();
 
-async function resolveExitPriceForPair(pair: string) {
-  const nowMs = Date.now();
+async function resolveExitPriceForPair(pair: string, nowMs = Date.now()) {
   let realtimePrice: number | null = null;
   try {
     const price = await MarketDataService.getPrice(pair);

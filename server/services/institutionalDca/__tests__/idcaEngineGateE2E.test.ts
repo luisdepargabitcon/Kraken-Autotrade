@@ -30,7 +30,7 @@ vi.mock("../../exchanges/ExchangeFactory", () => ({
 
 import { MarketDataService } from "../../MarketDataService";
 import { ExchangeFactory } from "../../exchanges/ExchangeFactory";
-import { performEntryCheckForTest, evaluatePairForTest, __setIdcaOhlcCacheForTest, __clearIdcaOhlcCacheForTest, __clearExitPriceAlertThrottleForTest } from "../IdcaEngine";
+import { performEntryCheckForTest, evaluatePairForTest, __setIdcaOhlcCacheForTest, __clearIdcaOhlcCacheForTest, __clearExitPriceAlertThrottleForTest, __shouldEmitExitPriceAlertForTest } from "../IdcaEngine";
 
 const HOUR = 3_600_000;
 const NOW = 1_699_999_200_000;
@@ -173,7 +173,17 @@ describe("IDCA engine data-gate E2E", () => {
     expect(repoMock.createEvent.mock.calls.filter(c => c[0]?.eventType === "exit_price_unavailable")).toHaveLength(2);
   });
 
-  it("recuperación y nueva degradación emiten evento inmediato", async () => {
+
+  it("throttle independiente por (pair, tipo)", () => {
+    expect(__shouldEmitExitPriceAlertForTest("BTC/USD", "exit_price_degraded", NOW)).toBe(true);
+    expect(__shouldEmitExitPriceAlertForTest("BTC/USD", "exit_price_degraded", NOW + 60_000)).toBe(false);
+    expect(__shouldEmitExitPriceAlertForTest("BTC/USD", "exit_price_unavailable", NOW + 60_000)).toBe(true);
+    expect(__shouldEmitExitPriceAlertForTest("BTC/USD", "exit_price_degraded", NOW + 120_000)).toBe(false);
+    expect(__shouldEmitExitPriceAlertForTest("ETH/USD", "exit_price_degraded", NOW + 120_000)).toBe(true);
+    expect(__shouldEmitExitPriceAlertForTest("BTC/USD", "exit_price_degraded", NOW + 15 * 60_000 + 1)).toBe(true);
+  });
+
+  it("recuperaciÃ³n y nueva degradaciÃ³n emiten evento inmediato", async () => {
     repoMock.getAssetConfig.mockResolvedValue(assetConfig());
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
