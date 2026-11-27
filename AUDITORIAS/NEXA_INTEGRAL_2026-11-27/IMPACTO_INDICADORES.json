@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-11-27T20:38:17.238Z",
+  "limits": "Muestra pequeña (~720 velas 1h), proxy analítico, no replay ni evidencia de rentabilidad/causalidad.",
+  "datasets": [
+    {
+      "pair": "BTC/USD",
+      "candles": 720,
+      "sha256": "96e2e1517719e6e660beb085d70c9216480537ae4c18673e3f0b60c192e521e2",
+      "macdLastFull": -261.5923015754088,
+      "macdLastTruncated": -261.95411000838067,
+      "macdAbsDiff": 0.36180843297188403,
+      "macdSignDisagreementPct": 0.15,
+      "flatTickCount": 0,
+      "atrSma": 583.1357142857144,
+      "atrWilder": 524.8937641810726,
+      "atrDiffPct": 11.096
+    },
+    {
+      "pair": "ETH/USD",
+      "candles": 720,
+      "sha256": "c7c67cd8f8779425b9ae86c0c986381ecd90927e15ea18122671b07ad51f6664",
+      "macdLastFull": -9.831510329688399,
+      "macdLastTruncated": -9.841655173489698,
+      "macdAbsDiff": 0.01014484380129943,
+      "macdSignDisagreementPct": 0.15,
+      "flatTickCount": 0,
+      "atrSma": 18.062142857142867,
+      "atrWilder": 16.827131354946623,
+      "atrDiffPct": 7.339
+    }
+  ],
+  "ethScoreProxy": {
+    "strictEma50": 63,
+    "legacyShortHistoryProxy": null,
+    "delta": null,
+    "crosses50": null
+  }
+}
