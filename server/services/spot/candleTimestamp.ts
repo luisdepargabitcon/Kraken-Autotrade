@@ -1,3 +1,5 @@
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
+
 /**
  * SpotCandleTimestamp — Canonical timestamp helpers for SPOT market data.
  *
@@ -16,12 +18,8 @@
  *
  * INVARIANTS:
  *   - 1 second  = 1_000 ms
- *   - Heuristic threshold for sec-vs-ms: 10_000_000_000 (10^10).
- *     Values below threshold → seconds (multiply by 1000).
- *     Values at/above threshold → milliseconds (kept as-is).
- *     Threshold rationale: 10^10 ms = 2286-11-20 (far future); 10^10 s = 2286-11-20 too,
- *     but any real candle timestamp in seconds is ~1.7×10^9 (2026) and in ms is ~1.7×10^12,
- *     so 10^10 cleanly separates the two ranges with margin.
+ *   - Canonical epoch ranges are delegated to marketData/epochNormalizer:
+ *     <1e11 means seconds; 1e11..1e14 means milliseconds.
  *   - Rejected timestamps return `null` (caller decides fail-safe behavior).
  */
 
@@ -39,14 +37,8 @@ const TIMEFRAME_MS: Record<string, number> = {
   "15d": 15 * 24 * 60 * 60_000,
 };
 
-/** Heuristic: timestamps below this are treated as seconds. ~year 2286 in ms. */
-const SEC_MS_THRESHOLD = 10_000_000_000;
-
 /** Reject timestamps more than 1 hour in the future (clock skew tolerance). */
 const FUTURE_TOLERANCE_MS = 60 * 60 * 1000;
-
-/** Earliest plausible crypto candle: 2009-01-03 (Bitcoin genesis block). */
-const EARLIEST_PLAUSIBLE_MS = Date.UTC(2009, 0, 3);
 
 // ─── DataHealth ─────────────────────────────────────────────────────────────
 
@@ -67,17 +59,8 @@ export enum DataHealth {
  * @returns epoch milliseconds, or null if invalid
  */
 export function normalizeCandleTimestampMs(raw: number): number | null {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    return null;
-  }
-  const ms = raw < SEC_MS_THRESHOLD ? raw * 1000 : raw;
-  if (ms < EARLIEST_PLAUSIBLE_MS) {
-    return null;
-  }
-  if (ms > Date.now() + FUTURE_TOLERANCE_MS) {
-    return null;
-  }
-  return ms;
+  const normalized = normalizeEpochToMs(raw, { nowMs: Date.now(), futureToleranceMs: FUTURE_TOLERANCE_MS });
+  return normalized.ok ? normalized.ms : null;
 }
 
 /**

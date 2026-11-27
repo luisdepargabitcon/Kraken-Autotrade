@@ -1,3 +1,4 @@
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
 /**
  * IdcaMarketDataHealthService
  *
@@ -445,10 +446,10 @@ export async function checkMarketDataHealth(
   }
 
   // Normalizar time a ms
-  const normalizedCandles = candles.map(c => ({
-    ...c,
-    time: c.time > 1e12 ? c.time : c.time * 1000,
-  }));
+  const normalizedCandles = candles.flatMap(c => {
+    const normalized = normalizeEpochToMs(c.time, { nowMs: now });
+    return normalized.ok ? [{ ...c, time: normalized.ms }] : [];
+  });
 
   const candleCount = normalizedCandles.length;
   const sortedCandles = [...normalizedCandles].sort((a, b) => a.time - b.time);

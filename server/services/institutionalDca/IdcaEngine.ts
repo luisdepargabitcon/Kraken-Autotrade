@@ -11,6 +11,7 @@ import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
 import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold, shouldUpdateAnchor, shouldResetAnchor } from "./IdcaEntryReferenceResolver";
 import { buildReferenceContext, type ReferenceContext, MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT } from "./IdcaReferenceContext";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
@@ -4034,8 +4035,8 @@ async function performEntryCheck(
       return Number.isFinite(t) ? t : fallback;
     }
     if (typeof value === "number") {
-      if (!Number.isFinite(value) || value <= 0) return fallback;
-      return value < 1e12 ? value * 1000 : value;
+      const normalized = normalizeEpochToMs(value, { nowMs: Date.now() });
+      return normalized.ok ? normalized.ms : fallback;
     }
     return fallback;
   };
@@ -4920,14 +4921,21 @@ function computeP95Local(values: number[]): number {
 
 // Helper: map raw Kraken OHLC response to TimestampedCandle
 function mapKrakenCandles(candles: any[]): TimestampedCandle[] {
-  return candles.map((c: any) => ({
-    open:   parseFloat(String(c.open   || c[1] || 0)),
-    high:   parseFloat(String(c.high   || c[2] || 0)),
-    low:    parseFloat(String(c.low    || c[3] || 0)),
-    close:  parseFloat(String(c.close  || c[4] || 0)),
-    volume: parseFloat(String(c.volume || c[5] || 0)),
-    time:   c.time ? (c.time > 1e12 ? c.time : c.time * 1000) : (c[0] ? (c[0] > 1e12 ? c[0] : c[0] * 1000) : Date.now()),
-  }));
+  const out: TimestampedCandle[] = [];
+  for (const c of candles) {
+    const rawTime = c.time ?? c[0];
+    const normalized = normalizeEpochToMs(rawTime, { nowMs: Date.now() });
+    if (!normalized.ok) continue;
+    out.push({
+      open:   parseFloat(String(c.open   || c[1] || 0)),
+      high:   parseFloat(String(c.high   || c[2] || 0)),
+      low:    parseFloat(String(c.low    || c[3] || 0)),
+      close:  parseFloat(String(c.close  || c[4] || 0)),
+      volume: parseFloat(String(c.volume || c[5] || 0)),
+      time:   normalized.ms,
+    });
+  }
+  return out;
 }
 
 // Helper: compute bucket context metrics from a candle slice
@@ -4969,12 +4977,12 @@ async function updateOhlcvCache(): Promise<void> {
           ` | last=${new Date(mapped1h[mapped1h.length - 1].time).toISOString().slice(0, 16)}` +
           ` | source=${ExchangeFactory.getDataExchangeType()} (MDS)`
         );
-        // Store last 10 in DB cache
-        for (const c of candles1h.slice(-10)) {
+        // Store last 10 in DB cache using canonical millisecond timestamps.
+        for (const c of mapped1h.slice(-10)) {
           try {
             await repo.upsertOhlcv({
               pair, timeframe: "1h",
-              ts: new Date(c.time * 1000),
+              ts: new Date(c.time),
               open: String(c.open), high: String(c.high),
               low:  String(c.low),  close: String(c.close),
               volume: String(c.volume),

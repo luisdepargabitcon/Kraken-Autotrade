@@ -2,6 +2,7 @@
  * IdcaRepository — Data access layer for the Institutional DCA module.
  * Completely isolated from the main bot's storage.
  */
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
 import { db } from "../../db";
 import { eq, desc, asc, and, sql, lt, ne, inArray } from "drizzle-orm";
 import {
@@ -921,6 +922,13 @@ export async function deleteAllOrders(mode?: string): Promise<number> {
 export async function upsertOhlcv(
   data: InsertInstitutionalDcaOhlcvCache
 ): Promise<void> {
+  const rawTs = data.ts instanceof Date ? data.ts.getTime() : data.ts;
+  const normalized = normalizeEpochToMs(rawTs, { nowMs: Date.now() });
+  if (!normalized.ok) {
+    console.warn(`[IDCA][OHLCV] rejecting invalid cache timestamp pair=${data.pair} timeframe=${data.timeframe} reason=${normalized.reason}`);
+    return;
+  }
+  data = { ...data, ts: new Date(normalized.ms) };
   await db
     .insert(institutionalDcaOhlcvCache)
     .values(data)
@@ -946,7 +954,7 @@ export async function getOhlcvRange(
   from: Date,
   to: Date
 ): Promise<InstitutionalDcaOhlcvCacheRow[]> {
-  return db
+  const rows = await db
     .select()
     .from(institutionalDcaOhlcvCache)
     .where(
@@ -958,6 +966,8 @@ export async function getOhlcvRange(
       )
     )
     .orderBy(institutionalDcaOhlcvCache.ts);
+  const nowMs = Date.now();
+  return rows.filter(row => normalizeEpochToMs(row.ts instanceof Date ? row.ts.getTime() : row.ts, { nowMs }).ok);
 }
 
 // ─── Import Position ──────────────────────────────────────────────
