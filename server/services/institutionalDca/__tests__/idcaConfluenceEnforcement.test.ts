@@ -199,6 +199,20 @@ describe("confluence enforcement IDCA", () => {
     expect(result.blockReasons.some(block => block.code === code)).toBe(true);
   });
 
+  it("enforced ARM_TRAILING no bloquea la ejecución cuando el trailing ya gatilló", async () => {
+    confluenceMock.evaluateIdcaEntryConfluence.mockReturnValue(confluenceResult("ARM_TRAILING"));
+    const result = await performEntryCheckForTest(
+      "BTC/USD",
+      102,
+      enforcedConfig(),
+      assetConfig(),
+      "simulation",
+      { localLow: 100, buyThreshold: 106, maxExecutionPrice: 108 },
+    );
+    expect(result.blockReasons.some(block => block.code === "confluence_arm_trailing")).toBe(false);
+    expect(result.allowed).toBe(true);
+  });
+
   it.each(["NORMAL_ENTRY", "HIGH_CONFIDENCE_ENTRY"] as const)("enforced simulation no bloquea %s", async decisionClass => {
     confluenceMock.evaluateIdcaEntryConfluence.mockReturnValue(confluenceResult(decisionClass));
     const result = await runEntry(enforcedConfig());
@@ -212,6 +226,7 @@ describe("confluence enforcement IDCA", () => {
     expect(result.allowed).toBe(false);
     expect(result.blockReasons.some(block => block.code === "confluence_arm_trailing")).toBe(true);
     expect(TrailingBuyManager.isArmed("BTC/USD")).toBe(true);
+    expect(TrailingBuyManager.getState("BTC/USD")?.canonicalParams?.mode).toBe("static");
   });
 
   it.each([

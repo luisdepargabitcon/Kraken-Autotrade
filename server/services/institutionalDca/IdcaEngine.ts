@@ -51,6 +51,7 @@ import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
 import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
 import { resolveIdcaEntryPolicy } from "./IdcaEntryPolicy";
+import { resolveTrailingBuyCanonicalParams } from "./IdcaTrailingBuyCanonical";
 import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
@@ -1337,6 +1338,28 @@ function clearExitPriceAlertState(pair: string): void {
   exitPriceAlertState.delete(exitPriceAlertKey(pair, "exit_price_unavailable"));
 }
 
+function resolveEngineTrailingBuyCanonicalParams(
+  input: Parameters<typeof resolveTrailingBuyCanonicalParams>[0],
+): ReturnType<typeof resolveTrailingBuyCanonicalParams> {
+  try {
+    return resolveTrailingBuyCanonicalParams(input);
+  } catch (error) {
+    if (input.entryMode !== "dynamic_intelligent_entry") {
+      throw error;
+    }
+    console.warn(
+      `[IDCA][TRAILING_BUY_CANONICAL] dynamic params inválidos para ${input.pair}; usando trailing estático: ` +
+      (error instanceof Error ? error.message : String(error))
+    );
+    return resolveTrailingBuyCanonicalParams({
+      ...input,
+      entryMode: "assisted_entry",
+      dynamicReboundConfig: null,
+      reason: `${input.reason}:static_fallback_after_invalid_dynamic`,
+    });
+  }
+}
+
 // ─── Pair Evaluation ───────────────────────────────────────────────
 
 async function evaluatePair(
@@ -1673,6 +1696,27 @@ async function evaluatePair(
                 armOpts.tbPath = "vwap_anchor";
               }
 
+              if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate") {
+                armOpts.activationPrice = tbBuyThreshold;
+                armOpts.canonicalParams = resolveEngineTrailingBuyCanonicalParams({
+                  pair,
+                  referencePrice: tbEffectiveRef,
+                  referenceType: tbFrozenAnchor?.anchorPrice ? "vwap_anchor" : "vwap_lower_band1",
+                  activationPrice: tbBuyThreshold,
+                  currentPrice,
+                  staticTrailingPct: reboundMinPct,
+                  entryMode: tbEntryMode,
+                  requiredDistancePct: tbDistanceResult.requiredDistancePct,
+                  drawdownFromReferencePct,
+                  atrPct,
+                  dynamicReboundConfig,
+                  tbPath: "vwap_anchor",
+                  maxDurationMs: 4 * 60 * 60 * 1000,
+                  nowMs: Date.now(),
+                  reason: "vwap_activation_zone",
+                });
+              }
+
               TrailingBuyManager.arm(pair, tbEffectiveRef, currentPrice, armOpts);
               const tbArmedState = TrailingBuyManager.getState(pair);
               const reboundTriggerPrice = tbArmedState?.localLow
@@ -1984,18 +2028,43 @@ async function evaluatePair(
               const effectiveTrailingValue = trailingBuyLevel1Config.trailingMode === "rebound_pct"
                 ? sliderReboundPct
                 : trailingBuyLevel1Config.trailingValue; // atrp_fraction: usar valor técnico raw
-              TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, {
+              const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
+                ? sliderReboundPct
+                : effectiveTrailingValue * (atrPct ?? 1);
+              const armLevelOpts: Parameters<typeof TrailingBuyManager.armLevel>[5] = {
                 trailingMode: trailingBuyLevel1Config.trailingMode,
                 trailingValue: effectiveTrailingValue,
                 maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
                 cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
                 atrpMultiplier: atrPct,
                 maxExecutionPrice,
-              });
+              };
 
-              const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
-                ? sliderReboundPct
-                : effectiveTrailingValue * (atrPct ?? 1);
+              if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate") {
+                armLevelOpts.canonicalParams = resolveEngineTrailingBuyCanonicalParams({
+                  pair,
+                  referencePrice: effectiveEntryReference,
+                  referenceType: "level_1_reference",
+                  activationPrice: buyThreshold,
+                  currentPrice,
+                  staticTrailingPct: trailingPct,
+                  entryMode: tbL1EntryMode,
+                  requiredDistancePct: effectiveMinDipPct,
+                  drawdownFromReferencePct: effectiveEntryReference > 0
+                    ? ((effectiveEntryReference - currentPrice) / effectiveEntryReference) * 100
+                    : 0,
+                  atrPct: atrPct ?? 0,
+                  forceStatic: true,
+                  maxExecutablePrice: maxExecutionPrice,
+                  tbPath: "level_1",
+                  maxDurationMs: (trailingBuyLevel1Config.maxWaitMinutes ?? 60) * 60 * 1000,
+                  nowMs: Date.now(),
+                  reason: "level1_activation_zone",
+                });
+              }
+
+              TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, armLevelOpts);
+
               const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
 
               await createHumanEvent({
@@ -2088,6 +2157,9 @@ async function checkEntry(
   trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
 ): Promise<void> {
   const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, trailingBuyEntry, observeOnly);
+  if (trailingBuyEntry && !check.allowed) {
+    TrailingBuyManager.releasePendingTrigger(pair);
+  }
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -2405,6 +2477,9 @@ async function checkEntry(
         message: `Compra inicial bloqueada: ${execResult.rejectionReason}`,
         payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: execResult.rejectionReason },
       }, { eventType: "initial_buy_failed", pair, mode, price: currentPrice, quantity });
+      if (trailingBuyEntry) {
+        TrailingBuyManager.releasePendingTrigger(pair);
+      }
       return; // Abortar - NO crear ciclo
     }
 
@@ -2566,6 +2641,10 @@ async function checkEntry(
     entryPrice: avgFillPrice,
     executedAmount: mode === "live" ? netBaseQty : executedQty,
   });
+
+  if (trailingBuyEntry) {
+    TrailingBuyManager.confirmPendingTrigger(pair);
+  }
 
   // Si esta compra vino de trailing buy, notificar específicamente
   if (trailingBuyContext) {
@@ -4858,10 +4937,30 @@ async function performEntryCheck(
             timestamp: now,
           });
         }
-      } else if (enforcedClass === "ARM_TRAILING") {
+      } else if (enforcedClass === "ARM_TRAILING" && !trailingBuyEntry) {
         if (!TrailingBuyManager.isArmed(pair)) {
           const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
-          TrailingBuyManager.arm(pair, effectiveBasePrice, currentPrice, { trailingPct: reboundMin });
+          const activationPrice = effectiveBasePrice * (1 - minDip / 100);
+          TrailingBuyManager.arm(pair, effectiveBasePrice, currentPrice, {
+            trailingPct: reboundMin,
+            activationPrice,
+            canonicalParams: resolveEngineTrailingBuyCanonicalParams({
+              pair,
+              referencePrice: effectiveBasePrice,
+              referenceType: basePriceMethod ?? "entry_reference",
+              activationPrice,
+              currentPrice,
+              staticTrailingPct: reboundMin,
+              entryMode,
+              requiredDistancePct: minDip,
+              drawdownFromReferencePct: entryDipPct,
+              atrPct,
+              dynamicReboundConfig: (assetConfig as any).dynamicReboundConfigJson || null,
+              maxDurationMs: 4 * 60 * 60 * 1000,
+              nowMs: Date.now(),
+              reason: "confluence_arm_trailing",
+            }),
+          });
         }
         if (!blocks.some(block => block.code === "confluence_arm_trailing")) {
           blocks.push({

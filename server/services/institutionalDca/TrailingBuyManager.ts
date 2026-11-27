@@ -12,6 +12,11 @@
  * Estado efímero (en memoria). Si el bot reinicia, el siguiente tick recalcula.
  */
 import { resolveIdcaDynamicRebound, getDefaultDynamicReboundConfig } from "./IdcaDynamicReboundResolver";
+import {
+  canonicalReboundTriggerPrice,
+  isCanonicalTrailingBuyExpired,
+  type TrailingBuyCanonicalParams,
+} from "./IdcaTrailingBuyCanonical";
 import type { IdcaEntryMode, IdcaTbPath } from "./IdcaTypes";
 
 export interface TrailingBuyState {
@@ -35,6 +40,8 @@ export interface TrailingBuyState {
   atrpMultiplier?: number;
   cancelOnRecovery: boolean;
   recoveryThreshold: number;    // Price threshold for cancellation
+  canonicalParams?: TrailingBuyCanonicalParams;
+  pendingTrigger?: boolean;
 }
 
 /**
@@ -87,20 +94,33 @@ class TrailingBuyManagerClass {
     marketRegime?: string;
     vwapZone?: string;
     tbPath?: IdcaTbPath;
+    canonicalParams?: TrailingBuyCanonicalParams;
+    activationPrice?: number;
   }): void {
     const now = Date.now();
+    if (opts?.canonicalParams && this.states.get(pair)?.armed) {
+      return;
+    }
     const entryMode = opts?.entryMode ?? "assisted_entry";
     let trailingPct = opts?.trailingPct ?? DEFAULT_TRAILING_PCT;
     let reboundTriggerPrice: number;
     let maxExecutionPrice: number;
     let reboundSource = "legacy_rebound";
 
-    // ─── Dynamic rebound calculation for dynamic_intelligent_entry ─────────
-    if (entryMode === "dynamic_intelligent_entry" &&
+    const canonicalParams = opts?.canonicalParams;
+    if (canonicalParams) {
+      // La fuente canónica ya calculó el modo static/dynamic una sola vez en el
+      // call site. Aquí solo se congela y reutiliza el resultado.
+      trailingPct = canonicalParams.effectiveThresholdPct;
+      maxExecutionPrice = canonicalParams.maxExecutablePrice;
+      reboundTriggerPrice = canonicalReboundTriggerPrice(canonicalParams, canonicalParams.minPrice);
+      reboundSource = canonicalParams.mode === "dynamic" ? "dynamic_rebound" : "static_canonical";
+    } else if (entryMode === "dynamic_intelligent_entry" &&
         opts?.dynamicReboundConfig &&
         opts?.requiredDistancePct != null &&
         opts?.drawdownFromReferencePct != null &&
         opts?.atrPct != null) {
+      // ─── Dynamic rebound calculation for dynamic_intelligent_entry ─────────
       const reboundResult = resolveIdcaDynamicRebound({
         pair,
         usedFor: "trailing_buy_entry",
@@ -132,25 +152,27 @@ class TrailingBuyManagerClass {
       pair,
       armed: true,
       armedAt: now,
-      referencePrice: triggerPrice,
-      activationPrice: triggerPrice, // En VWAP-path, lowerBand1 ya ES el activation price
-      buyThreshold: triggerPrice,    // mismo valor en VWAP-path
+      referencePrice: canonicalParams?.reference.price ?? triggerPrice,
+      activationPrice: opts?.activationPrice ?? triggerPrice, // En VWAP-path legacy lowerBand1 ya ES el activation price
+      buyThreshold: opts?.activationPrice ?? triggerPrice,
       maxExecutionPrice,
       triggerPrice,
-      localLow: currentPrice,
+      localLow: canonicalParams?.minPrice ?? currentPrice,
       localLowAt: now,
       trailingPct,
-      maxDurationMs: opts?.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
+      maxDurationMs: canonicalParams ? Math.max(1, canonicalParams.validUntil - now) : (opts?.maxDurationMs ?? DEFAULT_MAX_DURATION_MS),
       lastPrice: currentPrice,
       lastUpdateAt: now,
       triggerLevel: 0,
       triggerMode: "dip_pct",
       cancelOnRecovery: false,
       recoveryThreshold: triggerPrice * 1.02,
+      canonicalParams,
+      pendingTrigger: false,
     });
     console.log(
       `[IDCA][TRAILING_BUY_ARMED] pair=${pair} referencePrice=$${triggerPrice.toFixed(2)}` +
-      ` buyThreshold=$${triggerPrice.toFixed(2)} localLow=$${currentPrice.toFixed(2)}` +
+      ` buyThreshold=$${(opts?.activationPrice ?? triggerPrice).toFixed(2)} localLow=$${(canonicalParams?.minPrice ?? currentPrice).toFixed(2)}` +
       ` reboundPct=${trailingPct.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
       ` maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} reboundSource=${reboundSource}` +
       (opts?.tbPath ? ` tbPath=${opts.tbPath}` : ``)
@@ -173,30 +195,42 @@ class TrailingBuyManagerClass {
       cancelOnRecovery?: boolean;
       atrpMultiplier?: number;
       maxExecutionPrice?: number;
+      canonicalParams?: TrailingBuyCanonicalParams;
     }
   ): void {
     const now = Date.now();
+    if (opts.canonicalParams && this.states.get(pair)?.armed) {
+      return;
+    }
     const trailingPct = opts.trailingMode === "rebound_pct"
       ? opts.trailingValue
       : (opts.atrpMultiplier ? opts.trailingValue * opts.atrpMultiplier : opts.trailingValue);
 
-    const maxDurationMs = (opts.maxWaitMinutes ?? 60) * 60 * 1000;
-    const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
+    const canonicalParams = opts.canonicalParams;
+    const effectiveTrailingPct = canonicalParams?.effectiveThresholdPct ?? trailingPct;
+    const maxDurationMs = canonicalParams
+      ? Math.max(1, canonicalParams.validUntil - now)
+      : (opts.maxWaitMinutes ?? 60) * 60 * 1000;
+    const reboundTriggerPrice = canonicalParams
+      ? canonicalReboundTriggerPrice(canonicalParams, canonicalParams.minPrice)
+      : currentPrice * (1 + effectiveTrailingPct / 100);
 
-    const maxExecutionPrice = opts.maxExecutionPrice ?? activationPrice * (1 + trailingPct / 100);
+    const maxExecutionPrice = canonicalParams?.maxExecutablePrice
+      ?? opts.maxExecutionPrice
+      ?? activationPrice * (1 + effectiveTrailingPct / 100);
 
     this.states.set(pair, {
       pair,
       armed: true,
       armedAt: now,
-      referencePrice,
+      referencePrice: canonicalParams?.reference.price ?? referencePrice,
       activationPrice,
       buyThreshold: activationPrice,    // comparten el mismo valor en Level 1
       maxExecutionPrice,
       triggerPrice: referencePrice, // retrocompatibilidad
-      localLow: currentPrice,
+      localLow: canonicalParams?.minPrice ?? currentPrice,
       localLowAt: now,
-      trailingPct,
+      trailingPct: effectiveTrailingPct,
       maxDurationMs,
       lastPrice: currentPrice,
       lastUpdateAt: now,
@@ -205,14 +239,16 @@ class TrailingBuyManagerClass {
       atrpMultiplier: opts.atrpMultiplier,
       cancelOnRecovery: opts.cancelOnRecovery ?? true,
       recoveryThreshold: referencePrice * 1.02,
+      canonicalParams,
+      pendingTrigger: false,
     });
 
     const reboundExecutableAtArm = reboundTriggerPrice <= maxExecutionPrice;
     console.log(
       `[IDCA][TRAILING_BUY_ARMED] pair=${pair} level=${triggerLevel}` +
       ` referencePrice=$${referencePrice.toFixed(2)} buyThreshold=$${activationPrice.toFixed(2)}` +
-      ` maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} localLow=$${currentPrice.toFixed(2)}` +
-      ` reboundPct=${trailingPct.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
+      ` maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} localLow=$${(canonicalParams?.minPrice ?? currentPrice).toFixed(2)}` +
+      ` reboundPct=${effectiveTrailingPct}.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
       ` reboundExecutable=${reboundExecutableAtArm} mode=${opts.trailingMode}`
     );
   }
@@ -232,7 +268,7 @@ class TrailingBuyManagerClass {
     state.lastUpdateAt = now;
 
     // Check expiration
-    if (now - state.armedAt > state.maxDurationMs) {
+    if ((state.canonicalParams && isCanonicalTrailingBuyExpired(state.canonicalParams, now)) || now - state.armedAt > state.maxDurationMs) {
       this.disarm(pair);
       return { triggered: false, buyPrice: 0, localLow: state.localLow, bouncePct: 0, reason: "expired" };
     }
@@ -251,6 +287,71 @@ class TrailingBuyManagerClass {
         localLow: state.localLow, 
         bouncePct: 0, 
         reason: `recovered_${recoveryPct.toFixed(2)}%` 
+      };
+    }
+
+    if (state.canonicalParams) {
+      const canonical = state.canonicalParams;
+
+      if (currentPrice < state.localLow) {
+        state.localLow = currentPrice;
+        state.localLowAt = now;
+        return {
+          triggered: false,
+          buyPrice: 0,
+          localLow: state.localLow,
+          bouncePct: 0,
+          reason: "tracking_lower",
+        };
+      }
+
+      const canonicalBouncePct = state.localLow > 0
+        ? ((currentPrice - state.localLow) / state.localLow) * 100
+        : 0;
+      const canonicalTriggerPrice = canonicalReboundTriggerPrice(canonical, state.localLow);
+      if (canonicalBouncePct < canonical.effectiveThresholdPct) {
+        return {
+          triggered: false,
+          buyPrice: 0,
+          localLow: state.localLow,
+          bouncePct: canonicalBouncePct,
+          reason: `waiting_canonical (bounce=${canonicalBouncePct.toFixed(3)}% < ${canonical.effectiveThresholdPct}% reboundTrigger=$${canonicalTriggerPrice.toFixed(2)})`,
+        };
+      }
+
+      if (currentPrice > canonical.maxExecutablePrice) {
+        return {
+          triggered: false,
+          buyPrice: 0,
+          localLow: state.localLow,
+          bouncePct: canonicalBouncePct,
+          reason: "price_above_max_executable",
+          buyThreshold: state.buyThreshold,
+          maxExecutionPrice: canonical.maxExecutablePrice,
+        };
+      }
+
+      if (state.pendingTrigger) {
+        return {
+          triggered: false,
+          buyPrice: 0,
+          localLow: state.localLow,
+          bouncePct: canonicalBouncePct,
+          reason: "trigger_in_progress",
+          buyThreshold: state.buyThreshold,
+          maxExecutionPrice: canonical.maxExecutablePrice,
+        };
+      }
+
+      state.pendingTrigger = true;
+      return {
+        triggered: true,
+        buyPrice: currentPrice,
+        localLow: state.localLow,
+        bouncePct: canonicalBouncePct,
+        reason: `Canonical bounce ${canonicalBouncePct.toFixed(3)}% >= ${canonical.effectiveThresholdPct}% from low=$${state.localLow.toFixed(2)}`,
+        buyThreshold: state.buyThreshold,
+        maxExecutionPrice: canonical.maxExecutablePrice,
       };
     }
 
@@ -306,6 +407,37 @@ class TrailingBuyManagerClass {
       bouncePct,
       reason: `waiting (bounce=${bouncePct.toFixed(3)}% < ${state.trailingPct}% reboundTrigger=$${reboundTriggerPrice.toFixed(2)})`,
     };
+  }
+
+  releasePendingTrigger(pair: string): void {
+    const state = this.states.get(pair);
+    if (state?.pendingTrigger) {
+      state.pendingTrigger = false;
+    }
+  }
+
+  confirmPendingTrigger(pair: string): void {
+    const state = this.states.get(pair);
+    if (state?.pendingTrigger) {
+      this.states.delete(pair);
+    }
+  }
+
+  serializeState(pair: string): TrailingBuyState | undefined {
+    const state = this.states.get(pair);
+    return state ? JSON.parse(JSON.stringify(state)) as TrailingBuyState : undefined;
+  }
+
+  restoreState(pair: string, state: TrailingBuyState, nowMs: number = Date.now()): boolean {
+    if (!state?.armed) return false;
+    if (state.canonicalParams && isCanonicalTrailingBuyExpired(state.canonicalParams, nowMs)) {
+      return false;
+    }
+    if (!state.canonicalParams && nowMs - state.armedAt > state.maxDurationMs) {
+      return false;
+    }
+    this.states.set(pair, JSON.parse(JSON.stringify(state)) as TrailingBuyState);
+    return true;
   }
 
   /**
