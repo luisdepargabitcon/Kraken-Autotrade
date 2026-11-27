@@ -7,11 +7,11 @@ Alcance: `server/` y `scripts/`. Se buscaron `computeRSI`, `computeEMA`, `comput
 
 | Consumidor | Ubicación | Convención anterior | Migración | Evidencia |
 |---|---|---|---|---|
-| IDCA RSI | `server/services/institutionalDca/IdcaSmartLayer.ts:292` | RSI Wilder, serie plana ⇒ 100, serie corta ⇒ 50 | Wrapper a `rsiWilder(..., flatPolicy:"legacy100")` | `consumerParity.test.ts`, vectores ascendente/descendente/ruido/plano, tolerancia 1e-12 |
-| SmartTimeStopV2 EMA | `server/services/SmartTimeStopV2.ts:79` | SMA seed en `period`, después recursiva, array compacto | `ema()` de core filtrando nulls de warm-up | misma batería de paridad |
-| AMA ATR | `server/services/ama/amaHwmBar.ts:226` | SMA de últimos TR, null si `len < period+1` | `atr(..., method:"sma")` | misma batería de paridad |
+| IDCA RSI | `server/services/institutionalDca/IdcaSmartLayer.ts:322` | RSI Wilder, serie plana ⇒ 100, serie corta ⇒ 50 | Wrapper a `rsiWilder(..., flatPolicy:"legacy100")` | `consumerParity.test.ts`, vectores ascendente/descendente/ruido/plano, tolerancia 1e-12 |
+| SmartTimeStopV2 EMA | `server/services/SmartTimeStopV2.ts:92` | SMA seed en `period`, después recursiva, array compacto | `ema()` de core filtrando nulls de warm-up | misma batería de paridad |
+| AMA ATR | `server/services/ama/amaHwmBar.ts:244` | SMA de últimos TR, null si `len < period+1` | `atr(..., method:"sma")` | misma batería de paridad |
 
-No se migró ningún consumidor donde la semántica no fuera exactamente igual.
+No se migró ningún consumidor donde la semántica no fuera exactamente igual. En los tres wrappers migrados, las entradas finitas usan la librería común; las entradas no finitas conservan deliberadamente la ruta histórica porque la librería filtra `NaN`/`Infinity` y eso sí cambiaría la semántica legacy.
 
 ## Inventario de consumidores
 
@@ -25,15 +25,15 @@ No se migró ningún consumidor donde la semántica no fuera exactamente igual.
 | `server/services/institutionalDca/IdcaSmartLayer.ts:244` | `computeATR` IDCA | SMA de TR aunque haya menos de `period+1` velas | No migrado: core devuelve null en insuficiente | decidir si la semántica corta es deseada; no cambiarla implícitamente |
 | `server/services/institutionalDca/IdcaSmartLayer.ts:270` | `computeEMA` IDCA | semilla en primer valor, array completo | No migrado: difiere de SMA seed core | documentar convención o migrar solo tras medición |
 | `server/services/institutionalDca/IdcaSmartLayer.ts:282` | `computeEmaStrict` | ya era wrapper exacto a `emaStrict` | Migrado previamente | mantener |
-| `server/services/institutionalDca/IdcaSmartLayer.ts:292` | `computeRSI` | Wilder legacy100 | Migrado WP4e | mantener wrapper por compatibilidad |
+| `server/services/institutionalDca/IdcaSmartLayer.ts:322` | `computeRSI` | Wilder legacy100 | Migrado WP4e | mantener wrapper por compatibilidad |
 | `server/services/institutionalDca/IdcaEngine.ts:3934-3947` | motor IDCA | consume `computeEmaStrict`, `computeEMA`, `computeRSI` | Hereda convenciones mixtas | no unificar hasta resolver warm-up/productivo |
 | `server/services/institutionalDca/IdcaEngine.ts:189,4584,4913` | ATRP IDCA | usa `computeATRPct` SMA permisivo | No migrado | depende de decisión sobre ATR insuficiente |
 | `server/services/institutionalDca/IdcaMarketContextService.ts:243-244` | contexto IDCA | ATR/ATRP SMA permisivo | No migrado | igual que anterior |
 | `server/services/institutionalDca/IdcaDynamicAnchorService.ts:154` | ancla IDCA | ATRP SMA permisivo | No migrado | igual que anterior |
 | `server/services/institutionalDca/IdcaRegimeAdapter.ts:94-95` | régimen IDCA | `computeEMA` seed-first | No migrado | medir impacto de warm-up antes de migrar |
-| `server/services/SmartTimeStopV2.ts:79,125,134` | EMA TimeStop | SMA seed compacta | Migrado WP4e | mantener paridad |
+| `server/services/SmartTimeStopV2.ts:92,125,134` | EMA TimeStop | SMA seed compacta | Migrado WP4e | mantener paridad |
 | `server/services/SmartTimeStopV2.ts:86,162` | RSI TimeStop | suma simple de últimas N diferencias, no Wilder | No migrado | requiere decisión de convención; no sustituir |
-| `server/services/ama/amaHwmBar.ts:226` | ATR AMA | SMA TR estricta | Migrado WP4e | mantener |
+| `server/services/ama/amaHwmBar.ts:244` | ATR AMA | SMA TR estricta | Migrado WP4e | mantener |
 | `server/services/EntryDecisionContext.ts:121-163` | entrada SPOT | EMA seed-first + MACD legado | No migrado | shadow antes de cambio |
 | `server/services/mtfAnalysis.ts:47-48` | MTF SPOT | EMA seed-first | No migrado | shadow/medición |
 | `server/services/regimeDetection.ts:115-137` | régimen SPOT | EMA seed-first + Bollinger escala 0-100 | No migrado | definir contrato y medir |
