@@ -17,11 +17,11 @@ No se migró ningún consumidor donde la semántica no fuera exactamente igual.
 
 | Archivo:línea | Consumidor | Convención actual | Estado | Siguiente paso |
 |---|---|---|---|---|
-| `server/services/indicators.ts:27` | `calculateEMA` SPOT legado | semilla en primer precio, sin SMA seed ni nulls de warm-up | No migrado: difiere de `core.ema` | comparar shadow antes de cualquier sustitución |
-| `server/services/indicators.ts:39` | `calculateRSI` SPOT legado | media simple sobre toda la ventana pasada, plano/no pérdidas ⇒ 100 | No migrado: no es Wilder | comparación shadow opcional WP4e |
-| `server/services/indicators.ts:68` | `calculateMACD` SPOT legado | EMA truncadas en ventanas y señal sobre historial incompleto | No migrado: difiere de MACD core full-series | no migrar sin shadow del propietario |
-| `server/services/indicators.ts:92` | `calculateBollingerBands` | desviación poblacional, `%B` escala 0-100 | No migrado: core devuelve ratio 0-1 y null en banda plana | definir contrato de escala antes de migrar |
-| `server/services/indicators.ts:118` | `calculateATR` | SMA de TR sobre `PriceData.price` | Pendiente de paridad central; no migrado en WP4e por refactor mayor de tipos | evaluar wrapper `price⇒close` con prueba exhaustiva |
+| `server/services/indicators.ts:123` | `calculateEMA` SPOT legado | semilla en primer precio, sin SMA seed ni nulls de warm-up | No migrado: difiere de `core.ema` | comparar shadow antes de cualquier sustitución |
+| `server/services/indicators.ts:135` | `calculateRSI` SPOT legado | media simple sobre toda la ventana pasada, plano/no pérdidas ⇒ 100 | No migrado: no es Wilder | comparación shadow opcional WP4e |
+| `server/services/indicators.ts:168` | `calculateMACD` SPOT legado | EMA truncadas en ventanas y señal sobre historial incompleto | No migrado: difiere de MACD core full-series | no migrar sin shadow del propietario |
+| `server/services/indicators.ts:205` | `calculateBollingerBands` | desviación poblacional, `%B` escala 0-100 | No migrado: core devuelve ratio 0-1 y null en banda plana | definir contrato de escala antes de migrar |
+| `server/services/indicators.ts:231` | `calculateATR` | SMA de TR sobre `PriceData.price` | Pendiente de paridad central; no migrado en WP4e por refactor mayor de tipos | evaluar wrapper `price⇒close` con prueba exhaustiva |
 | `server/services/institutionalDca/IdcaSmartLayer.ts:244` | `computeATR` IDCA | SMA de TR aunque haya menos de `period+1` velas | No migrado: core devuelve null en insuficiente | decidir si la semántica corta es deseada; no cambiarla implícitamente |
 | `server/services/institutionalDca/IdcaSmartLayer.ts:270` | `computeEMA` IDCA | semilla en primer valor, array completo | No migrado: difiere de SMA seed core | documentar convención o migrar solo tras medición |
 | `server/services/institutionalDca/IdcaSmartLayer.ts:282` | `computeEmaStrict` | ya era wrapper exacto a `emaStrict` | Migrado previamente | mantener |
