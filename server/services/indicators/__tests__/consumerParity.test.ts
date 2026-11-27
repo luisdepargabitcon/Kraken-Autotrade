@@ -66,6 +66,14 @@ function oldAmaATR(candles: Array<{ high: number; low: number; close: number }>,
   return slice.reduce((a, b) => a + b, 0) / period;
 }
 
+
+
+function expectNumericParity(actual: number, expected: number) {
+  if (Object.is(actual, expected)) return;
+  if (Number.isNaN(actual) && Number.isNaN(expected)) return;
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(TOL);
+}
+
 function candlesFrom(closes: number[]) {
   return closes.map((close, index) => ({
     timestamp: new Date(index * 86_400_000).toISOString(),
@@ -103,5 +111,26 @@ describe("paridad exacta de consumidores migrados a indicators/core", () => {
     expect(idcaComputeRSI(short, 14)).toBe(oldIdcaRSI(short, 14));
     expect(smartTimeStopComputeEMA(short, 10)).toEqual(oldSmartEMA(short, 10));
     expect(amaComputeATR(candlesFrom(short), 20)).toBe(oldAmaATR(candlesFrom(short), 20));
+  });
+
+  it("preserva la semántica histórica con entradas no finitas", () => {
+    const withNaN = [...vectors.ruido.slice(0, 30), Number.NaN, ...vectors.ruido.slice(31, 60)];
+    const withInfinity = [...vectors.ascendente.slice(0, 30), Number.POSITIVE_INFINITY, ...vectors.ascendente.slice(31, 60)];
+
+    for (const values of [withNaN, withInfinity]) {
+      expectNumericParity(idcaComputeRSI(values, 14), oldIdcaRSI(values, 14));
+      const actualEma = smartTimeStopComputeEMA(values, 10);
+      const expectedEma = oldSmartEMA(values, 10);
+      expect(actualEma.length).toBe(expectedEma.length);
+      for (let i = 0; i < actualEma.length; i++) {
+        expectNumericParity(actualEma[i], expectedEma[i]);
+      }
+
+      const candles = candlesFrom(values);
+      const actualAtr = amaComputeATR(candles, 20);
+      const expectedAtr = oldAmaATR(candles, 20);
+      if (expectedAtr === null) expect(actualAtr).toBeNull();
+      else expectNumericParity(actualAtr ?? Number.NaN, expectedAtr);
+    }
   });
 });

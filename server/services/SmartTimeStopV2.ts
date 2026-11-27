@@ -76,10 +76,23 @@ const SMART_TS_V2_CONFIG = {
 
 // ─── Indicator helpers ────────────────────────────────────────────────────────
 
+function legacyComputeEMA(values: number[], period: number): number[] {
+  if (values.length < period) return [];
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  let prev = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  ema.push(prev);
+  for (let i = period; i < values.length; i++) {
+    prev = values[i] * k + prev * (1 - k);
+    ema.push(prev);
+  }
+  return ema;
+}
+
 export function computeEMA(values: number[], period: number): number[] {
-  // La librería devuelve la serie alineada con nulls de warm-up; este consumidor
-  // históricamente devuelve solo los valores calculados. El filtrado conserva
-  // exactamente el mismo orden y semántica.
+  // La librería devuelve la serie alineada con nulls de warm-up y filtra no
+  // finitos; este consumidor devolvía solo valores calculados sin filtrar.
+  if (!values.every(Number.isFinite)) return legacyComputeEMA(values, period);
   return indicatorEma(values, period).filter((value): value is number => value !== null);
 }
 
