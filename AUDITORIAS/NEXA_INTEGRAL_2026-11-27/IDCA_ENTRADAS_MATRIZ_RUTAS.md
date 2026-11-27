@@ -88,3 +88,17 @@ En esa variante el resolver dinámico/confluencia no reemplaza la distancia ATRP
 ### Override VWAP mensual `aggressive_quality`
 
 El override existente no fue activado ni modificado funcionalmente; solo se extrajo a helper puro para documentarlo numéricamente. Si VWAP mensual=100 y precio=94.99, el sesgo es `aggressive` y fuerza `aggressive_quality`; el primer tramo pasa de 15 % (`defensive`) a 30 %, es decir duplica la base prevista por el perfil de riesgo. En el borde exacto 95 no aplica el override agresivo (`<95` estricto); entre 95 y 100 conserva el perfil previo con sesgo `balanced`; en 100 o más fuerza `defensive`. Esto confirma que el descuento mensual puede anular el perfil prudente derivado del market score y permitir una compra mayor de la que el riesgo indicaría. Queda descrito como candidato de ensayo separado, sin activación.
+
+### Trazabilidad WP7c de guards priorizados
+
+Nueva cobertura en `idcaBuyRouteGuards.test.ts` (13 tests, mocks sin red/DB):
+
+- Safety principal: cooldown bloquea antes de ejecución; pending-exit bloquea; simulation no llama al reconciliador live y persiste `executionStatus="simulated"`; live pasa por `validateLiveBuyIntention` + `submitAndReconcile` y solo actualiza con fill confirmado.
+- PLUS activation: pending-exit del main bloquea; exposición del par en el límite bloquea; simulation crea ciclo sin reconciler y live usa reconciler.
+- PLUS safety: cooldown bloquea; simulation ejecuta sin reconciler. Se añadió guard pending-exit solo en `v2_candidate` (simulation/shadow/replay), porque legacy no lo tenía y cambiarlo en productivo violaría el principio de comportamiento por defecto intacto.
+- Recovery activation: cooldown tras compra main produce `recovery_cycle_blocked` con razón `cooldown_main_buy` y no ejecuta; simulation crea ciclo sin reconciler y live usa reconciler.
+- Recovery safety: cooldown fijo de 30 min bloquea; simulation ejecuta sin reconciler. Se añadió guard pending-exit solo en `v2_candidate` por la misma razón de aislamiento.
+
+Idempotencia y reconciliación: `idcaLiveOrderReconciler.test.ts` (25 tests) ya cubre misma `intentKey` ⇒ una sola llamada `placeOrder`, aceptación sin fill, uncertain sin reenvío, rechazo terminal, parcial→fill con dedupe de fills, recuperación tras reinicio y aplicación contable una sola vez. La corrida conjunta WP7c de guards+reconciler suma 38/38 tests.
+
+Hueco persistente: exposición global incluyendo el valor residual de intents live pendientes sigue sin cerrarse por la incompatibilidad explicada arriba (intents live-only frente a correcciones experimentales simulation-only y ausencia de precio/quote objetivo durable en el intent). El bloqueo `IDCA_ORDER_SCOPE_PENDING` evita duplicados del mismo ciclo/lado/par, pero no es un cálculo de exposición global.

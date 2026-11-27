@@ -5118,7 +5118,10 @@ export const selectReboundCandlesForTest = selectReboundCandles;
 export const resolveEngineReboundVariantForTest = resolveEngineReboundVariant;
 export const evaluateEngineReboundForTest = evaluateEngineRebound;
 export const checkSafetyBuyForTest = checkSafetyBuy;
+export const checkPlusActivationForTest = checkPlusActivation;
+export const checkPlusSafetyBuyForTest = checkPlusSafetyBuy;
 export const checkRecoveryActivationForTest = checkRecoveryActivation;
+export const checkRecoverySafetyBuyForTest = checkRecoverySafetyBuy;
 export const evaluatePairForTest = evaluatePair;
 export function __setIdcaOhlcCacheForTest(pair: string, candles: TimestampedCandle[]): void {
   ohlcCache.set(pair, candles);
@@ -6356,6 +6359,11 @@ async function checkPlusSafetyBuy(
 
   // Max entries check
   if (buyCount >= plusCfg.maxPlusEntries) return;
+
+  if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate" && await exitRepo.hasPendingExitInstruction(plusCycle.id)) {
+    console.log(`${TAG}[PLUS_SAFETY_BLOCKED] cycleId=${plusCycle.id} pair=${pair}: exit instruction pending, blocking plus safety buy`);
+    return;
+  }
 
   // Cooldown check
   const lastBuyAt = plusCycle.lastBuyAt ? new Date(plusCycle.lastBuyAt).getTime() : 0;
@@ -7717,6 +7725,11 @@ async function checkRecoverySafetyBuy(
   const buyCount = recoveryCycle.buyCount;
 
   if (buyCount >= rcfg.maxRecoveryEntries) return;
+
+  if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate" && await exitRepo.hasPendingExitInstruction(recoveryCycle.id)) {
+    console.log(`${TAG}[RECOVERY_SAFETY_BLOCKED] cycleId=${recoveryCycle.id} pair=${pair}: exit instruction pending, blocking recovery safety buy`);
+    return;
+  }
 
   // Cooldown
   const lastBuyAt = recoveryCycle.lastBuyAt ? new Date(recoveryCycle.lastBuyAt).getTime() : 0;
