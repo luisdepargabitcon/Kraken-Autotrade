@@ -57,6 +57,15 @@ describe("RevolutXService.resolveGridPairConstraints", () => {
     expect(result.source).toBe("revolut_x_public_configuration_pairs_eea");
   });
 
+  it("publicOnly evita la petición autenticada y usa solo el endpoint público", async () => {
+    mockPublic([pair()]);
+    const result = await service.resolveGridPairConstraints("BTC/USD", "EEA", { publicOnly: true });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://revx.revolut.com/api/1.0/public/configuration/pairs?region=EEA",
+    ]);
+    expect(result.source).toBe("revolut_x_public_configuration_pairs_eea");
+  });
+
   it("keeps region caches isolated, expires them without sliding TTL, and clears explicitly", async () => {
     mockAuthenticated([pair()]);
     const first = await service.resolveGridPairConstraints("BTC/USD", "EEA");

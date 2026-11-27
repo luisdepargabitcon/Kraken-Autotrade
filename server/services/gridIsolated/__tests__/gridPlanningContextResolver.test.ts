@@ -663,6 +663,23 @@ describe("resolveGridMarketAndConstraints — integration: single-call guarantee
     expect(result.gate.allowCycleExits).toBe(true);
   });
 
+  it("I13b. config SHADOW propaga publicOnly a constraints para evitar llamada firmada de planificación", async () => {
+    getGridBandSnapshotMock.mockResolvedValueOnce(validBand());
+    await resolveGridPlanningContext({
+      pair: "BTC/USD",
+      bandConfig: { pair: "BTC/USD", bandPeriod: 89, bandStdDevMultiplier: 2, atrPeriod: 14, atrTimeframe: "1h" },
+      executionPolicy: "MAKER_ONLY",
+      takerFallbackEnabled: false,
+      config: { mode: "SHADOW" },
+    });
+
+    expect(resolveGridPairConstraintsMock).toHaveBeenCalledWith(
+      "BTC/USD",
+      undefined,
+      { publicOnly: true }
+    );
+  });
+
   // REV-C12G: SHADOW effective taker fallback — stored=true must be overridden to false
   // by getEffectiveTakerFallbackEnabled before being passed to the planning context.
   it("I14. REV-C12G: SHADOW con stored=true → effective=false → executionCapability.verified=true", async () => {

@@ -206,7 +206,6 @@ export class RevolutXService implements IExchangeService {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
     const queryString = params && orderedKeys ? this.buildQueryString(params, orderedKeys) : '';
-    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
     try {
       const response = await this.signedFetch({
         method: 'GET',
@@ -942,27 +941,30 @@ export class RevolutXService implements IExchangeService {
     return extractRevolutXPairConfigurationEntries(body);
   }
 
-  async resolveGridPairConstraints(pair: string, region = process.env.REVOLUTX_REGION || "EEA"): Promise<RevolutXPairConstraints> {
+  async resolveGridPairConstraints(pair: string, region = process.env.REVOLUTX_REGION || "EEA", options?: { publicOnly?: boolean }): Promise<RevolutXPairConstraints> {
     const normalizedPair = this.normalizeRevolutXPairKey(pair);
     const cacheKey = `${region}:${normalizedPair}`;
     const matchRaw = (entries: RevolutXPairConfigurationRaw[]) => entries.find(item => `${item.base}-${item.quote}`.toUpperCase() === normalizedPair);
 
-    // 1. Intentar endpoint autenticado.
-    try {
-      const authList = await this.getPairConfigurations();
-      const authRaw = matchRaw(authList);
-      if (authRaw) {
-        const result = parseAndValidatePairConfiguration(authRaw, pair, normalizedPair, region, "revolut_x_authenticated_configuration_pairs");
-        if (result.verified) {
-          this.pairConstraintsCache.set(cacheKey, { value: result, expiresAt: result.expiresAt!.getTime() });
+    // 1. Intentar endpoint autenticado salvo en modo público explícito.
+    // SHADOW usa publicOnly para no originar llamadas firmadas de planificación.
+    if (!options?.publicOnly) {
+      try {
+        const authList = await this.getPairConfigurations();
+        const authRaw = matchRaw(authList);
+        if (authRaw) {
+          const result = parseAndValidatePairConfiguration(authRaw, pair, normalizedPair, region, "revolut_x_authenticated_configuration_pairs");
+          if (result.verified) {
+            this.pairConstraintsCache.set(cacheKey, { value: result, expiresAt: result.expiresAt!.getTime() });
+          }
+          return result;
         }
-        return result;
+      } catch (authErr) {
+        console.warn("[revolutx] pair constraints authenticated resolution failed", {
+          pair: normalizedPair,
+          reason: sanitizeRevolutXConstraintError(authErr),
+        });
       }
-    } catch (authErr) {
-      console.warn("[revolutx] pair constraints authenticated resolution failed", {
-        pair: normalizedPair,
-        reason: sanitizeRevolutXConstraintError(authErr),
-      });
     }
 
     // 2. Endpoint público EEA si auth falla o no contiene el par / es inválido.
@@ -1338,7 +1340,6 @@ export class RevolutXService implements IExchangeService {
       if (p?.endMs) queryParams.end_date = p.endMs;
 
       const queryString = this.buildQueryString(queryParams, ['order_id', 'start_date', 'end_date', 'limit']);
-      const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
       try {
         const response = await this.signedFetch({
           method: 'GET',

@@ -34,6 +34,7 @@ import { GridCapitalAllocator } from "../gridCapitalAllocator";
 import { balanceCache } from "../../exchanges/BalanceCache";
 import { ExchangeFactory } from "../../exchanges/ExchangeFactory";
 import { MarketDataService } from "../../MarketDataService";
+import { RevolutXService } from "../../exchanges/RevolutXService";
 
 const getTradingExchangeMock = ExchangeFactory.getTradingExchange as any;
 const getPricePointMock = MarketDataService.getPricePoint as any;
@@ -65,6 +66,7 @@ describe("GRID SHADOW LOW_API workload", () => {
 
   afterEach(() => {
     balanceCache.invalidate("revolutx");
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -94,6 +96,7 @@ describe("GRID SHADOW LOW_API workload", () => {
     const cyclesInSixHoursAtFiveMinutes = 72;
     let partialCycles = 0;
     let completeCycles = 0;
+    let lastAllocation: Awaited<ReturnType<GridCapitalAllocator["allocate"]>> | null = null;
 
     for (let cycle = 0; cycle < cyclesInSixHoursAtFiveMinutes; cycle++) {
       const allocation = await allocator.allocate(
@@ -105,12 +108,56 @@ describe("GRID SHADOW LOW_API workload", () => {
       );
       if (allocation.valuationStatus === "partial") partialCycles++;
       if (allocation.valuationStatus === "complete") completeCycles++;
+      lastAllocation = allocation;
       vi.advanceTimersByTime(5 * 60_000);
     }
 
     expect(getBalance).not.toHaveBeenCalled();
     expect(completeCycles).toBe(1);
     expect(partialCycles).toBe(cyclesInSixHoursAtFiveMinutes - 1);
+    expect(lastAllocation?.totalBalanceUsd).toBe(1_000);
+    expect(lastAllocation?.btcValuationReason).toContain("stale");
+  });
+
+  it("72 resoluciones SHADOW de constraints no originan llamadas firmadas; usan endpoint público", async () => {
+    const service = RevolutXService.getInstance();
+    service.clearPairConstraintsCache();
+    (service as any).initialized = true;
+    (service as any).getHeaders = () => {
+      throw new Error("signed header generation must not be reached in SHADOW publicOnly");
+    };
+
+    const pairConfig = {
+      base: "BTC",
+      quote: "USD",
+      base_step: "0.00000001",
+      quote_step: "0.01",
+      min_order_size: "0.0001",
+      min_order_size_quote: "10",
+      max_order_size: "10",
+      status: "active",
+    };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [pairConfig],
+      text: async () => JSON.stringify([pairConfig]),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cyclesInSixHoursAtFiveMinutes = 72;
+    for (let cycle = 0; cycle < cyclesInSixHoursAtFiveMinutes; cycle++) {
+      const constraints = await service.resolveGridPairConstraints("BTC/USD", "EEA", { publicOnly: true });
+      expect(constraints.verified).toBe(true);
+      vi.advanceTimersByTime(5 * 60_000);
+    }
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    const signedConfigCalls = urls.filter(url => url === "https://revx.revolut.com/api/1.0/configuration/pairs");
+    const publicConfigCalls = urls.filter(url => url.includes("/api/1.0/public/configuration/pairs"));
+    expect(signedConfigCalls).toHaveLength(0);
+    expect(publicConfigCalls).toHaveLength(cyclesInSixHoursAtFiveMinutes);
+    service.clearPairConstraintsCache();
   });
 
   it("snapshot fresco SHADOW con BTC usa precio público válido sin fetch privado", async () => {

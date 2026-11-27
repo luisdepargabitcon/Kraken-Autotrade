@@ -186,6 +186,19 @@ describe("RevolutXRequestScheduler", () => {
     expect(scheduler.getStats().retries).toBe(0);
   });
 
+  it("un salto atrás del reloj no convierte el espaciado en una espera enorme", async () => {
+    const clock = makeClock(10_000);
+    const fetchMock = vi.fn(async () => jsonResponse(200));
+    const scheduler = new RevolutXRequestScheduler({ minTimeMs: 10, clock, fetchImpl: fetchMock as any });
+
+    await scheduler.schedule(input(REVOLUTX_PRIORITY.P1_RECONCILIATION, "/first"));
+    clock.state.now = 1_000;
+    await scheduler.schedule(input(REVOLUTX_PRIORITY.P1_RECONCILIATION, "/second"));
+
+    expect(clock.sleep).toHaveBeenLastCalledWith(10);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("single-flight coalesce GET concurrentes por clave normalizada", async () => {
     const clock = makeClock();
     const gate = deferred<Response>();
