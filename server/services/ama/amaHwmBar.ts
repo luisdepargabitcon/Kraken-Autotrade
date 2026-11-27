@@ -7,6 +7,7 @@
 
 import type { MacroZone } from "./amaTypes";
 import { MACRO_ZONE_RANGES } from "./amaTypes";
+import { atr as indicatorAtr } from "../indicators/core";
 
 // ─── Daily Close Observation (R3 — explicit isClosed, R4.9 — mandatory) ──
 
@@ -226,24 +227,7 @@ export function computeATR(
   candles: Candle[],
   period: number = 20,
 ): number | null {
-  if (candles.length < period + 1) return null;
-
-  const trueRanges: number[] = [];
-  for (let i = 1; i < candles.length; i++) {
-    const prev = candles[i - 1];
-    const curr = candles[i];
-    const tr = Math.max(
-      curr.high - curr.low,
-      Math.abs(curr.high - prev.close),
-      Math.abs(curr.low - prev.close),
-    );
-    trueRanges.push(tr);
-  }
-
-  // Simple moving average of last `period` true ranges
-  const slice = trueRanges.slice(-period);
-  const sum = slice.reduce((a, b) => a + b, 0);
-  return sum / period;
+  return indicatorAtr(candles, period, { method: "sma" }).value;
 }
 
 export function computeATRPercentage(

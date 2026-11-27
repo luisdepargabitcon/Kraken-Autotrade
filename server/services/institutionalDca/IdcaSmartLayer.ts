@@ -14,7 +14,7 @@ import type {
   SafetyOrderLevel,
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
-import { emaStrict as indicatorEmaStrict } from "../indicators/core";
+import { emaStrict as indicatorEmaStrict, rsiWilder as indicatorRsiWilder } from "../indicators/core";
 
 // ─── Market Score (0-100) ──────────────────────────────────────────
 
@@ -290,33 +290,9 @@ export function computeEmaStrict(
 // ─── RSI Calculation ───────────────────────────────────────────────
 
 export function computeRSI(closes: number[], period = 14): number {
-  if (closes.length < period + 1) return 50;
-
-  let gains = 0;
-  let losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses += Math.abs(diff);
-  }
-
-  let avgGain = gains / period;
-  let avgLoss = losses / period;
-
-  for (let i = period + 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) {
-      avgGain = (avgGain * (period - 1) + diff) / period;
-      avgLoss = (avgLoss * (period - 1)) / period;
-    } else {
-      avgGain = (avgGain * (period - 1)) / period;
-      avgLoss = (avgLoss * (period - 1) + Math.abs(diff)) / period;
-    }
-  }
-
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - 100 / (1 + rs);
+  // Wrapper compatible: la política legacy100 reproduce exactamente la semántica
+  // histórica de IDCA, incluida una serie plana como RSI 100.
+  return indicatorRsiWilder(closes, period, { flatPolicy: "legacy100" }).value;
 }
 
 // ─── Adaptive TP ───────────────────────────────────────────────────
