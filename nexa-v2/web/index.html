@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b13">
+<meta name="color-scheme" content="dark">
+<title>NEXA · Gestión inteligente del bot</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/premium.css">
+<link rel="stylesheet" href="css/dashboard.css">
+<link rel="stylesheet" href="css/scope-portfolio.css">
+<link rel="stylesheet" href="css/scoped-pages.css">
+</head>
+<body>
+<div id="app" class="app" data-mode="pro" data-online="1">
+  <header class="topbar">
+    <div class="brand">
+      <button class="logo" id="brand-home" type="button" aria-label="Volver a Inicio" title="Inicio">
+        <svg aria-hidden="true" viewBox="0 0 36 36" width="30" height="30"><rect x="1" y="1" width="34" height="34" rx="9" fill="#123877"/><path d="m7 25 6-15h5l3 11 4-11h5l-6 15h-6l-3-10-4 10z" fill="#79bcff"/></svg>
+        <span class="brand-tx"><b>NEXA</b><span id="brand-sub">Control · Web + Android</span></span>
+      </button>
+    </div>
+    <nav class="topnav" id="topnav" aria-label="Navegación principal escritorio"></nav>
+    <div class="top-segs">
+      <div class="seg" role="group" aria-label="Nivel de presentación">
+        <button id="mode-basic" data-mode="basic">Básico</button>
+        <button id="mode-pro" data-mode="pro" class="on">Pro</button>
+      </div>
+      <div class="seg seg-env" role="group" aria-label="Datos visibles: reales o de simulación">
+        <button type="button" id="scope-real" data-scope="real" class="on" aria-pressed="true">REAL</button>
+        <button type="button" id="scope-shadow" data-scope="shadow" aria-pressed="false">SHADOW</button>
+      </div>
+    </div>
+    <div class="top-ctl">
+      <button class="seg-btn" id="engine-btn" aria-haspopup="dialog" title="Cambiar motor" aria-label="Cambiar motor">Motor: <b id="engine-name">IDCA</b></button>
+      <button class="seg-btn" id="lock-btn" title="Bloquear (PIN)">Bloq.</button>
+      <button class="nx-ver" id="ver-badge" type="button" title="Información de compilación" aria-label="Versión y compilación">v…</button>
+      <button class="nx-header-settings" id="settings-shortcut" type="button" data-nav="settings" title="Ajustes" aria-label="Abrir ajustes">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06-1.91 1.91-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.52V20h-2.7v-.08a1.65 1.65 0 0 0-1-1.52 1.65 1.65 0 0 0-1.82.33l-.06.06-1.91-1.91.06-.06A1.65 1.65 0 0 0 7.9 15a1.65 1.65 0 0 0-1.52-1H6.3v-2.7h.08a1.65 1.65 0 0 0 1.52-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06L9.42 6.5l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.52V5.3H15v.08a1.65 1.65 0 0 0 1 1.52 1.65 1.65 0 0 0 1.82-.33l.06-.06 1.91 1.91-.06.06A1.65 1.65 0 0 0 19.4 10.3a1.65 1.65 0 0 0 1.52 1H21v2.7h-.08A1.65 1.65 0 0 0 19.4 15Z"/></svg>
+      </button>
+    </div>
+  </header>
+  <div class="statusline" id="statusline" role="status"></div>
+  <main id="screen" class="screen" tabindex="-1"></main>
+  <div class="dock">
+    <button id="back" type="button" aria-label="Volver al nivel anterior" title="Atrás" hidden>‹</button>
+    <nav class="bottomnav" id="bottomnav" aria-label="Navegación principal móvil"></nav>
+  </div>
+</div>
+
+<div id="unlock-overlay" class="pin-overlay" role="dialog" aria-modal="true" aria-label="Desbloquear NEXA">
+  <div class="pin-card">
+    <svg aria-hidden="true" viewBox="0 0 36 36" width="40" height="40"><rect x="1" y="1" width="34" height="34" rx="9" fill="#123877"/><path d="m7 25 6-15h5l3 11 4-11h5l-6 15h-6l-3-10-4 10z" fill="#79bcff"/></svg>
+    <h2 id="unlock-title">Desbloquear NEXA</h2>
+    <p class="pin-note" id="unlock-note"></p>
+    <button class="btn primary bio-btn hidden" id="bio-btn">Usar huella / rostro</button>
+    <div class="pin-dots" id="pin-dots" aria-hidden="true"></div>
+    <div class="pin-pad" id="pin-pad"></div>
+    <p class="pin-err" id="pin-err"></p>
+    <p class="tiny" id="unlock-alt"></p>
+  </div>
+</div>
+
+<div id="pair-overlay" class="pin-overlay hidden" role="dialog" aria-modal="true" aria-label="Conectar NEXA">
+  <div class="pin-card nx-pair-simple">
+    <div class="nx-pair-header">
+      <span class="nx-pair-mark" aria-hidden="true">N</span>
+      <button class="nx-pair-gear" id="pair-config-toggle" type="button" title="Configurar servidor" aria-label="Configurar servidor" aria-controls="pair-config-form" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l-1.91 1.91a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.52H12.3a1.65 1.65 0 0 0-1-1.52 1.65 1.65 0 0 0-1.82.33L7.57 16.8A1.65 1.65 0 0 0 7.9 15a1.65 1.65 0 0 0-1.52-1v-2.7a1.65 1.65 0 0 0 1.52-1 1.65 1.65 0 0 0-.33-1.82l1.91-1.91a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.52H15a1.65 1.65 0 0 0 1 1.52 1.65 1.65 0 0 0 1.82-.33l1.91 1.91a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.52 1V14a1.65 1.65 0 0 0-1.52 1Z"/></svg>
+      </button>
+    </div>
+    <h2>Conectar mi bot</h2>
+    <p class="pin-note">Pega el código que te facilita Cascade: tu código personal reutilizable o un código temporal.</p>
+    <label class="pair-field-label" for="pair-code">Código de acceso</label>
+    <div class="nx-pair-code-row">
+      <input id="pair-code" class="inp code-inp" placeholder="Código de 24 caracteres" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" maxlength="64" aria-describedby="pair-code-hint">
+      <button id="pair-paste-btn" type="button" class="nx-pair-paste">Pegar</button>
+    </div>
+    <p id="pair-code-hint" class="pair-help">El código personal es reutilizable; los temporales duran 10 minutos y son de un solo uso.</p>
+    <input id="pair-label" type="hidden" value="Mi móvil">
+    <form id="pair-config-form" class="pair-config-form nx-pair-advanced" hidden>
+      <label for="pair-api-base">Servidor seguro</label>
+      <input id="pair-api-base" class="inp" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://nexa-5-250-184-18.nip.io/api">
+      <p class="pair-help" id="pair-server-current">Servidor NEXA configurado automáticamente</p>
+      <button class="btn" id="pair-api-save" type="submit">Guardar dirección</button>
+    </form>
+    <div class="btn-row nx-pair-actions">
+      <button class="btn primary" id="pair-btn">Conectar</button>
+      <button class="btn" id="pair-skip">Ahora no</button>
+    </div>
+    <p class="pin-err" id="pair-err" role="status" aria-live="polite"></p>
+  </div>
+</div>
+
+<div id="modal-root" class="modal-root hidden"></div>
+<noscript>NEXA V2 requiere JavaScript.</noscript>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
