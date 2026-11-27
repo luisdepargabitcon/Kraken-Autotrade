@@ -19,7 +19,7 @@ Plantilla de consulta: `docker exec -i -e PGOPTIONS='-c default_transaction_read
 |---|---|---|
 | E-010 | `SELECT (kraken_api_key<>'') ..., kraken_connected, kraken_enabled, (revolutx_*<>''), revolutx_connected, revolutx_enabled, trading_exchange, data_exchange, active_exchange FROM api_config` | Kraken: key/secret presentes, connected=t, enabled=t. RX: presentes, t, t. trading=revolutx, data=kraken, active=revolutx |
 | E-011 | `docker exec … sh -s` que imprime solo `TRADING_ENABLED, NODE_ENV, DRY_RUN*, LOW_API, ENV_TAG, REVOLUTX_ENABLED` y los **nombres** de variables que casan con proveedores | TRADING_ENABLED=__UNSET__, NODE_ENV=production. Nombres: solo `REVOLUTX_SYNC_ENABLED` (sin COINGLASS/WHALE/COINMETRICS) |
-| E-012 | `ss -ltn`; `iptables -S DOCKER-USER`; `iptables -t nat -S DOCKER`; **un** `curl -m 8 http://<ip-publica>:3020/` (GET a la raíz estática) desde fuera | 3020 escucha en 0.0.0.0/[::]. DOCKER-USER `--dport 3020 -j DROP` en ens6, pero el DNAT reescribe a :5000 y la regla no actúa. Respuesta externa **HTTP 200 en 0,07 s**. :3000 externo → sin respuesta |
+| E-012 | Lecturas de red del host y **una** única petición GET externa a la raíz estática | La API de la aplicación responde desde Internet (HTTP 200) a pesar de la regla de firewall existente, que no filtra el tráfico publicado por el mecanismo de port forwarding del contenedor. **Detalle exacto de red, puertos y reglas omitido a propósito en esta versión saneada; disponible para el propietario por canal privado.** El segundo puerto (instancia legacy) no responde desde fuera |
 | E-013 | `SELECT market_metrics_config, is_active, dry_run_mode, spot_execution_mode … FROM bot_config` | `{"mode":"activo","enabled":true,"applyToBuy":true,"applyToSell":true,"sensitivity":"conservador","stalenessMaxMs":{…}}`, actualizado 2026-11-26 22:46Z |
 | E-014 | `institutional_dca_config` / `grid_isolated_configs` (columnas de modo y política) | IDCA enabled=t mode=live smart=t btcGate=t. GRID BTC/USD SHADOW MAKER_ONLY taker_fallback=t protective_taker=t |
 | E-020 | logs: `grep "POST /api/trade\|placeOrder\|[LIVE][SELL] Placing"` (IDs y cantidades redactados) | 1 venta IDCA live en Revolut X 2026-11-27T02:46Z (filled, pendingFill). 0 `POST /api/trade` (la coincidencia era `/api/trades/sync-revolutx`) |
@@ -59,6 +59,18 @@ Plantilla de consulta: `docker exec -i -e PGOPTIONS='-c default_transaction_read
   - E-043 EMA: diferencia relativa 0.235 % (i=49), 0.031 % (i=99), 9.5e-6 % (i=299).
   - E-044: RSI diferencia 0; ATR SMA 2.7500 frente a Wilder 2.7444 (0.20 %).
 
+## Continuación TANGO — evidencias nuevas (análisis estático local y fixtures autocontenidos, 2026-11-27 tarde; sin nuevo acceso al VPS)
+
+| ID | Evidencia | Resultado |
+|---|---|---|
+| E-045 | Fixtures autocontenidos `fixtures/indicatorNumericAudit.refcheck.mjs` y `fixtures/vwapNumericAudit.vwapcheck.mjs` (node, sin red ni datos privados; copias verbatim de indicators.ts/IdcaSmartLayer@3ae1831 —idénticos en main— con referencias independientes y datos sintéticos LCG deterministas). Ejecutados en local 2026-11-27 | **17/17 pass** (11+6). Resultados: EMA20 desviación de semilla 0,0146 % a 50 puntos y 0,0001 % a 100; MACD ventanas truncadas desviación ~30 %, desacuerdo de signo del histograma 16/66 ventanas; Bollinger usa desviación **poblacional** (ratio 0,9747=√(19/20) exacto); RSI indicators.ts hasta +13,44 pts vs Wilder y serie plana → 100; IDCA computeRSI = Wilder exacto; VWAP diff=0 en todos los casos, ponderación exacta, guards de insuficiencia correctos |
+| E-061 | `git grep` estático en runtime: consumidores del gate de Market Metrics | `applyMarketMetricsGate` solo se invoca en tradingEngine.ts:4480 y 5672 (pipeline de entradas legacy, deshabilitado E-026). **Ningún** consumidor en institutionalDca/, spot/ ni gridIsolated/. Consistente con 0 invocaciones (no solo 0 persistidas) |
+| E-062 | Lectura estática positions.routes.ts:170-320 y tradingEngine.ts forceClosePosition | buy: guard `TRADING_ENABLED` + `confirm=true`; close: **sin** `TRADING_ENABLED` ni `confirm`; dentro de forceClosePosition sí hay `dryRunMode` (L7757). forceClosePosition en sí no consulta TRADING_ENABLED |
+| E-063 | `git grep idcaExecutionManager` en todo server/ | Importado en Engine/Cleanup/Validation pero **sin llamadas** a execute*/executeSimple/TWAP; solo `generateExecutionDiagnostics` en IdcaValidationService.ts:475 (ruta validation/run-full). Sin guard de modo en el manager (placeOrder directo en executeSimple L181, childOrders L233, TWAP L280) |
+| E-064 | amaRealExecutionGateway.ts completo + `git grep executeRealOrder`; spotEngine.ts:705; gridIsolatedEngine.ts:5865,6539 | AMA: el gateway **no envía orden al exchange** (comentario explícito en código) y no tiene llamadores. SPOT: `REAL_ACTIVATION_ALLOWED=false` bloquea activar REAL aunque se pida. GRID: ejecución real solo en modo REAL_LIMITED/REAL_FULL; SHADOW nunca llama a gridExecutionService. IdcaExitExecutor sí separa simulation/live correctamente (executeSimulationSell vs executeLiveSell) |
+| E-065 | `git grep` en client/src de endpoints mutativos | UI usa: emergency/close-all (useInstitutionalDca.ts:750), close-manual (:966), manual-buy (:1052), config/active-exchange (Integrations.tsx:98). Sin llamadas UI a `/api/trade` ni positions buy/close |
+| E-066 | `git show` md5 runtime vs main de ficheros clave | indicators.ts, IdcaSmartLayer.ts, IdcaEngine.ts, ExchangeFactory.ts, market.routes.ts, positions.routes.ts **idénticos** en `3ae1831` y `main`; difieren MarketDataService.ts y tradingEngine.ts (main −97/−104 líneas, regressions ya descritas) |
+
 ## E-099 — Incidente: escritura involuntaria en el VPS (comunicado, revertido)
 - **Qué:** al preparar una agregación de logs ejecuté por error una redirección de shell en el VPS: `docker logs -t krakenbot-staging-app > /tmp/.ignore_never_written`. Creó un fichero de 177 245 580 bytes en `/tmp` del host (mtime 2026-11-27 12:11:50Z) con el log completo del contenedor.
 - **Corrección:** lo detecté en el paso siguiente. Hice `rm -f -- /tmp/.ignore_never_written` y verifiqué su ausencia a las 12:12:02Z (unos 12 s después).
@@ -68,15 +80,16 @@ Plantilla de consulta: `docker exec -i -e PGOPTIONS='-c default_transaction_read
 ## Diff documental
 Solo ficheros nuevos en `AUDITORIAS/MARKET_DATA_2026-11-27/` y una entrada breve en `BITACORA.md`. Sin código operativo. Verificado con `git diff --check` y revisión de secretos (ver comentario del commit/PR).
 
-## Tareas y pendientes
+## Tareas y pendientes (actualizado en continuación TANGO)
 | Tarea | Estado | Motivo / siguiente paso |
 |---|---|---|
-| P0 seguridad (rutas, venue, LOW_API) | HECHO (estático + runtime) | R8/R9 IDCA ExecutionManager/ExitExecutor: modo de los llamantes NO_VERIFICADO |
+| P0 seguridad — matriz completa de rutas de ejecución | HECHO (estático completo runtime+main, sin invocar mutativos) | R8: sin llamador operativo, sin guard (H-033). R9: guard correcto por modo. AMA: no cableada (H-034). SPOT REAL: bloqueo compile-time. R11b close sin guard simétrico (H-028) |
 | Inventario de fuentes runtime | HECHO | F-005, F-012, F-020 NO_VERIFICADO |
-| Trazabilidad de consumidores | PARCIAL | AMA y SPOT V4 (C-022) NO_VERIFICADO |
-| Calidad / fixtures | HECHO para EMA/RSI/ATR/score/MM | VWAP anclado, Bollinger, MACD NO_VERIFICADO |
-| LOW_API 7 días | NO_VERIFICADO | Docker solo retiene 28,5 h; `server_logs` no consultado |
+| Trazabilidad de consumidores | HECHO (estático) | AMA/SPOT V4/GRID resueltos en SEGURIDAD_LOW_API §2; consumidores UI en E-065 |
+| Calidad / fixtures | HECHO | EMA/RSI/ATR/score/MM + VWAP/Bollinger/MACD/RSI-dual (E-045, 17/17) |
+| LOW_API 7 días | NO_VERIFICADO | Docker solo retiene 28,5 h; no se ha vuelto a acceder al VPS (evaluación de seguridad) |
 | Permisos de la clave Kraken | NO_VERIFICADO | lo revisa el propietario en el panel |
-| Causa de los 17 529 reinicios | NO_VERIFICADO | análisis de logs de arranque en otra sesión |
-| IPv6 :3020 externo | NO_VERIFICADO | — |
-| Comentarios en Issue #20 y PR | **BLOQUEADO** | `gh` sin autenticar en este equipo (`gh auth login` o GH_TOKEN). La rama se sube por SSH |
+| Causa de los 17 529 reinicios | NO_VERIFICADO | requiere análisis de logs de arranque en otra sesión |
+| IPv6 externo | NO_VERIFICADO | — |
+| Reconciliación ventas sin exchange_order_id (H-025) | NO_VERIFICADO | requiere contraste con fills/closed orders del venue |
+| Issue #20 y PR #21 | HECHO | PR #21 abierto sin merge; comentario publicado en Issue #20 (2026-11-27) |

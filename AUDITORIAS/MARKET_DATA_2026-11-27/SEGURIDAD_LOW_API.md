@@ -1,94 +1,92 @@
-# SEGURIDAD DE EJECUCIÓN Y LOW_API — Issue #20 (Revisión 2)
+# SEGURIDAD DE EJECUCIÓN Y LOW_API — Issue #20 (Revisión 2, actualización TANGO)
 
 Runtime auditado: `3ae1831` (md5 verificado, E-004). Fecha UTC 2026-11-27. SOLO LECTURA. No se ha invocado ninguna ruta mutativa ni se ha enviado ninguna orden.
 Principio P0: **Kraken = solo datos. Revolut X = único venue de trading. SHADOW/simulación = nunca órdenes reales.**
 
-## 1. Estado efectivo (E-010, E-011, E-013, E-014)
+> **Nota de saneamiento (TANGO):** el repositorio es público. Esta versión elimina el detalle operativo de red, topología y reproducción que figuraba en la primera publicación. El detalle necesario para la contención se trata con el propietario por canal privado. Los identificadores de hallazgos y la matriz de rutas se mantienen.
+
+## 1. Estado efectivo (fuentes: DB read-only y entorno del contenedor, E-010…E-014)
 
 | Parámetro | Valor runtime | Fuente |
 |---|---|---|
 | `api_config.trading_exchange / active_exchange / data_exchange` | revolutx / revolutx / kraken | DB read-only |
-| Claves Kraken (presencia) | key=presente, secret=presente, connected=t, enabled=t | DB (solo booleanos) |
-| Claves Revolut X (presencia) | presentes, connected=t, enabled=t | DB |
-| `TRADING_ENABLED` | **no definida → por defecto `true`** | env del contenedor (solo esta variable) |
+| Claves Kraken (presencia) | key y secret presentes; connected=t; enabled=t | DB (solo booleanos, sin valores) |
+| Claves Revolut X (presencia) | presentes; connected=t; enabled=t | DB |
+| `TRADING_ENABLED` | no definida → por defecto `true` en el código | entorno del contenedor |
 | `bot_config` | is_active=t, dry_run_mode=t, spot_execution_mode=SHADOW | DB |
-| IDCA | enabled=t, **mode=live** | DB |
-| GRID BTC/USD | mode=SHADOW, execution_policy=MAKER_ONLY, taker_fallback_enabled=t (guardado), protective_taker_fallback_enabled=t | DB |
-| Puerto app | 0.0.0.0:3020→5000, **accesible desde Internet (HTTP 200 en `/`)** | ss + 1 GET externo a `/` |
-| Permisos de la clave Kraken (trade sí/no) | **NO_VERIFICADO** (requiere llamada privada o panel) | — |
+| IDCA | enabled=t, mode=live | DB |
+| GRID BTC/USD | mode=SHADOW, execution_policy=MAKER_ONLY | DB |
+| Exposición de red de la API | **la aplicación responde desde Internet sin autenticación** (verificado con una única lectura GET; detalle omitido a propósito) | E-012 (saneado) |
+| Permisos de la clave Kraken (trade sí/no) | **NO_VERIFICADO** (solo lo puede confirmar el propietario en el panel de Kraken) | — |
 
-## 2. Matriz de rutas de ejecución (runtime 3ae1831)
+## 2. Matriz completa de rutas de ejecución (análisis estático runtime `3ae1831` y `main`; sin invocar rutas mutativas)
 
-| # | Ruta / disparador | Modo | Guard antes de la llamada mutativa | Destino real | Fallback | Alcanzable hoy | Prueba | Estado |
-|---|---|---|---|---|---|---|---|---|
-| R1 | `POST /api/trade` (market.routes.ts:278-330) | cualquiera | TRADING_ENABLED (por defecto true), `krakenService.isInitialized()` | **Kraken addOrder** | — | **SÍ: red pública + sin auth + claves presentes** | estática + red (no invocado) | **P0 H-001** |
-| R2 | `POST /api/config/active-exchange` (routes.ts:587-) → `ExchangeFactory.setActiveExchange('kraken')` | — | `krakenConnected` (=t) | cambia el trading a Kraken para todos los motores | — | **SÍ** | estática | **P0 H-003** |
-| R3 | `POST /api/config/kraken` / `/api/config/revolutx` | — | ninguno | sustituye las credenciales | — | SÍ | estática | P0 (H-002) |
-| R4 | `ExchangeFactory.getExchange('revolutx')` (ExchangeFactory.ts:37-51) | todos | `revolutXService.isInitialized()` | **Kraken si RX no inicializado** | silencioso (console.warn) | condicional: arranque sin claves RX, `revolutx_enabled=false` o fallo de init | estática | P0/P1 H-004 |
-| R5 | `initializeFromConfig` (ExchangeFactory.ts:168-212) | arranque | `exchangeEnabled[tradingEx]` + init | por defecto `'kraken'` si la config no indica otro o RX deshabilitado | — | condicional | estática | P1 H-004 |
-| R6 | IDCA `executeExit` (IdcaEngine.ts:198-307) | live **y simulation** | ninguno por modo antes de placeOrder (L232-233) | getTradingExchange() (RX hoy) | R4 | hoy no (IDCA live); sí si el modo pasa a simulation | estática + DB (0 órdenes sim con id) | **P0 latente H-005** |
-| R7 | IDCA buy/sell live (IdcaEngine.ts:~4950, ~5195) | live | validación de balance + isInitialized | getTradingExchange() | R4 | sí (legítimo, RX) | runtime: 1 venta RX 02:46Z | OK con R4 |
-| R8 | IdcaExecutionManager.executeSimple (L174-) | importado por Engine/Cleanup/Validation | NO_VERIFICADO el modo en todos los llamantes | getTradingExchange() | R4 | NO_VERIFICADO | estática parcial | pendiente |
-| R9 | IdcaExitExecutor (L76, L188) vía `processTriggeredExitInstructions` + ruta institutionalDca | NO_VERIFICADO | NO_VERIFICADO | getTradingExchange() | R4 | NO_VERIFICADO | — | pendiente |
-| R10 | tradingEngine.executeTrade / cierre manual (L6671, L7770) | SPOT legacy | `dryRunMode` antes (L6336, L7663) | getTradingExchange() | R4 | dryRun=t; entradas legacy deshabilitadas | estática + log | OK con R4 |
-| R11 | `POST /api/positions/:pair/buy` y `/close` | — | TRADING_ENABLED + motor (dryRun) | getTradingExchange() | R4 | sin auth | estática parcial | P1 (perímetro) |
-| R12 | `POST /api/trade/revolutx` (market.routes.ts:331-) | — | TRADING_ENABLED, allowlist de pares, RX init | **Revolut X real** | — | **SÍ, sin auth** | estática | P0 perímetro (H-002) |
-| R13 | GRID `gridExecutionService.placeOrder` (post_only) | REAL | circuit breaker, límite diario | Revolut X | — | **no: el servicio no está importado en ningún sitio** | estática (git grep) | OK |
-| R14 | GRID SHADOW protective taker | SHADOW | — | simulado (`[SHADOW]`) | — | sí (simulado) | estática | P2 H-024 |
-| R15 | Telegram (`telegram.ts:1319, 1445`) | — | solo lecturas (balance, ticker Kraken) | — | — | — | estática | OK (lectura) |
-| R16 | FISCO (`krakenService.getLedgers/getTradesHistory`) | — | lecturas privadas legítimas | Kraken (lectura) | — | sí | estática | OK; exige la clave Kraken con permiso Query |
+Convención: **guard efectivo** = comprobación que realmente impide la orden en la configuración actual. **Alcanzabilidad** = si hoy, con la configuración efectiva, la ruta puede terminar en una orden real.
 
-Observaciones de runtime (28,5 h, E-020): 1 orden real IDCA en Revolut X (final_sell, estado filled→pendingFill→reconciliada). 0 llamadas a `POST /api/trade`. Último trade en Kraken registrado: 2026-01-10 (origin=sync) (E-030).
+| # | Ruta / disparador | Guard efectivo hoy | Destino de la orden | Alcanzable hoy | Estado |
+|---|---|---|---|---|---|
+| R1 | `POST /api/trade` (market.routes.ts:278-330, idéntico en main) | Solo `TRADING_ENABLED` (indefinida → true) y `krakenService.isInitialized()` (=t) | **Kraken `placeOrder` directo** (sin ExchangeFactory) | **SÍ** — y la API no tiene autenticación (index.ts:30-60; auth solo en admin.routes y WS) | **P0 H-001** |
+| R2 | `POST /api/config/active-exchange` → `setActiveExchange('kraken')` | Solo que la clave conste como conectada (=t) | Cambia el trading de **todos** los motores a Kraken | **SÍ** | **P0 H-003** |
+| R3 | `POST /api/config/kraken` / `/api/config/revolutx` | Ninguno | Sustituye credenciales en caliente | **SÍ** | **P0 H-002** |
+| R4 | `ExchangeFactory.getExchange('revolutx')` con RX no inicializado | Ninguno: `console.warn` y sigue | **Fallback silencioso a Kraken** en cualquier motor que use `getTradingExchange()` | Condicional (caída de init RX o `revolutx_enabled=false`) | **P0/P1 H-004** |
+| R5 | `ExchangeFactory.initializeFromConfig` | Default `'kraken'` si la config no fuerza otro valor | Igual que R4 en arranque | Condicional | P1 H-004 |
+| R6 | IDCA `executeExit` automático (IdcaEngine.ts:198-307) | **Ninguno por modo**: `placeOrder` (L232-233) se ejecuta con cualquier `mode`, incluido `simulation`. El único guard por modo es la verificación de balance, solo en live | `getTradingExchange()` (RX hoy; Kraken vía R4) | Hoy sin impacto visible porque IDCA está en `live` (las ventas reales son la operación prevista). **Defecto activo**: si el modo pasa a `simulation`, las salidas automáticas (TP/BE/TimeStop) seguirían enviando **ventas market reales** | **P0 latente H-005** — confirmado en código |
+| R7 | IDCA compras/ventas live (`executeRealBuyWithGuard` ~4952, `executeRealSell` ~5195) | Validación de balance + `isInitialized` + confirmación de fill | `getTradingExchange()` = Revolut X (legítimo) | Sí — venta real observada 02:46Z (E-020) | OK (salvo R4) |
+| R8 | `IdcaExecutionManager` (executeSimple/childOrders/TWAP, L174-300) | **Ninguno por modo** en el propio manager | `getTradingExchange()` | **NO alcanzable hoy**: importado pero sin ningún llamador operativo; solo se usa `generateExecutionDiagnostics` en `IdcaValidationService` (ruta `validation/run-full`) | Latente P1 — guard inexistente si se cablea |
+| R9 | `IdcaExitExecutor` / `processTriggeredExitInstructions` (IdcaExitExecutor.ts:527+) | **Correcto**: `mode==="simulation"` → `executeSimulationSell` (contable, sin exchange); `live` → `executeLiveSell` | Según modo | Sí, y se comporta según el modo | OK — verificado en código; corrige el "NO_VERIFICADO" previo |
+| R10 | `tradingEngine` legacy entradas/cierres (L6671, L7770) | `dryRunMode` (=t en DB) + entradas legacy deshabilitadas (supervisor-only, E-026) | `getTradingExchange()` | No para entradas; cierres manuales dependen de dryRun | OK con R4 |
+| R11 | `POST /api/positions/:pair/buy` | `TRADING_ENABLED` + `confirm=true` + motor vivo | `tradingEngine.manualBuyForTest` → `getTradingExchange()` | Sin auth; bloqueado solo por el flag compartido | P1 (perímetro) |
+| R11b | `POST /api/positions/:pair/close` | **Sin `TRADING_ENABLED` ni `confirm`** — solo posición existente y motor vivo; dentro, `forceClosePosition` sí consulta `dryRunMode` (=t hoy) | Venta real vía `getTradingExchange()` si dryRun=f | Asimetría de guards respecto a buy; hoy mitigado por dryRun=t. Nota: un cierre es acción de reducción de riesgo — ver §5 fase 2 para no romper la gestión legítima | P1 H-028 |
+| R12 | `POST /api/trade/revolutx` (market.routes.ts:331-) | `TRADING_ENABLED` + allowlist de pares + RX init | **Revolut X real** | **SÍ, sin auth** | **P0 perímetro H-002** |
+| R13 | GRID `gridExecutionService` (post-only, circuit breaker, límite diario) | Solo se invoca en modos `REAL_LIMITED`/`REAL_FULL` (gridIsolatedEngine.ts:5865); SHADOW nunca lo llama | Revolut X directo | **NO** — config efectiva SHADOW | OK por configuración; sin guard adicional si el modo cambia por API (`/api/grid-isolated/mode` sin auth) |
+| R14 | GRID protective taker en SHADOW | — | Simulado | Sí (simulado) | P2 H-024 |
+| R15 | AMA real (`amaRealExecutionGateway.executeRealOrder`) | 5 gates: feature flag `AMA_REAL_EXECUTION_ENABLED` + state machine + autorización + pre-trade gates + reserva portfolio | **Ninguno: el gateway no cablea la orden al exchange** — el propio código documenta que la integración con el exchange queda para una fase futura; además no hay ningún llamador de `executeRealOrder` fuera del gateway | **NO** | OK hoy; riesgo diferido a cuando se cablee |
+| R16 | AMA shadow scenarios | n/a | Phantom fills (`amaShadowExecutor`) | Simulado | OK |
+| R17 | SPOT V4 REAL (`spotEngine`) | **`REAL_ACTIVATION_ALLOWED = false` en compile-time** (spotEngine.ts:705-706) — activar REAL lanza error aunque se pida por API | `SpotRealAdapter` → `ExchangeFactory.getTradingExchange()` | **NO** (bloqueo estático) | OK hoy; si se habilita, hereda R4 |
+| R18 | SPOT V4 SHADOW | — | `generatePhantomFill` — nunca llama al exchange | Simulado | OK |
+| R19 | IDCA `manual-buy` / `close-manual` / `emergency close-all` / exit-instructions (rutas institutionalDca) | Por modo: simulation → contable; live → `executeRealSell` (correcto). Sin auth | Revolut X en live | Sí — gestión legítima de posiciones que la contención debe preservar (§5) | OK funcional / P1 perímetro |
+| R20 | Telegram | Solo lecturas | — | — | OK |
+| R21 | FISCO (`getLedgers`/`getTradesHistory` Kraken) | Lectura privada legítima | Kraken lectura | Sí | OK; exige mantener una clave Kraken con permiso Query |
 
-## 3. GRID: referencia Kraken vs ejecución Revolut X (REV-C12E/G)
+**Consumidores web/APK (client/src):** la UI llama a `close-manual`, `manual-buy`, `emergency/close-all` (useInstitutionalDca.ts:750,966,1052) y a `/api/config/active-exchange` (Integrations.tsx:98). No se han encontrado llamadas UI a `/api/trade` (kraken) ni a `positions/:pair/buy|close`. No hay consumidor APK en este repo. Conclusión: las rutas mutativas de la UI son las de gestión IDCA y configuración de exchange — todas sin autenticación.
 
-- Referencia: `MarketDataService.getFreshTickerSnapshot` (fail-closed, procedencia KRAKEN_MARKET_DATA). En los logs aparece `source=GRID_ISOLATED`, `ticker_last`, mode SHADOW (E-023).
-- **Pero** `gridCapitalAllocator.getTotalBalanceUsd` (gridCapitalAllocator.ts:64-88@3ae1831, idéntico en main) llama a `ExchangeFactory.getTradingExchange().getBalance()` y `.getTicker("BTC/USD")` de Revolut X dentro de `allocate()`, que se invoca desde `gridPlanningContextResolver` en cada planificación. Es una reintroducción indirecta de `getTicker` de Revolut X en el bucle GRID (H-006).
-- Política efectiva: `getEffectiveExecutionPolicy` SHADOW→MAKER_ONLY y `getEffectiveTakerFallbackEnabled` SHADOW→false. En cambio `getEffectiveProtectiveTakerFallbackEnabled` SHADOW→valor guardado (true) y REAL→false (gridIsolatedTypes.ts:133-139, 206-223). El efecto es que el taker protector simulado está activo en SHADOW (H-024). Esto no existe en main.
+Observaciones de runtime (ventana 28,5 h, E-020): 1 orden real IDCA en Revolut X. 0 llamadas a `POST /api/trade`. Último trade en Kraken registrado: 2026-01-10 (origin=sync) (E-030).
 
-## 4. LOW_API Revolut X — métricas observadas (MEDIDO, ventana 2026-11-26T07:43:58Z → 2026-11-27T12:1xZ, ~28,5 h, logs Docker; E-021, E-022)
+## 3. GRID: referencia Kraken vs llamadas firmadas a Revolut X en SHADOW (H-006)
 
-| Endpoint / evento | Recuento | Código | Motor probable |
+- La referencia de precio usa `MarketDataService.getFreshTickerSnapshot` (fail-closed, procedencia Kraken).
+- **Pero** `gridCapitalAllocator.getTotalBalanceUsd` (gridCapitalAllocator.ts:64-88, idéntico en main) llama en cada planificación a `getTradingExchange().getBalance()` y `.getTicker("BTC/USD")` — es decir, GET firmados a Revolut X incluso en SHADOW. En la ventana: 5 715 GET firmados, el 100 % con 401 (E-021). El fallo de ticker se ignora y el capital se calcula solo con USD.
+- Política efectiva: SHADOW → MAKER_ONLY, taker fallback off; protective taker usa el valor guardado (true) — efecto simulado (H-024).
+
+## 4. LOW_API Revolut X — métricas observadas (MEDIDO, ventana ~28,5 h de logs Docker; E-021, E-022)
+
+| Endpoint / evento | Recuento | Resultado | Atribución |
 |---|---|---|---|
-| `/api/1.0/order_book/BTC-USD`, `/orderbook/BTC-USD`, `/trades/BTC-USD`, `/trades/public/BTC-USD`, `/trades/public/BTC-USD/last` | 1 143 cada uno (5 715) | **401 Unauthorized (100 %)** | GRID allocator (H-006) |
-| `Balances fetched` | 1 167 | 200 | GRID allocator + otros |
-| `getFills(/fills)` | 210 | 401 "Unauthenticated access" | IDCA/fill watcher (NO_VERIFICADO) |
-| `getFills` | 66 | 429 | IDCA |
+| orderbook/trades firmados (5 paths) | 5 715 | 401 Unauthorized (100 %) | GRID allocator (correlación de cadencia ~90 s con el bucle de planificación; atribución por correlación, no por contador) |
+| `Balances fetched` | 1 167 | 200 | GRID allocator + otros consumidores (desagregación NO MEDIDA) |
+| `getFills` | 210 + 66 | 401 / 429 | fill watcher (motor exacto NO VERIFICADO) |
 | `listPrivateTrades` | 66 | 429 | sync de trades |
 | `placeOrder` | 1 | ok | IDCA live |
 
-- Cadencia: unas 40 rondas de ticker por hora, es decir, una cada ~90 s.
-- Total estimado: ≥7 000 peticiones privadas firmadas en 28,5 h, y más del 80 % fallaron.
-- Implementación (H-007):
-  - `scheduleRL` (RevolutXService.ts:486-514) serializa con un mínimo de 250 ms, pero **solo lo usa `getBalance`** (L527).
-  - `signedGetJson`, órdenes, fills y trades llaman a `fetch` directamente.
-  - No se trata la cabecera `Retry-After`.
-  - Hay circuit breaker por endpoint (L182-331) de uso parcial.
-- No hay contadores persistentes por endpoint, así que el volumen por motor es NO MEDIDO (solo correlación de logs).
+- Implementación (H-007): la cola de rate-limit `scheduleRL` solo la usa `getBalance`; el resto llama a `fetch` directo; no se respeta `Retry-After`; hay circuit breaker parcial por endpoint.
+- Límite de evidencia: Docker solo retiene ~28,5 h de logs; la ventana de 7 días pedida no existe en esta fuente y no se ha vuelto a acceder al VPS para buscarla.
 
-## 5. Propuesta de contención (REQUIERE AUTORIZACIÓN SEPARADA — no ejecutada)
+## 5. Propuesta de contención y recuperación por fases (NO ejecutada — requiere autorización expresa del propietario por canal privado)
 
-Orden de menor a mayor impacto. Todas son reversibles:
-1. **Perímetro (sin tocar código):** publicar el puerto solo en loopback (`127.0.0.1:3020:5000` en compose) o corregir DOCKER-USER con `-m conntrack --ctorigdstport 3020 --ctdir ORIGINAL -j DROP`, y verificar también IPv6. Acceso remoto por túnel SSH o proxy con autenticación. Reversible al quitar la regla.
-2. **Kill-switch de Kraken:** `TRADING_ENABLED=false` no sirve como kill-switch solo para Kraken, porque el flag es común y también bloquearía Revolut X (`/api/trade/revolutx`, posiciones). La medida equivalente sin código es retirar o rotar la clave Kraken por una con permisos **solo Query** (consulta de fondos y ledgers para FISCO). La decide el propietario en el panel de Kraken.
-3. **Código (fase posterior):**
-   - `KRAKEN_EXECUTION_FORBIDDEN` en `krakenService.placeOrder/placeOrderRaw/cancelOrder`.
-   - ExchangeFactory sin fallback y con `tradingExchange` restringido a `revolutx`.
-   - Quitar `kraken` del endpoint active-exchange y del botón de Integrations.
-   - Guard `mode==="live"` dentro de `executeExit`.
-   - Autenticación en `/api` mutativo.
-4. **Fail-closed sin Revolut X:**
-   - Si Revolut X no está disponible, no se crean órdenes nuevas (`VENUE_UNAVAILABLE`).
-   - Las órdenes pendientes y los fills se reconcilian por `clientOrderId` de forma idempotente, con backoff.
-   - Las salidas protectoras quedan en cola con alerta y no se desvían a otro venue.
-   - SHADOW queda aislado por construcción: no importa adaptadores de ejecución.
+Principios: reversible en cada fase; **preservar la gestión legítima de posiciones** (IDCA live debe poder seguir vendendo en Revolut X; FISCO debe poder seguir leyendo Kraken); pruebas aisladas antes de cada cambio; sin desplegar `main` ni fusionar las ramas divergentes.
 
-## 6. Pruebas sugeridas (locales, con mocks y sin red)
+- **Fase 0 — decisiones del propietario (sin tocar el sistema):** confirmar permisos de la clave Kraken en el panel; decidir el canal de acceso remoto legítimo a la UI; autorizar la fase 1.
+- **Fase 1 — perímetro (infra, sin código):** que la API deje de ser alcanzable desde Internet y el acceso remoto quede detrás de un canal autenticado. Verificación: lectura externa sin respuesta; lectura por el canal autorizado correcta. Reversible. Detalle técnico exacto por canal privado.
+- **Fase 2 — credencial Kraken:** rotar la clave por una de **solo Query** (suficiente para datos y para FISCO). Verificación: lecturas FISCO siguen funcionando; cualquier intento de orden en Kraken es rechazado por el propio venue. Esto contiene R1/R4/R5 aunque el código no cambie. Precaución: no borrar la clave antes de confirmar que FISCO y los datos no dependen de permisos adicionales.
+- **Fase 3 — código de contención (rama aparte, nunca merge directo a runtime):** guard de modo en `executeExit` (R6) y en `IdcaExecutionManager` (R8); `KRAKEN_EXECUTION_FORBIDDEN` en `krakenService.placeOrder/cancelOrder`; eliminar el fallback silencioso R4 (fail-closed con alerta); quitar `kraken` de active-exchange y de la UI; autenticación en rutas mutativas; guards simétricos en positions buy/close **sin impedir cierres de reducción de riesgo legítimos** (R11b: registrar y alertar, no bloquear ventas de salida en Revolut X).
+- **Fase 4 — fail-closed de venue:** si Revolut X no está disponible no se abren órdenes nuevas (`VENUE_UNAVAILABLE`); reconciliación idempotente por `clientOrderId` con backoff y respeto de `Retry-After`; cola de salidas protectoras con alerta sin desviar a otro venue; SHADOW aislado por construcción.
+- **Fase 5 — recuperación y convergencia de ramas:** plan para reconciliar `integration/staging-spot-v4` con `main` (101/43 commits divergentes) antes de cualquier despliegue; sin fecha ni ejecución en esta orden.
+- Pruebas aisladas sugeridas (mocks, sin red): T1 placeOrder Kraken siempre rechazado; T2 fallback RX→Kraken imposible; T3 `executeExit(simulation)` 0 llamadas a placeOrder; T4 active-exchange kraken → 400; T5 SHADOW sin GET firmados RX; T6 429 con Retry-After espera ≥N s; T7 API no alcanzable desde fuera y sí por el canal autorizado.
 
-- T1: `krakenService.placeOrder` lanza error siempre (incluido con `TRADING_ENABLED=true`).
-- T2: `ExchangeFactory.getExchange('revolutx')` con RX no inicializado → error, nunca Kraken.
-- T3: `executeExit(mode="simulation")` → 0 llamadas a `placeOrder` (spy).
-- T4: `POST /api/config/active-exchange {kraken}` → 400.
-- T5: `gridCapitalAllocator.allocate` en SHADOW → 0 llamadas a `revolutXService.getTicker` (spy).
-- T6: scheduler RX: 429 con `Retry-After: N` → la siguiente petición espera ≥N s.
-- T7 (infra): GET externo a :3020 → timeout. GET por túnel → 200.
+## 6. Límites de evidencia declarados
+
+- Permisos de la clave Kraken: NO_VERIFICADO (no se ha hecho ninguna llamada privada de prueba; lo confirma el propietario).
+- IPv6: NO_VERIFICADO.
+- Logs de 7 días: no disponibles en Docker; no se ha vuelto a acceder al VPS.
+- Causa de los 17 529 reinicios: NO_VERIFICADO — no atribuir a ninguna causa concreta sin análisis de arranque.
+- No se repetirá acceso a producción para completar estos puntos sin evaluación de seguridad previa; el análisis local y las evidencias existentes se han agotado primero, como pide TANGO.
