@@ -19,7 +19,7 @@
  *   - getATR(pair, tf, period) for ATR computation over cached candles
  */
 
-import { ExchangeFactory } from "./exchanges/ExchangeFactory";
+import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { OHLC, Ticker } from "./exchanges/IExchangeService";
 import { MarketCandleRepository } from "./marketData/MarketCandleRepository";
 import { validateCandleSeries, CONTRACT_VERSION, type CandleSeries, type PricePoint } from "./marketData/marketDataContract";
@@ -31,7 +31,15 @@ export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" 
 
 export interface CachedCandles {
   candles: OHLC[];
-  fetchedAt: number; // epoch ms
+  fetchedAt: number; // epoch ms when this in-memory cache entry was written
+  origin: "live" | "db_fallback" | "cache";
+  provider: ExchangeType;
+  receivedAt: number | null; // original reception/persistence time; never renewed by cache reads
+}
+
+interface ProvenancedCandle extends OHLC {
+  providerTs?: number | null;
+  receivedAt?: number | null;
 }
 
 export interface CachedPrice {
@@ -137,7 +145,30 @@ class MarketDataServiceClass {
   // ── Candle cache ──────────────────────────────────────────────
 
   private candleKey(pair: string, tf: string): string {
-    return `${pair}::${tf}`;
+    const provider = ExchangeFactory.getDataExchangeType();
+    return `${provider}::${pair}::${tf}`;
+  }
+
+  private dataProviderMetadata(provider: ExchangeType = ExchangeFactory.getDataExchangeType()): { provider: ExchangeType; source: string; venue: string } {
+    if (provider === "kraken") {
+      return { provider, source: "KRAKEN_MARKET_DATA", venue: "KRAKEN" };
+    }
+    return {
+      provider,
+      source: `${provider.toUpperCase()}_MARKET_DATA`,
+      venue: provider.toUpperCase(),
+    };
+  }
+
+  private writeCandleCache(
+    key: string,
+    candles: OHLC[],
+    origin: CachedCandles["origin"],
+    receivedAt: number | null,
+  ): void {
+    const cachedAt = Date.now();
+    const provider = (key.split("::", 1)[0] ?? ExchangeFactory.getDataExchangeType()) as ExchangeType;
+    this.candleCache.set(key, { candles, fetchedAt: cachedAt, origin, provider, receivedAt });
   }
 
   /**
@@ -191,7 +222,7 @@ class MarketDataServiceClass {
         const candles = await exchange.getOHLC(pair, intervalMin);
         if (candles && Array.isArray(candles) && candles.length >= 7) {
           // Datos suficientes de Kraken: persistir y retornar
-          this.candleCache.set(key, { candles, fetchedAt: Date.now() });
+          this.writeCandleCache(key, candles, "live", Date.now());
           this.persistCandles(pair, tf, candles).catch(() => {});
           return candles;
         }
@@ -214,20 +245,57 @@ class MarketDataServiceClass {
   }
 
   putCandles(pair: string, tf: Timeframe, candles: OHLC[]): void {
-    this.candleCache.set(this.candleKey(pair, tf), { candles, fetchedAt: Date.now() });
+    this.writeCandleCache(this.candleKey(pair, tf), candles, "cache", null);
   }
 
   async getCandleSeries(pair: string, tf: Timeframe, opts: { minCandles?: number } = {}): Promise<CandleSeries> {
+    const key = this.candleKey(pair, tf);
+    const before = this.candleCache.get(key);
     const candles = await this.getCandles(pair, tf);
+    const entry = this.candleCache.get(key);
     const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 60) * 60_000;
-    const cached = this.candleCache.get(this.candleKey(pair, tf));
-    return validateCandleSeries(candles, { pair, timeframe: tf, timeframeMs: tfMs, nowMs: Date.now(), source: "KRAKEN_MARKET_DATA", venue: "KRAKEN", minCandles: opts.minCandles ?? 1, cachedAt: cached?.fetchedAt ?? null, origin: cached ? "cache" : "live" });
+    const provider = this.dataProviderMetadata(entry?.provider ?? ExchangeFactory.getDataExchangeType());
+    const servedFromMemoryCache = Boolean(before && entry === before && candles === before.candles);
+    const origin = servedFromMemoryCache ? "cache" : entry?.origin ?? "live";
+
+    return validateCandleSeries(candles, {
+      pair,
+      timeframe: tf,
+      timeframeMs: tfMs,
+      nowMs: Date.now(),
+      source: provider.source,
+      venue: provider.venue,
+      minCandles: opts.minCandles ?? 1,
+      cachedAt: entry?.fetchedAt ?? null,
+      receivedAt: entry?.receivedAt ?? null,
+      origin,
+    });
   }
 
   async getPricePoint(pair: string): Promise<PricePoint> {
     const [base, quote] = pair.split("/");
     const snap = await this.getFreshTickerSnapshot(pair);
-    return { contractVersion: CONTRACT_VERSION, pair, base: base ?? "", quote: quote ?? "", source: snap?.source ?? "KRAKEN_MARKET_DATA", venue: snap?.marketDataVenue ?? "KRAKEN", price: snap?.ticker?.last ?? null, providerTs: snap ? snap.fetchedAt.getTime() : null, receivedAt: Date.now(), cachedAt: snap ? snap.fetchedAt.getTime() : null, ageMs: snap?.ageMs ?? null, validity: snap ? (snap.fresh ? "valid" : "stale") : "unknown", reason: snap ? "ok" : "unavailable", dataQuality: snap?.fresh ? "good" : "unknown", origin: snap?.cached ? "cache" : "live" };
+    const receivedAt = snap ? snap.fetchedAt.getTime() : null;
+    // Ticker payloads in the current exchange abstraction do not expose an
+    // independent provider timestamp; do not relabel reception time as one.
+    const providerTs = null;
+    return {
+      contractVersion: CONTRACT_VERSION,
+      pair,
+      base: base ?? "",
+      quote: quote ?? "",
+      source: snap?.source ?? "KRAKEN_MARKET_DATA",
+      venue: snap?.marketDataVenue ?? "KRAKEN",
+      price: snap?.ticker?.last ?? null,
+      providerTs,
+      receivedAt,
+      cachedAt: receivedAt,
+      ageMs: snap?.ageMs ?? null,
+      validity: snap ? (snap.fresh ? "valid" : "stale") : "unknown",
+      reason: snap ? "ok" : "unavailable",
+      dataQuality: snap?.fresh ? "good" : "unknown",
+      origin: snap ? (snap.cached ? "cache" : "live") : "live",
+    };
   }
 
   /**
@@ -308,7 +376,7 @@ class MarketDataServiceClass {
         if (!intervalMin) return this.stripProvisional(cached, tf);
         const candles = await exchange.getOHLC(pair, intervalMin);
         if (candles && Array.isArray(candles) && candles.length >= 7) {
-          this.candleCache.set(key, { candles, fetchedAt: Date.now() });
+          this.writeCandleCache(key, candles, "live", Date.now());
           this.persistCandles(pair, tf, candles).catch(() => {});
           return candles;
         }
@@ -483,7 +551,7 @@ class MarketDataServiceClass {
       }));
       
       if (closedCandles.length > 0) {
-        await MarketCandleRepository.upsertCandles(pair, tf, "kraken", closedCandles);
+        await MarketCandleRepository.upsertCandles(pair, tf, this.dataProviderMetadata().provider, closedCandles);
       }
     } catch (error) {
       // Log silencioso - no debe romper el flujo principal
@@ -498,27 +566,34 @@ class MarketDataServiceClass {
    * @returns Velas desde BD o null si no hay datos suficientes
    */
   async getCandlesFromDb(
-    pair: string, 
-    tf: Timeframe, 
+    pair: string,
+    tf: Timeframe,
     minCandles: number = 7
-  ): Promise<{ candles: OHLC[]; source: "db_fallback" } | null> {
+  ): Promise<{ candles: ProvenancedCandle[]; source: "db_fallback" } | null> {
     try {
-      const dbCandles = await MarketCandleRepository.getRecentCandles(pair, tf, 200);
-      
+      const provider = this.dataProviderMetadata().provider;
+      const repository = MarketCandleRepository as typeof MarketCandleRepository & {
+        getRecentCandlesBySource?: (pair: string, timeframe: string, source: string, limit?: number) => Promise<any[]>;
+      };
+      const dbCandles = typeof repository.getRecentCandlesBySource === "function"
+        ? await repository.getRecentCandlesBySource(pair, tf, provider, 200)
+        : await MarketCandleRepository.getRecentCandles(pair, tf, 200);
+
       if (dbCandles.length >= minCandles) {
-        // Mapear de OHLCV a OHLC (eliminar isClosed)
-        const candles: OHLC[] = dbCandles.map(c => ({
+        const candles: ProvenancedCandle[] = dbCandles.map(c => ({
           time: c.time,
           open: c.open,
           high: c.high,
           low: c.low,
           close: c.close,
           volume: c.volume,
+          providerTs: c.time,
+          receivedAt: typeof (c as any).fetchedAt === "number" && Number.isFinite((c as any).fetchedAt) ? (c as any).fetchedAt : null,
         }));
-        console.log(`[MDS] DB_FALLBACK ${pair}/${tf} returned ${candles.length} candles`);
+        console.log(`[MDS] DB_FALLBACK ${provider}/${pair}/${tf} returned ${candles.length} candles`);
         return { candles, source: "db_fallback" };
       }
-      
+
       return null;
     } catch (error) {
       console.debug(`[MDS] DB_FALLBACK failed for ${pair}/${tf}:`, error);
@@ -539,11 +614,11 @@ class MarketDataServiceClass {
     try {
       const result = await this.getCandlesFromDb(pair, tf, 7);
       if (result && result.candles.length >= 7) {
-        // Actualizar caché con datos de BD (marcando que son fallback)
-        this.candleCache.set(this.candleKey(pair, tf), {
-          candles: result.candles,
-          fetchedAt: Date.now()
-        });
+        const receivedTimes = result.candles
+          .map(candle => candle.receivedAt)
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+        const originalReceivedAt = receivedTimes.length > 0 ? Math.max(...receivedTimes) : null;
+        this.writeCandleCache(this.candleKey(pair, tf), result.candles, "db_fallback", originalReceivedAt);
         console.log(`[MDS] USING_DB_FALLBACK ${pair}/${tf}: ${result.candles.length} candles from DB`);
         return result.candles;
       }

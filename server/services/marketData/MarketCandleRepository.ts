@@ -34,6 +34,10 @@ export interface OHLCV {
   isClosed?: boolean; // Opcional: indica si la vela está cerrada
 }
 
+export interface StoredCandlePoint extends OHLCV {
+  fetchedAt: number | null;
+}
+
 export interface CandleRecord extends OHLCV {
   id: number;
   pair: string;
@@ -179,6 +183,48 @@ export async function getRecentCandles(
     
   } catch (error) {
     console.error(`[MarketCandleRepository] Error getting recent candles for ${pair}/${timeframe}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Obtiene velas recientes de un proveedor concreto sin mezclar fuentes.
+ * Incluye fetched_at original para que los fallback no reetiqueten su recepción.
+ */
+export async function getRecentCandlesBySource(
+  pair: string,
+  timeframe: string,
+  source: string,
+  limit: number = 100,
+): Promise<StoredCandlePoint[]> {
+  try {
+    const result = await db.execute(sql`
+      SELECT 
+        EXTRACT(EPOCH FROM open_time) * 1000 as time,
+        open, high, low, close, volume,
+        is_closed,
+        EXTRACT(EPOCH FROM fetched_at) * 1000 as fetched_at
+      FROM market_candles
+      WHERE pair = ${pair} 
+        AND timeframe = ${timeframe}
+        AND source = ${source}
+        AND is_closed = TRUE
+      ORDER BY open_time DESC
+      LIMIT ${limit}
+    `);
+
+    return result.rows.map(row => ({
+      time: Number(row.time),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: row.volume == null ? 0 : Number(row.volume),
+      isClosed: Boolean(row.is_closed),
+      fetchedAt: row.fetched_at == null ? null : Number(row.fetched_at),
+    })).reverse();
+  } catch (error) {
+    console.error(`[MarketCandleRepository] Error getting recent candles for ${pair}/${timeframe}/${source}:`, error);
     return [];
   }
 }
@@ -421,6 +467,7 @@ function getTimeframeMs(timeframe: string): number {
 export const MarketCandleRepository = {
   upsertCandles,
   getRecentCandles,
+  getRecentCandlesBySource,
   getCandlesSince,
   getLatestCandle,
   getCoverage,
