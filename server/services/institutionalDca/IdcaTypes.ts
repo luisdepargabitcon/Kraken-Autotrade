@@ -253,6 +253,8 @@ export interface IdcaEntryCheckResult {
   referenceUpdatedAt?: string;
   referenceContext?: import("./IdcaReferenceContext").ReferenceContext;
   confluenceResult?: IdcaConfluenceResult;
+  confluenceEnforcement?: "diagnostic" | "enforced";
+  confluenceDecisionClass?: IdcaDecisionClass;
 }
 
 export interface IdcaPairEvaluation {

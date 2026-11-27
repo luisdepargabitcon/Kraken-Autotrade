@@ -7,15 +7,19 @@ export type IdcaReboundVariant =
   | "a1b_slowing_real_fall"
   | "a1c_combined";
 
+export type IdcaConfluenceEnforcement = "diagnostic" | "enforced";
+
 export interface IdcaEntryPolicyResolution {
   version: IdcaEntryPolicyVersion;
   reboundVariant: IdcaReboundVariant;
+  confluenceEnforcement: IdcaConfluenceEnforcement;
 }
 
 type PolicyMode = IdcaMode | "shadow" | "replay";
 type WarningSink = (message: string) => void;
 
 const VALID_VERSIONS = new Set<IdcaEntryPolicyVersion>(["legacy", "v2_candidate"]);
+const VALID_ENFORCEMENTS = new Set<IdcaConfluenceEnforcement>(["diagnostic", "enforced"]);
 const VALID_VARIANTS = new Set<IdcaReboundVariant>([
   "legacy",
   "a1a_wick_geometry",
@@ -52,6 +56,7 @@ export function resolveIdcaEntryPolicy(
   const raw = readEntryPolicy(config);
   const rawVersion = raw?.version;
   const rawVariant = raw?.reboundVariant;
+  const rawEnforcement = raw?.confluenceEnforcement;
 
   const requestedVersion = VALID_VERSIONS.has(rawVersion as IdcaEntryPolicyVersion)
     ? rawVersion as IdcaEntryPolicyVersion
@@ -59,29 +64,36 @@ export function resolveIdcaEntryPolicy(
   const requestedVariant = VALID_VARIANTS.has(rawVariant as IdcaReboundVariant)
     ? rawVariant as IdcaReboundVariant
     : "legacy";
+  const requestedEnforcement = VALID_ENFORCEMENTS.has(rawEnforcement as IdcaConfluenceEnforcement)
+    ? rawEnforcement as IdcaConfluenceEnforcement
+    : "diagnostic";
 
   if ((rawVersion !== undefined && requestedVersion === "legacy" && rawVersion !== "legacy") ||
-      (rawVariant !== undefined && requestedVariant === "legacy" && rawVariant !== "legacy")) {
-    onWarning(`valor de entryPolicy inválido; usando legacy (version=${String(rawVersion)}, reboundVariant=${String(rawVariant)})`);
+      (rawVariant !== undefined && requestedVariant === "legacy" && rawVariant !== "legacy") ||
+      (rawEnforcement !== undefined && requestedEnforcement === "diagnostic" && rawEnforcement !== "diagnostic")) {
+    onWarning(`valor de entryPolicy inválido; usando legacy/diagnostic (version=${String(rawVersion)}, reboundVariant=${String(rawVariant)}, confluenceEnforcement=${String(rawEnforcement)})`);
   }
 
-  const wantsCandidate = requestedVersion === "v2_candidate" || requestedVariant !== "legacy";
+  const wantsCandidate = requestedVersion === "v2_candidate"
+    || requestedVariant !== "legacy"
+    || requestedEnforcement === "enforced";
   if (!wantsCandidate) {
-    return { version: "legacy", reboundVariant: "legacy" };
+    return { version: "legacy", reboundVariant: "legacy", confluenceEnforcement: "diagnostic" };
   }
 
   if (!EXPERIMENTAL_MODES.has(mode)) {
     onWarning(`entryPolicy no legacy ignorada en mode=${String(mode)}; usando legacy`);
-    return { version: "legacy", reboundVariant: "legacy" };
+    return { version: "legacy", reboundVariant: "legacy", confluenceEnforcement: "diagnostic" };
   }
 
   if (requestedVersion !== "v2_candidate") {
-    onWarning("reboundVariant experimental requiere version='v2_candidate'; usando legacy");
-    return { version: "legacy", reboundVariant: "legacy" };
+    onWarning("entryPolicy experimental requiere version='v2_candidate'; usando legacy");
+    return { version: "legacy", reboundVariant: "legacy", confluenceEnforcement: "diagnostic" };
   }
 
   return {
     version: "v2_candidate",
     reboundVariant: requestedVariant,
+    confluenceEnforcement: requestedEnforcement,
   };
 }

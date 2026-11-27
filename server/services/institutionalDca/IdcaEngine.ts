@@ -559,6 +559,13 @@ function resolveEngineReboundVariant(
   return resolveIdcaEntryPolicy(config, mode).reboundVariant;
 }
 
+function resolveEngineConfluenceEnforcement(
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "diagnostic" | "enforced" {
+  return resolveIdcaEntryPolicy(config, mode).confluenceEnforcement;
+}
+
 interface EngineReboundEvaluationInput {
   pair: string;
   currentPrice: number;
@@ -3136,6 +3143,7 @@ async function checkSafetyBuy(
 
   // Price has reached the next safety buy level
   // Check rebound if required
+  let safetyReboundConfirmed = true;
   if (assetConfig.requireReboundConfirmation) {
     const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
     const evaluation = evaluateEngineRebound({
@@ -3146,6 +3154,7 @@ async function checkSafetyBuy(
       reboundMinPct: reboundMin,
       includeCurrentPriceInLocalLow: true,
     });
+    safetyReboundConfirmed = evaluation.result.confirmed;
     if (!evaluation.result.confirmed) {
       return; // No rebound confirmed yet
     }
@@ -3171,6 +3180,63 @@ async function checkSafetyBuy(
   const safetyIndex = buyCount; // 0-indexed in safetyOrders, but buyCount starts at 1 (base buy)
   const safetyOrder = safetyOrders[safetyIndex - 1];
   if (!safetyOrder) return;
+
+  // Enforcement v2_candidate en safety buy. DEFENSIVE_SAFETY_BUY no es un
+  // bypass: solo llega aquí después de cooldown, nivel de precio, rebote y
+  // límites de exposición. No modifica sizing ni distancias.
+  const safetyConfluenceEnforcement = resolveEngineConfluenceEnforcement(config, mode);
+  if (safetyConfluenceEnforcement === "enforced") {
+    const allCandles = ohlcCache.get(pair) || [];
+    const avgEntryForConfluence = parseFloat(String(cycle.avgEntryPrice || "0"));
+    const drawdownFromReferencePct = avgEntryForConfluence > 0
+      ? Math.max(0, ((avgEntryForConfluence - currentPrice) / avgEntryForConfluence) * 100)
+      : 0;
+    const recentForMomentum = allCandles.slice(-6);
+    const safetyConfluence = evaluateIdcaEntryConfluence({
+      pair,
+      usedFor: "safety_buy",
+      confluenceProfile: "safety_buy",
+      drawdownFromReferencePct,
+      requiredDistancePct: safetyOrder.dipPct,
+      sliderBasePct: safetyOrder.dipPct,
+      referenceMethod: "safety_ladder",
+      vwapReliable: false,
+      reboundConfirmed: safetyReboundConfirmed,
+      requireReboundConfirmation: !!assetConfig.requireReboundConfirmation,
+      trailingBuyArmed: false,
+      priceInActivationZone: true,
+      shortMomentum: _deriveShortMomentum(recentForMomentum),
+      hasRecoveryCandle: _deriveHasRecoveryCandle(recentForMomentum),
+      capitalUsedUsd: totalCapitalUsed,
+      capitalReservedUsd: capitalReserved,
+      buyCount,
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
+      atrPct: getVolatility(pair),
+      candleCount: allCandles.length,
+      atrReliable: getVolatility(pair) > 0,
+      smartAdjustmentEnabled: false,
+    });
+    logIdcaConfluence(TAG, pair, safetyConfluence);
+
+    if (safetyConfluence.hardBlocked) {
+      await logBlock(pair, mode, "confluence_hard_blocked", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "NO_ENTRY") {
+      await logBlock(pair, mode, "confluence_no_entry", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "WATCH") {
+      await logBlock(pair, mode, "confluence_watch", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "ARM_TRAILING") {
+      // No existe un trailing buy de safety independiente. En enforcement se
+      // trata como espera, nunca como ejecución directa ni bypass de gates.
+      await logBlock(pair, mode, "confluence_arm_trailing", cycle);
+      return;
+    }
+  }
 
   const sizeProfile = (cycle.adaptiveSizeProfile as IdcaSizeProfile) || "balanced";
   const weights = smart.getSizeWeights(sizeProfile, safetyOrders.length + 1);
@@ -4715,6 +4781,7 @@ async function performEntryCheck(
   // Evaluar después de tener: marketScore, reboundConfirmed, atrPct, vwapZone.
   // Sprint 1b default: smartAdjustmentEnabled=false → sólo diagnóstico, sin cambio de minDip.
   let confluenceResult: IdcaConfluenceResult | undefined;
+  const confluenceEnforcement = resolveEngineConfluenceEnforcement(config, mode);
   if (config.smartModeEnabled || entryMode === "dynamic_intelligent_entry") {
     const allCandles = ohlcCache.get(pair) || [];
     const recentForMomentum = allCandles.slice(-6);
@@ -4774,8 +4841,43 @@ async function performEntryCheck(
       });
     }
 
-    // Si confluencia ajustó minDip (smart adjustment activo o dynamic_intelligent_entry)
-    if (confluenceResult.finalRequiredDistancePct !== minDip) {
+    // Enforcement v2_candidate: la confluencia solo añade bloqueos o arma el
+    // trailing existente. Nunca elimina bloqueos de precio/datos/exposición ni
+    // hard gates. DEFENSIVE_SAFETY_BUY no pertenece a entrada inicial y se
+    // degrada explícitamente a WATCH.
+    if (confluenceEnforcement === "enforced" && !confluenceResult.hardBlocked) {
+      const enforcedClass = confluenceResult.decisionClass === "DEFENSIVE_SAFETY_BUY"
+        ? "WATCH"
+        : confluenceResult.decisionClass;
+
+      if (enforcedClass === "WATCH") {
+        if (!blocks.some(block => block.code === "confluence_watch")) {
+          blocks.push({
+            code: "confluence_watch",
+            message: `Confluence WATCH: score=${confluenceResult.confidenceScore} grade=${confluenceResult.confidenceGrade} regime=${confluenceResult.marketRegime}`,
+            timestamp: now,
+          });
+        }
+      } else if (enforcedClass === "ARM_TRAILING") {
+        if (!TrailingBuyManager.isArmed(pair)) {
+          const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
+          TrailingBuyManager.arm(pair, effectiveBasePrice, currentPrice, { trailingPct: reboundMin });
+        }
+        if (!blocks.some(block => block.code === "confluence_arm_trailing")) {
+          blocks.push({
+            code: "confluence_arm_trailing",
+            message: `Confluence ARM_TRAILING: trailing buy armado/activo; no se ejecuta compra directa (score=${confluenceResult.confidenceScore})`,
+            timestamp: now,
+          });
+        }
+      }
+    }
+
+    // smartAdjustmentEnabled permanece intencionadamente desactivado en este
+    // call site: el ajuste inteligente de distancia es diagnóstico en Sprint 1b.
+    // En modo enforced no se aplica ningún ajuste de distancia porque la
+    // confluencia no puede relajar ni reemplazar el gate de precio existente.
+    if (confluenceEnforcement !== "enforced" && confluenceResult.finalRequiredDistancePct !== minDip) {
       minDip = confluenceResult.finalRequiredDistancePct;
       // Re-evaluar insufficient_dip con el nuevo minDip
       const insuffIdx = blocks.findIndex(b => b.code === "insufficient_dip");
@@ -4838,6 +4940,8 @@ async function performEntryCheck(
     referenceUpdatedAt: refResult.referenceUpdatedAt,
     referenceContext,
     confluenceResult,
+    confluenceEnforcement,
+    confluenceDecisionClass: confluenceResult?.decisionClass,
   };
 }
 
