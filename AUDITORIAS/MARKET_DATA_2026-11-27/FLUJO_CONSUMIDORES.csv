@@ -1,0 +1,23 @@
+id,productor,funcion_o_endpoint,transformacion,indicador_o_dato,consumidor,modo,efecto,config_efectiva,evidencia
+C-001,F-001 Kraken OHLC,MarketDataService.getCandles(pair;1h) (MarketDataService.ts:148-212@3ae1831),time en segundos; incluye vela en formacion; DB fallback en ms,closes 1h (hasta 720),IdcaEngine.updateOhlcvCache -> ohlcCache (IdcaEngine.ts:4770-4790),IDCA live,SCORE/GATE,smartModeEnabled=t,E-058
+C-002,C-001,IdcaSmartLayer.computeEMA(closes;20) y computeEMA(closes;min(50;n)),EMA semilla=primer valor,EMA20; EMA50,IdcaEngine entry check (IdcaEngine.ts:4283-4330),IDCA live,GATE (market_score_too_low <50) y TAMANO (selectSizeProfile),market_score_weights_json ema20_distance=15 ema50_distance=10 ema20_slope=10 ema50_slope=10,E-041;E-043
+C-003,C-001,computeRSI(closes;14),Wilder,RSI14,computeMarketScore,IDCA live,GATE,rsi=15,E-044
+C-004,C-001,computeATRPct(candles;14),SMA del TR,ATR%,volatilityScore / sizing,IDCA live,TAMANO/TELEMETRIA,adaptive_position_sizing_enabled=t,E-044
+C-005,constante,currentVolume=1 avgVolume=1 (IdcaEngine.ts:4311-4312;4326-4327),ninguna,volumen relativo,computeMarketScore,IDCA live,SCORE constante (50),relative_volume=10,E-041;E-042
+C-006,C-001 BTC/USD,computeMarketScore BTC para ETH (IdcaEngine.ts:4296-4316),ema50:=EMA20[n-2]; prevEma50:=EMA20[n-3],btcScore,computeMarketScore ETH (btc_condition),IDCA live (ETH),GATE ETH,btc_condition=15; btcMarketGateForEthEnabled=t,E-041;E-032
+C-007,F-001 Kraken Ticker,MarketDataService.getPrice / getTicker (325-418),stale-on-error; 0 si sin cache,precio actual,IDCA getCurrentPrice; SPOT; AMA market-view; UI,todos,ENTRADA/SALIDA,PRICE_TTL 45s,E-059
+C-008,F-001 Kraken Ticker,MarketDataService.getFreshTickerSnapshot (620-770),fail-closed; procedencia KRAKEN_MARKET_DATA,precio referencia,GRID gridReferenceMarketResolver / planning,GRID SHADOW,GATE GRID,maxAge 45s,E-023
+C-009,F-003/F-004 Revolut X,gridCapitalAllocator.getTotalBalanceUsd (64-88),USD + BTC*ticker.last (ticker falla 401),capital disponible,gridPlanningContextResolver.allocate,GRID SHADOW,TAMANO GRID,mode=SHADOW,E-021;E-055
+C-010,F-006 Binance OI,MarketMetricsService.getLatestMetrics -> metrics[open_interest:ASSET],ninguna (valor absoluto USDT),open_interest,MarketMetricsEngine.evalOpenInterest (230-255),ninguno real,NO_USADO (0 evaluaciones),enabled=t mode=activo sensitivity=conservador,E-016;E-040a
+C-011,F-007 Binance funding,idem,rate*100 en provider,funding_rate,MarketMetricsEngine.evalFundingRate (257-284),ninguno real,NO_USADO,stalenessMaxMs.derivatives=3600000,E-016;E-040b
+C-012,F-008 DeFiLlama,idem,delta %,stablecoin_supply_delta_24h:ALL,MarketMetricsEngine.evalStablecoins,ninguno real,NO_USADO,stablecoins=21600000,E-016
+C-013,MarketMetricsEngine,tradingEngine.applyMarketMetricsGate (tradingEngine.ts:8151-; llamado en 4480 y 5672),BLOQUEAR/AJUSTAR,decision,SPOT legacy executeTrade BUY,SPOT legacy (entradas deshabilitadas: SPOT runtime owner activo),NO_USADO en la practica,applyToBuy=t applyToSell=t,E-016;E-026
+C-014,F-016,GET /api/market-metrics/* (marketMetrics.routes.ts),lectura,snapshots/estado,UI Strategies > MarketMetricsTab,UI,SOLO_UI,NA,codigo
+C-015,F-001,MarketDataService.persistCandles (463-478),slice(0;-1) isClosed=true; normalizacion s->ms en repositorio (runtime),velas cerradas,market_candles,todos,PERSISTENCIA,retencion por timeframe,E-033;E-057
+C-016,F-014,MarketDataService.getCandlesFromDb/tryFallbackToDb (486-538),ms; sin filtro source; fetchedAt=now,velas,mismos consumidores que C-001,todos,FALLBACK,min 7 velas,E-059
+C-017,C-001,IdcaEngine.updateOhlcvCache repo.upsertOhlcv (4775-4785),ts=new Date(c.time*1000) incondicional,velas 1h (10 ultimas),institutional_dca_ohlcv_cache,IDCA,PERSISTENCIA,NA,E-035
+C-018,F-001 Ticker,exitManager / tradingEngine getDataExchange().getTicker (exitManager.ts:373; tradingEngine.ts:891..5187),directo (esquiva cache MDS),precio,SPOT legacy salidas,SPOT,SALIDA,NA,codigo
+C-019,F-012 CoinGecko,/api/prices/portfolio (market.routes.ts:190-250),precio USD,precio cartera,UI cartera; Telegram (via localhost),UI,SOLO_UI,NA,E-025
+C-020,ExchangeFactory.getTradingExchange,placeOrder,—,orden,IDCA live (Revolut X hoy),live (y simulation en executeExit),EJECUCION,trading_exchange=revolutx,E-020;E-054
+C-021,krakenService,placeOrder directo,—,orden,POST /api/trade,cualquiera,EJECUCION (Kraken),TRADING_ENABLED sin definir => true,E-050
+C-022,AMA / SPOT V4 runtime,MarketDataService (CACHE_HIT 4h/1d en logs),NO_VERIFICADO,NO_VERIFICADO,AMA market-view; SPOT scan SHADOW,SHADOW,NO_VERIFICADO,NA,E-024 (parcial)
