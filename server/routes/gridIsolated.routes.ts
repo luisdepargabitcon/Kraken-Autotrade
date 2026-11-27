@@ -38,6 +38,7 @@ import { botLogger } from "../services/botLogger";
 import { db } from "../db";
 import { gridIsolatedConfigs, gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
+import { requireAdminForRealGridMode } from "../services/gridIsolated/gridModeAuthGuard";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy, GridMarketContext } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel, getEffectiveExecutionPolicy, getEffectiveTakerFallbackEnabled } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsolated/gridActivityFormatter";
@@ -1150,7 +1151,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   // ─── Mode Management ─────────────────────────────────────
 
-  app.post("/api/grid-isolated/mode", async (req: Request, res: Response) => {
+  app.post("/api/grid-isolated/mode", requireAdminForRealGridMode, async (req: Request, res: Response) => {
     try {
       const { mode } = req.body as { mode: GridMode };
       const result = await gridIsolatedEngine.changeMode(mode);
