@@ -24,4 +24,4 @@ Las liquidaciones disponibles son agregadas de BTC. En el breakdown se marcan co
 
 ## Stablecoins
 
-DeFiLlama los cambios porcentuales calculados desde supply agregado. Se deduplican por símbolo/activo antes de agregar. Una variación absoluta mayor que 10% en 24h se considera observación extrema/inconsistente y el motor la marca `invalid`, sin puntuar. Los textos evitan afirmar causalidad: describen contracción o expansión observada, no un efecto causado sobre precio.
+En DeFiLlama, los cambios porcentuales calculados desde supply agregado. Se deduplican por símbolo/activo antes de agregar. Una variación absoluta mayor que 10% en 24h se considera observación extrema/inconsistente y el motor la marca `invalid`, sin puntuar. Los textos evitan afirmar causalidad: describen contracción o expansión observada, no un efecto causado sobre precio.
