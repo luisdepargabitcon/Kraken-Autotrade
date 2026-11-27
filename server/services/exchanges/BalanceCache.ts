@@ -20,6 +20,7 @@ interface CacheEntry {
 export class BalanceCache {
   private cache = new Map<string, CacheEntry>();
   private inflight = new Map<string, Promise<Record<string, number>>>();
+  private generations = new Map<string, number>();
   private readonly ttlMs: number;
   private hits = 0;
   private misses = 0;
@@ -41,7 +42,9 @@ export class BalanceCache {
     const cached = this.get(exchange);
     if (cached) return cached;
 
-    const existing = this.inflight.get(exchange);
+    const generation = this.generations.get(exchange) ?? 0;
+    const flightKey = `${exchange}:${generation}`;
+    const existing = this.inflight.get(flightKey);
     if (existing) {
       this.coalescedCalls++;
       return existing;
@@ -49,12 +52,16 @@ export class BalanceCache {
 
     const promise = (async () => {
       try {
-        return await fetcher();
+        const data = await fetcher();
+        if ((this.generations.get(exchange) ?? 0) === generation) {
+          this.set(exchange, data, 'fetch');
+        }
+        return data;
       } finally {
-        this.inflight.delete(exchange);
+        this.inflight.delete(flightKey);
       }
     })();
-    this.inflight.set(exchange, promise);
+    this.inflight.set(flightKey, promise);
     return promise;
   }
 
@@ -87,7 +94,6 @@ export class BalanceCache {
       return null;
     }
     if (Date.now() > entry.expiresAt) {
-      this.cache.delete(exchange);
       this.misses++;
       return null;
     }
@@ -115,7 +121,12 @@ export class BalanceCache {
   invalidate(exchange?: string): void {
     if (exchange) {
       this.cache.delete(exchange);
+      this.generations.set(exchange, (this.generations.get(exchange) ?? 0) + 1);
     } else {
+      const keys = new Set([...this.cache.keys(), ...this.generations.keys()]);
+      for (const key of keys) {
+        this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+      }
       this.cache.clear();
     }
   }
