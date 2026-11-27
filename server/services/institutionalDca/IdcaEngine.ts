@@ -53,6 +53,7 @@ import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistan
 import { resolveIdcaEntryPolicy } from "./IdcaEntryPolicy";
 import { resolveTrailingBuyCanonicalParams } from "./IdcaTrailingBuyCanonical";
 import { normalizeAtrpLevelWeightsTo100, nextAtrpLevelAfterBuyCount } from "./IdcaAtrpEffectivePlan";
+import { resolveMonthlyBiasSizeProfile } from "./IdcaMonthlyBias";
 import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
@@ -4900,20 +4901,11 @@ async function performEntryCheck(
   }
 
   // ── sizeProfile override por VWAP mensual ────────────────────
-  let monthlyBias: "aggressive" | "balanced" | "defensive" | "unknown" = "unknown";
-  if (assetConfig.vwapEnabled && vwapContext?.vwapMonthly) {
-    const mp = vwapContext.vwapMonthly;
-    if (currentPrice < mp * 0.95) {
-      monthlyBias = "aggressive";
-      sizeProfile = "aggressive_quality";
-    } else if (currentPrice < mp) {
-      monthlyBias = "balanced";
-      // No override — keep market score profile
-    } else {
-      monthlyBias = "defensive";
-      sizeProfile = "defensive";
-    }
-  }
+  const monthlyOverride = assetConfig.vwapEnabled
+    ? resolveMonthlyBiasSizeProfile(currentPrice, vwapContext?.vwapMonthly ?? undefined, sizeProfile)
+    : { monthlyBias: "unknown" as const, sizeProfile };
+  const monthlyBias = monthlyOverride.monthlyBias;
+  sizeProfile = monthlyOverride.sizeProfile;
 
   // Rebound confirmation
   let reboundConfirmed = true;
