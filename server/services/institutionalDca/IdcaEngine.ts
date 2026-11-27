@@ -52,6 +52,7 @@ import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
 import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
 import { resolveIdcaEntryPolicy } from "./IdcaEntryPolicy";
 import { resolveTrailingBuyCanonicalParams } from "./IdcaTrailingBuyCanonical";
+import { normalizeAtrpLevelWeightsTo100, nextAtrpLevelAfterBuyCount } from "./IdcaAtrpEffectivePlan";
 import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
@@ -1360,6 +1361,40 @@ function resolveEngineTrailingBuyCanonicalParams(
   }
 }
 
+async function resolveV2AtrpLadderForEntry(
+  pair: string,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+): Promise<import("./IdcaTypes").LadderResult | null> {
+  if (!assetConfig.ladderAtrpEnabled || !assetConfig.ladderAtrpConfigJson) {
+    return null;
+  }
+  if (resolveIdcaEntryPolicy(config, mode).version !== "v2_candidate") {
+    return null;
+  }
+  try {
+    const { idcaLadderAtrpService } = await import("./IdcaLadderAtrpService");
+    const ladder = await idcaLadderAtrpService.calculateLadder(
+      pair,
+      assetConfig.ladderAtrpConfigJson as import("./IdcaTypes").LadderAtrpConfig,
+      undefined,
+      vwapAnchorMemory.get(pair)?.anchorPrice,
+      { includeInactiveLevels: true },
+    );
+    return {
+      ...ladder,
+      levels: normalizeAtrpLevelWeightsTo100(ladder.levels),
+    };
+  } catch (error) {
+    console.warn(
+      `[IDCA][ATRP_V2] ${pair}: no se pudo resolver ladder efectivo; fallback legacy aislado: ` +
+      (error instanceof Error ? error.message : String(error))
+    );
+    return null;
+  }
+}
+
 // ─── Pair Evaluation ───────────────────────────────────────────────
 
 async function evaluatePair(
@@ -2384,9 +2419,13 @@ async function checkEntry(
 
   // Create cycle
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const sizeWeights = check.sizeProfile
+  const atrpLadder = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const legacySizeWeights = check.sizeProfile
     ? smart.getSizeWeights(check.sizeProfile, safetyOrders.length + 1)
     : smart.getSizeWeights("balanced", safetyOrders.length + 1);
+  const sizeWeights = atrpLadder && atrpLadder.levels.length > 0
+    ? atrpLadder.levels.map(level => level.sizePct)
+    : legacySizeWeights;
 
   const baseBuyPct = sizeWeights[0];
   const baseBuyUsd = capitalForCycle * (baseBuyPct / 100);
@@ -2426,8 +2465,13 @@ async function checkEntry(
   }
 
   // Next safety buy level
-  const nextLevel = safetyOrders.length > 0 ? safetyOrders[0].dipPct : null;
-  let nextBuyPrice = nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
+  const atrpNextLevel = atrpLadder ? nextAtrpLevelAfterBuyCount(atrpLadder.levels, 0) : undefined;
+  const nextLevel = atrpNextLevel
+    ? atrpNextLevel.dipPct
+    : safetyOrders.length > 0 ? safetyOrders[0].dipPct : null;
+  let nextBuyPrice = atrpNextLevel
+    ? atrpNextLevel.triggerPrice
+    : nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
 
   // VWAP override: safety 1 → lowerBand2 (if lower than % fallback)
   const vc = check.vwapContext;
@@ -3198,9 +3242,13 @@ async function checkSafetyBuy(
   const buyCount = cycle.buyCount;
   const maxOrders = assetConfig.maxSafetyOrders;
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+  const atrpLadder = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const atrpLevels = atrpLadder?.levels ?? [];
+  const useAtrpEffectivePlan = atrpLevels.length > 0;
+  const effectiveMaxBuyCount = useAtrpEffectivePlan ? atrpLevels.length : safetyOrders.length + 1;
 
   // Already at max buys
-  if (buyCount >= safetyOrders.length + 1) return;
+  if (buyCount >= effectiveMaxBuyCount) return;
 
   // ─── Lote 4: Guard — No safety buys if exit instruction pending ───────────
   if (await exitRepo.hasPendingExitInstruction(cycle.id)) {
@@ -3256,8 +3304,15 @@ async function checkSafetyBuy(
   }
 
   // Execute safety buy
-  const safetyIndex = buyCount; // 0-indexed in safetyOrders, but buyCount starts at 1 (base buy)
-  const safetyOrder = safetyOrders[safetyIndex - 1];
+  const safetyIndex = buyCount; // legacy: 0-indexed in safetyOrders; ATRP: level number equals buyCount
+  const atrpCurrentLevel = useAtrpEffectivePlan
+    ? atrpLevels.find(level => level.level === buyCount)
+    : undefined;
+  const safetyOrder = useAtrpEffectivePlan
+    ? atrpCurrentLevel
+      ? { dipPct: atrpCurrentLevel.dipPct, sizePctOfAssetBudget: atrpCurrentLevel.sizePct }
+      : undefined
+    : safetyOrders[safetyIndex - 1];
   if (!safetyOrder) return;
 
   // Enforcement v2_candidate en safety buy. DEFENSIVE_SAFETY_BUY no es un
@@ -3319,7 +3374,9 @@ async function checkSafetyBuy(
 
   const sizeProfile = (cycle.adaptiveSizeProfile as IdcaSizeProfile) || "balanced";
   const weights = smart.getSizeWeights(sizeProfile, safetyOrders.length + 1);
-  const buyPct = weights[buyCount] || 25;
+  const buyPct = useAtrpEffectivePlan
+    ? safetyOrder.sizePctOfAssetBudget
+    : weights[buyCount] || 25;
   const buyUsd = capitalReserved * (buyPct / 100);
   const quantity = buyUsd / currentPrice;
 
@@ -3411,10 +3468,19 @@ async function checkSafetyBuy(
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
 
-  // Next level (calculado desde nuevo promedio)
-  const nextSafety = safetyOrders[safetyIndex];
+  // Next level (legacy: calculado desde nuevo promedio; ATRP v2: trigger canónico del ladder)
+  const nextAtrpLevel = useAtrpEffectivePlan
+    ? nextAtrpLevelAfterBuyCount(atrpLevels, buyCount)
+    : undefined;
+  const nextSafety = useAtrpEffectivePlan
+    ? nextAtrpLevel
+      ? { dipPct: nextAtrpLevel.dipPct, sizePctOfAssetBudget: nextAtrpLevel.sizePct }
+      : undefined
+    : safetyOrders[safetyIndex];
   const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
-  let nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
+  let nextBuyPriceCalc = useAtrpEffectivePlan
+    ? nextAtrpLevel?.triggerPrice ?? null
+    : nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
 
   // VWAP override
   if (assetConfig.vwapEnabled && nextBuyPriceCalc !== null) {
@@ -3437,7 +3503,7 @@ async function checkSafetyBuy(
   // ─── Resolver de distancia: aplicar como suelo conservador ──────────────────
   // Solo afecta nextBuyPriceCalc. Nunca modifica avgEntryPrice ni contabilidad.
   // Regla conservadora: effectiveNextBuyPrice = min(existingNextBuyPrice, proposedNextBuyPrice)
-  if (nextBuyPriceCalc !== null) {
+  if (!useAtrpEffectivePlan && nextBuyPriceCalc !== null) {
     const sbEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
     const sbDdCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
     const sbDistanceResult = resolveIdcaRequiredDistance({
@@ -4662,7 +4728,9 @@ async function performEntryCheck(
     capitalUsedUsd: 0,
     capitalReservedUsd: 0,
   });
-  let minDip = entryDistanceResult.requiredDistancePct;
+  const atrpEntryPlan = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const atrpBaseLevel = atrpEntryPlan?.levels.find(level => level.level === 0);
+  let minDip = atrpBaseLevel?.dipPct ?? entryDistanceResult.requiredDistancePct;
   logDistanceResolution(TAG, pair, entryDistanceResult, {
     referencePrice: effectiveBasePrice,
     currentPrice,
@@ -4678,6 +4746,13 @@ async function performEntryCheck(
     ` legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}%` +
     ` atrPct=${atrPct.toFixed(2)}%`
   );
+  if (atrpBaseLevel) {
+    console.log(
+      `${TAG}[ATRP_EFFECTIVE_PLAN] pair=${pair} usedFor=initial_entry ` +
+      `legacyRequiredDistancePct=${entryDistanceResult.requiredDistancePct.toFixed(2)}% ` +
+      `atrpLevel0DipPct=${atrpBaseLevel.dipPct.toFixed(2)}% atrpTriggerPrice=${atrpBaseLevel.triggerPrice.toFixed(8)}`
+    );
+  }
 
   // Construir referenceContext enriquecido (solo metadata — no altera trading logic)
   // hasActiveCycle real: si el servicio dinámico evaluó el ciclo, usar su resultado
@@ -4976,7 +5051,7 @@ async function performEntryCheck(
     // call site: el ajuste inteligente de distancia es diagnóstico en Sprint 1b.
     // En modo enforced no se aplica ningún ajuste de distancia porque la
     // confluencia no puede relajar ni reemplazar el gate de precio existente.
-    if (confluenceEnforcement !== "enforced" && confluenceResult.finalRequiredDistancePct !== minDip) {
+    if (!atrpBaseLevel && confluenceEnforcement !== "enforced" && confluenceResult.finalRequiredDistancePct !== minDip) {
       minDip = confluenceResult.finalRequiredDistancePct;
       // Re-evaluar insufficient_dip con el nuevo minDip
       const insuffIdx = blocks.findIndex(b => b.code === "insufficient_dip");

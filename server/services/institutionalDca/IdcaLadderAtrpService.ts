@@ -126,7 +126,8 @@ class IdcaLadderAtrpService {
     pair: string,
     config: LadderAtrpConfig,
     marketContext?: MarketContext,
-    frozenAnchorPrice?: number
+    frozenAnchorPrice?: number,
+    options?: { includeInactiveLevels?: boolean }
   ): Promise<LadderResult> {
     // Obtener contexto si no se proporciona, pasando frozenAnchorPrice si está disponible
     const context = marketContext || await idcaMarketContextService.getMarketContext(pair, { frozenAnchorPrice });
@@ -212,7 +213,7 @@ class IdcaLadderAtrpService {
 
       // Si el precio actual no ha alcanzado este nivel, los siguientes tampoco estarán activos
       // PERO si manualLevelEnabled=true, generar todos los niveles especificados sin importar precio actual
-      if (!config.manualLevelEnabled && currentPrice > triggerPrice) {
+      if (!config.manualLevelEnabled && !options?.includeInactiveLevels && currentPrice > triggerPrice) {
         break;
       }
     }

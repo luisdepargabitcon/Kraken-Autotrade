@@ -61,3 +61,26 @@ Alcance: rutas autónomas e importadas de **entrada/compra** IDCA en `server/ser
 ## Nota de seguridad
 
 Esta matriz es inventario. No implica activación de variantes ni cambios de comportamiento. WP7a mantiene la política por defecto en `legacy`.
+
+## Actualización WP7c — plan efectivo ATRP y exposición con intenciones pendientes
+
+### ATRP vs `safetyOrdersJson`
+
+Hallazgo: antes de WP7c el ladder ATRP se usaba para visualización/trailing en algunas rutas, pero la creación de ciclo y `checkSafetyBuy` seguían dimensionando y programando compras desde `safetyOrdersJson` o pesos de perfil. La discrepancia queda cuantificada en `idcaAtrpEffectivePlan.test.ts`: con ancla 100 y ATRP 2/4/6 %, el primer safety ATRP es 4 %/96, mientras un `safetyOrdersJson` legacy de 3 % produciría 97; con distribución 33.33/33.33/33.33 el redondeo canónico queda 33.33/33.33/33.34 y suma exactamente 100.
+
+Cambio aislado: solo cuando `resolveIdcaEntryPolicy` resuelve `version="v2_candidate"` en simulation/shadow/replay y `ladderAtrpEnabled` está activo, el motor calcula un plan completo ATRP con `includeInactiveLevels` y lo usa como fuente efectiva de:
+
+- distancia del nivel base (`level=0`) en `performEntryCheck`;
+- pesos de base y safety en `checkEntry`/`checkSafetyBuy`;
+- trigger y porcentaje del siguiente nivel safety persistidos en `nextBuyPrice`/`nextBuyLevelPct`;
+- número máximo efectivo de compras del ladder.
+
+En esa variante el resolver dinámico/confluencia no reemplaza la distancia ATRP; legacy sigue usando exactamente `safetyOrdersJson`, pesos de perfil y overlays previos. Cobertura: `idcaAtrpEffectivePlan.test.ts` (4 tests) y casos ATRP iniciales/safety en `idcaConfluenceEnforcement.test.ts` (total del archivo 23 tests).
+
+### Pesos, reserva, mínimo de orden, fills parciales y pendientes
+
+- Pesos: `normalizeAtrpLevelWeightsTo100` normaliza a 100 % con redondeo de 2 decimales y ajuste residual en el último nivel; test incluye distribución incompleta 20/30/40 ⇒ 22.22/33.33/44.45.
+- Reserva: el sizing v2 usa `capitalReservedUsd` del ciclo y los pesos ATRP efectivos; el test safety reproducible usa reserva 1000, nivel 1=33.33 %, precio 95 ⇒ cantidad 3.508421 BTC aproximada y siguiente nivel 6 %/94.
+- Mínimo de orden y ajuste de capital live siguen delegados en `liveGuard.validateLiveBuyIntention`; no se cambiaron.
+- Fills parciales/idempotencia siguen cubiertos por `idcaLiveOrderReconciler.test.ts`: aceptación sin fill, rechazo terminal, uncertain, parcial→fill, dedupe de fills, misma `intentKey` una sola llamada y recuperación tras reinicio.
+- Exposición con órdenes pendientes: brecha no cerrada. Los guards de exposición actuales suman principalmente `capitalUsedUsd` de ciclos activos; no incorporan de forma general el valor residual de `order_intents` en `submitting/accepted_pending/uncertain/partial` antes de su aplicación. El reconciliador sí impide reenvío idempotente y bloquea una segunda orden del mismo ciclo+lado+par (`IDCA_ORDER_SCOPE_PENDING`), pero eso no equivale a incluir el pendiente en exposición global. No se implementó en WP7c porque los intents son live-only mientras la política experimental exige simulation/shadow/replay, y una corrección global cambiaría comportamiento productivo legacy prohibido. Además el intent no almacena precio/quote objetivo fiable para valorar el remanente sin introducir una nueva migración o contrato. Queda documentado como hueco explícito.

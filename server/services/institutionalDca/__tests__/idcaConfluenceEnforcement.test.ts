@@ -20,9 +20,18 @@ const confluenceMock = vi.hoisted(() => ({
   logIdcaConfluence: vi.fn(),
 }));
 
+const marketContextMock = vi.hoisted(() => ({
+  getMarketContext: vi.fn(),
+}));
+
 vi.mock("../IdcaRepository", () => repoMock);
 vi.mock("../IdcaExitInstructionRepository", () => exitRepoMock);
 vi.mock("../IdcaConfluenceEngine", () => confluenceMock);
+vi.mock("../IdcaMarketContextService", () => ({
+  idcaMarketContextService: {
+    getMarketContext: marketContextMock.getMarketContext,
+  },
+}));
 vi.mock("../IdcaTelegramNotifier", () => ({
   alertBuyBlocked: vi.fn(async () => undefined),
   alertApproachingBuy: vi.fn(async () => undefined),
@@ -163,6 +172,13 @@ describe("confluence enforcement IDCA", () => {
     const candles = makeCandles();
     __setIdcaOhlcCacheForTest("BTC/USD", candles);
     mockHealthySeries(candles);
+    marketContextMock.getMarketContext.mockResolvedValue({
+      pair: "BTC/USD",
+      anchorPrice: 100,
+      currentPrice: 95,
+      atrPct: 2,
+      vwapZone: "between_bands",
+    });
     repoMock.getActiveBotCycle.mockResolvedValue(null);
     repoMock.getAllActiveBotCycles.mockResolvedValue([]);
     repoMock.getSimulationWallet.mockResolvedValue({ availableBalanceUsd: "1000" });
@@ -265,6 +281,99 @@ describe("confluence enforcement IDCA", () => {
     const result = await runEntry(enforcedConfig(), 110.5);
     expect(result.allowed).toBe(false);
     expect(result.blockReasons.some(block => block.code === "insufficient_dip")).toBe(true);
+  });
+
+  it("v2 simulation usa el dip ATRP del nivel base en lugar de sliders/legacy para entrada inicial", async () => {
+    confluenceMock.evaluateIdcaEntryConfluence.mockReturnValue(confluenceResult("NORMAL_ENTRY"));
+    const asset: any = {
+      entryMode: "assisted_entry",
+      baseDipPct: 4.2,
+      minDipPct: 1,
+      ladderAtrpEnabled: true,
+      ladderAtrpConfigJson: {
+        enabled: true,
+        profile: "custom",
+        sliderIntensity: 50,
+        baseMultiplier: 1,
+        stepMultiplier: 1,
+        maxMultiplier: 3,
+        effectiveMultipliers: [1, 2, 3],
+        sizeDistribution: [33.33, 33.33, 33.33],
+        minDipPct: 0.5,
+        maxDipPct: 20,
+        maxLevels: 3,
+        depthMode: "normal",
+        targetCoveragePct: 8,
+        minStepPct: 0.5,
+        allowDeepExtension: false,
+        adaptiveScaling: false,
+        volatilityScaling: 1,
+        rebalanceOnVwap: false,
+      },
+    };
+    const result = await performEntryCheckForTest("BTC/USD", 102, baseConfig({ version: "v2_candidate" }), asset, "simulation");
+    expect(result.effectiveMinDip).toBeCloseTo(2, 8);
+    expect(result.effectiveMinDip).not.toBeCloseTo(4.2, 8);
+  });
+
+  it("v2 simulation usa niveles y pesos ATRP en safety aunque safetyOrdersJson difiera", async () => {
+    confluenceMock.evaluateIdcaEntryConfluence.mockReturnValue(confluenceResult("NORMAL_ENTRY"));
+    const cycle: any = {
+      id: 41,
+      pair: "BTC/USD",
+      buyCount: 1,
+      lastBuyAt: null,
+      nextBuyPrice: "96",
+      capitalUsedUsd: "100",
+      totalCostBasisUsd: "100",
+      capitalReservedUsd: "1000",
+      totalQuantity: "1",
+      avgEntryPrice: "100",
+      marketScore: "60",
+    };
+    const asset: any = {
+      maxSafetyOrders: 2,
+      safetyOrdersJson: [{ dipPct: 3, sizePctOfAssetBudget: 90 }, { dipPct: 6, sizePctOfAssetBudget: 10 }],
+      cooldownMinutesBetweenBuys: 0,
+      requireReboundConfirmation: false,
+      ladderAtrpEnabled: true,
+      ladderAtrpConfigJson: {
+        enabled: true,
+        profile: "custom",
+        sliderIntensity: 50,
+        baseMultiplier: 1,
+        stepMultiplier: 1,
+        maxMultiplier: 3,
+        effectiveMultipliers: [1, 2, 3],
+        sizeDistribution: [33.33, 33.33, 33.33],
+        minDipPct: 0.5,
+        maxDipPct: 20,
+        maxLevels: 3,
+        depthMode: "normal",
+        targetCoveragePct: 8,
+        minStepPct: 0.5,
+        allowDeepExtension: false,
+        adaptiveScaling: false,
+        volatilityScaling: 1,
+        rebalanceOnVwap: false,
+      },
+      entryMode: "assisted_entry",
+      takeProfitPct: "2",
+      trailingMarginPct: "1",
+    };
+
+    await checkSafetyBuyForTest(cycle, 95, baseConfig({ version: "v2_candidate" }), asset, "simulation");
+
+    expect(repoMock.createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      orderType: "safety_buy",
+      quantity: expect.any(String),
+    }));
+    const update = repoMock.updateCycle.mock.calls[0]?.[1];
+    expect(update.buyCount).toBe(2);
+    // ATRP level 1 = 33.33% de 1000 a precio 95 ⇒ qty 3.508421; legacy 90% habría sido 9.473684.
+    expect(parseFloat(update.totalQuantity)).toBeCloseTo(4.508421, 5);
+    expect(update.nextBuyLevelPct).toBe("6.00");
+    expect(parseFloat(update.nextBuyPrice)).toBeCloseTo(94, 8);
   });
 
   it("DEFENSIVE_SAFETY_BUY en safety no bloquea ni bypassa límites", async () => {
