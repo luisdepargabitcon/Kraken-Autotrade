@@ -25,6 +25,7 @@ import { evaluateIdcaEntryConfluence } from "../services/institutionalDca/IdcaCo
 import { resolveIdcaRequiredDistance } from "../services/institutionalDca/IdcaDistanceResolver";
 import { resolveIdcaDynamicRebound, getDefaultDynamicReboundConfig } from "../services/institutionalDca/IdcaDynamicReboundResolver";
 import { TrailingBuyManager } from "../services/institutionalDca/TrailingBuyManager";
+import { evaluateMarketMetricsAdvisory } from "../services/marketMetrics/marketMetricsAdvisory";
 import type { IdcaEntryMode, IdcaReboundState, IdcaReboundSource, IdcaTbPath } from "../services/institutionalDca/IdcaTypes";
 
 const PREFIX = "/api/institutional-dca";
@@ -2393,6 +2394,17 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             smartAdjustmentEnabled: false,
           });
 
+          let marketMetricsAdvisory = null;
+          try {
+            marketMetricsAdvisory = await evaluateMarketMetricsAdvisory(pair, new Date());
+          } catch (advisoryErr: any) {
+            marketMetricsAdvisory = {
+              status: "UNKNOWN",
+              available: false,
+              reasons: [`Advisory no disponible: ${advisoryErr?.message ?? advisoryErr}`],
+            };
+          }
+
           // ─── Trailing Buy state for diagnostics ─────────────────────────────
           const tbState = TrailingBuyManager.getState(pair);
           const tbArmed = TrailingBuyManager.isArmed(pair);
@@ -2483,6 +2495,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             marketScoreStatus: marketQuality.detailed.status,
             marketScoreMissing: marketQuality.detailed.missing,
             marketScoreRenormalized: marketQuality.detailed.renormalized,
+            marketMetricsAdvisory,
             decisionClass: confluenceResult.decisionClass,
             confidenceScore: confluenceResult.confidenceScore,
             confidenceGrade: confluenceResult.confidenceGrade,

@@ -195,7 +195,8 @@ class MarketMetricsService {
   // Devuelve "metric:asset" → valor. La frescura usa tsProvider; si no existe,
   // la clave no aparece en stalenessMs y el motor la clasifica como unknown_age.
   async getLatestMetrics(
-    config: MarketMetricsConfig
+    config: MarketMetricsConfig,
+    nowMs: number = Date.now()
   ): Promise<{
     metrics: Record<string, number | null>;
     stalenessMs: Record<string, number>;
@@ -204,8 +205,6 @@ class MarketMetricsService {
     const metrics: Record<string, number | null> = {};
     const stalenessMs: Record<string, number> = {};
     const metricMeta: Record<string, MarketMetricObservationMeta> = {};
-    const nowMs = Date.now();
-
     try {
       const snapshots = await storage.getLatestMarketMetrics();
       for (const snap of snapshots) {
