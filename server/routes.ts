@@ -197,6 +197,12 @@ export async function registerRoutes(
   try {
     const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
     registerInstitutionalDcaRoutes(app);
+
+    // NEXA v2 authentication contract (server-side). Registration of these
+    // endpoints does not by itself enforce auth on legacy routes; enforcement
+    // is wired per-route in the hardening phase to preserve client compat.
+    const { registerAuthV2Routes } = await import('./routes/authV2.routes');
+    registerAuthV2Routes(app);
     console.log('[startup] Institutional DCA routes registered');
   } catch (e: any) {
     console.error('[startup] Failed to register Institutional DCA routes:', e?.message || e);
