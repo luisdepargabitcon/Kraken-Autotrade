@@ -314,6 +314,12 @@ export function normMarket(raw){
     dataState: pick(raw,'dataState','candlesState') ?? null,
     candleTimeframe: pick(raw,'candleTimeframe','timeframe') ?? null,
     candlesSource: pick(raw,'candlesSource') ?? null,
+    providerTs: asTs(pick(raw,'providerTs')),
+    receivedAt: asTs(pick(raw,'receivedAt')),
+    cachedAt: asTs(pick(raw,'cachedAt')),
+    origin: pick(raw,'origin') ?? null,
+    validity: pick(raw,'validity') ?? null,
+    warmup: raw.warmup===true?true:(raw.warmup??null),
   };
 }
 

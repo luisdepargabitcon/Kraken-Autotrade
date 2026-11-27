@@ -17,7 +17,7 @@ import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
 import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
 import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
-import { checkMarketDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
+import { checkMarketDataHealth, computeEntryDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
 import { getVwapAnchor } from "../services/institutionalDca/IdcaRepository";
 import { parseDynamicDistanceConfig } from "../services/institutionalDca/IdcaDynamicDistanceService";
 import { computeATRPct } from "../services/institutionalDca/IdcaSmartLayer";
@@ -1081,7 +1081,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const config = await repo.getIdcaConfig();
       const mode = config.mode ?? "simulation";
       const result = await checkMarketDataHealth(pair, mode);
-      res.json(result);
+      const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: Date.now() })
+        .catch(() => null);
+      res.json({ ...result, entryDataHealth });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1092,7 +1094,12 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const config = await repo.getIdcaConfig();
       const mode = config.mode ?? "simulation";
       const pairs = ["BTC/USD", "ETH/USD"];
-      const results = await Promise.all(pairs.map(p => checkMarketDataHealth(p, mode)));
+      const results = await Promise.all(pairs.map(async p => {
+        const health = await checkMarketDataHealth(p, mode);
+        const entryDataHealth = await computeEntryDataHealth(p, { nowMs: Date.now() })
+          .catch(() => null);
+        return { ...health, entryDataHealth };
+      }));
       res.json(results);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2394,6 +2401,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             smartAdjustmentEnabled: false,
           });
 
+          const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: Date.now() })
+            .catch(() => null);
+
           let marketMetricsAdvisory = null;
           try {
             marketMetricsAdvisory = await evaluateMarketMetricsAdvisory(pair, new Date());
@@ -2495,6 +2505,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             marketScoreStatus: marketQuality.detailed.status,
             marketScoreMissing: marketQuality.detailed.missing,
             marketScoreRenormalized: marketQuality.detailed.renormalized,
+            entryDataHealth,
             marketMetricsAdvisory,
             decisionClass: confluenceResult.decisionClass,
             confidenceScore: confluenceResult.confidenceScore,

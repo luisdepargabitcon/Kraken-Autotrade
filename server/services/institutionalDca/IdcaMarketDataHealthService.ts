@@ -680,12 +680,26 @@ export async function computeEntryDataHealth(
   if (missing.has("warmup") && effectiveValidity === "valid") effectiveValidity = "unknown";
   const origin = btcSeries ? `${pairSeries.origin}+${btcSeries.origin}` : pairSeries.origin;
 
+  const missingList = [...missing];
+  const warmup = missingList.includes("warmup") || Object.values(components).some(
+    component => component.reason === "insufficient_history" || component.reason === "btc_insufficient_history"
+  );
+  const source = btcSeries ? `${pairSeries.source}+${btcSeries.source}` : pairSeries.source;
+  const status = effectiveValidity === "valid"
+    ? missingList.length > 0 ? "partial" : "ok"
+    : effectiveValidity === "stale"
+      ? "stale"
+      : effectiveValidity;
+
   return {
     validity: effectiveValidity,
     ageMs,
     maxAgeMs,
-    missing: [...missing],
+    missing: missingList,
     origin,
+    source,
+    status,
+    warmup,
     components,
   };
 }

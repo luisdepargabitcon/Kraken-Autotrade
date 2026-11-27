@@ -4,6 +4,9 @@ export interface EntryDataHealth {
   maxAgeMs: number;
   missing: string[];
   origin?: string;
+  source?: string;
+  status?: "ok" | "partial" | "degraded" | "stale" | "invalid" | "unknown";
+  warmup?: boolean;
   components?: Record<string, { available: boolean; reason?: string }>;
 }
 

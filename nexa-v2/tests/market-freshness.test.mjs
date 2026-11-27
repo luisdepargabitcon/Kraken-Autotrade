@@ -96,6 +96,26 @@ test('candlesStale/dataState stale muestran aviso de velas antiguas', () => {
   assert.ok(h.includes('Velas antiguas'), 'aviso de velas antiguas');
 });
 
+
+test('normMarket conserva procedencia nueva y premium muestra parcial/degradado sin romper ausencias', () => {
+  const m = normMarket({
+    pair:'BTC/USD', price:100, timestamp: iso(60000), origin:'db_fallback',
+    providerTs: NOW-120000, receivedAt: NOW-60000, cachedAt: NOW-30000,
+    validity:'valid', dataState:'partial', warmup:false,
+  });
+  assert.equal(m.origin, 'db_fallback');
+  assert.equal(m.providerTs, NOW-120000);
+  assert.equal(m.receivedAt, NOW-60000);
+  assert.equal(m.cachedAt, NOW-30000);
+  const h = renderMarketPremium(mctx(m));
+  assert.ok(h.includes('respaldo de BD'), 'origen traducido');
+  assert.ok(h.includes('parcial'), 'estado parcial visible');
+  const warm = renderMarketPremium(mctx({ ...m, warmup:true }));
+  assert.ok(warm.includes('warm-up insuficiente'), 'warm-up visible');
+  const missing = renderMarketPremium(mctx({ pair:'BTC/USD', price:100 }));
+  assert.ok(!missing.includes('respaldo de BD'), 'sin origen no se inventa');
+});
+
 // ---------- Traducción de contexto ----------
 test('translateCode cubre los códigos crudos de entry-diagnostics/trailingBuy', () => {
   assert.equal(translateCode('ARM_TRAILING'), 'Armado · esperando rebote de confirmación');

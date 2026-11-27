@@ -59,6 +59,11 @@ describe("IDCA entry data health gate inputs", () => {
     const health = await computeEntryDataHealth("BTC/USD", { nowMs: NOW });
     expect(health.components?.ema50.available).toBe(true);
     expect(health.components?.relative_volume.available).toBe(true);
+    expect(health.source).toBe("kraken");
+    expect(health.origin).toBe("live");
+    expect(health.status).toBe("ok");
+    expect(health.warmup).toBe(false);
+    expect(health.ageMs).not.toBeNull();
     expect(resolveEntryDataGate(health)).toMatchObject({ allow: true, code: null });
   });
 
@@ -79,6 +84,8 @@ describe("IDCA entry data health gate inputs", () => {
     mockSeries(series(30));
     const health = await computeEntryDataHealth("BTC/USD", { nowMs: NOW });
     expect(health.missing).toContain("ema50");
+    expect(health.warmup).toBe(true);
+    expect(health.status).toBe("unknown");
     expect(resolveEntryDataGate(health).code).toBe("market_data_unavailable");
   });
 

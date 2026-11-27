@@ -304,3 +304,52 @@ export function buildMarketContextNarrative(data: {
     icon: "warning",
   };
 }
+
+export function formatEntryDataAgeMs(ageMs?: number | null): string {
+  if (ageMs === null || ageMs === undefined || !Number.isFinite(ageMs)) return "sin dato";
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "menos de 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest > 0 ? `${hours} h ${rest} min` : `${hours} h`;
+}
+
+export function formatEntryDataOrigin(origin?: string | null): string {
+  if (!origin) return "sin dato";
+  const labels: Record<string, string> = {
+    live: "en vivo",
+    cache: "caché",
+    db_fallback: "respaldo de BD",
+  };
+  return origin
+    .split("+")
+    .map(part => labels[part.trim()] ?? part.trim())
+    .join(" + ");
+}
+
+export function formatEntryDataStatus(input?: {
+  status?: string | null;
+  warmup?: boolean | null;
+  validity?: string | null;
+}): string {
+  if (!input) return "sin dato";
+  if (input.warmup) return "warm-up insuficiente";
+  switch (input.status ?? input.validity) {
+    case "ok":
+    case "valid":
+      return "datos completos";
+    case "partial":
+      return "parcial";
+    case "degraded":
+      return "degradado";
+    case "stale":
+      return "obsoleto";
+    case "invalid":
+      return "inválido";
+    case "unknown":
+      return "sin dato suficiente";
+    default:
+      return "sin dato";
+  }
+}

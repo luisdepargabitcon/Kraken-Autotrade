@@ -262,14 +262,30 @@ function levelsPanel(ctx,pair,active){
 }
 // Fuente y frescura reales: proveedor, fuente de velas, edad de la lectura y
 // aviso de velas antiguas. Es la única zona donde vive la proveniencia.
+function dataStateLabel(m){
+ if(!m||typeof m!=='object')return null;
+ if(m.warmup===true)return 'warm-up insuficiente';
+ if(m.candlesStale===true)return 'Velas antiguas';
+ const state=m.dataState??m.validity??null;
+ const labels={partial:'parcial',degraded:'degradado',stale:'obsoleto',invalid:'inválido',unknown:'sin dato suficiente',valid:'válido',ok:'válido'};
+ return labels[state]??state;
+}
+function originLabel(origin){
+ const labels={live:'en vivo',cache:'caché',db_fallback:'respaldo de BD'};
+ if(!origin)return null;
+ return String(origin).split('+').map(x=>labels[String(x).trim()]??x).join(' + ');
+}
 function freshnessPanel(ctx,m,active){
  const f=marketFresh(m);
+ const state=dataStateLabel(m);
  return `<section class="nxp-terminal-panel">${section('DATOS','Fuente y frescura')}
   ${block('Proveedor',active?value(m.provider||m.source):'—')}
   ${block('Fuente de velas',active?value(m.candlesSource||(m.candleTimeframe?m.candleTimeframe+'m':null)): '—')}
+  ${block('Origen',active?value(originLabel(m.origin)):'—')}
   ${block('Última lectura',active?(f.txt||'—'):'—')}
-  ${active?block('Estado de datos',m.candlesStale===true?'Velas antiguas':value(m.dataState)):''}
+  ${active?block('Estado de datos',state):''}
   ${f.stale?`<p class="nxp-panel-empty">Velas antiguas: la fuente no ha publicado datos recientes; los niveles e indicadores pueden estar desfasados.</p>`:''}
+  ${active&&(m.dataState==='partial'||m.dataState==='degraded'||m.warmup===true)?`<p class="nxp-panel-empty">Lectura ${esc(state)}: falta parte del contexto o se está usando una fuente degradada; no se rellenan huecos artificialmente.</p>`:''}
  </section>`;
 }
 // Cabecera de cotización compartida por las subpestañas: precio, Δ 24h honesto
