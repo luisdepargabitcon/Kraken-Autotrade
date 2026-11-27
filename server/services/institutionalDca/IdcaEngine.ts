@@ -192,6 +192,15 @@ async function getAtrPctForPair(pair: string): Promise<number> {
 // ─── Exit Execution ─────────────────────────────────────────────
 
 /**
+ * STRICT MODE PREDICATE (P0): only the exact string "live" authorizes real
+ * venue interaction. Any other value — simulation, shadow, undefined, null,
+ * empty, corrupted or unknown — is NOT live (fail-closed). Never invert this.
+ */
+export function isLiveExecutionMode(mode: unknown): mode is "live" {
+  return mode === "live";
+}
+
+/**
  * Ejecuta una salida basada en señal del ExitManager
  * GUARD CRÍTICO: Solo cierra ciclo en BD si hay confirmación de venta real (orderId/filled)
  */
@@ -228,9 +237,21 @@ async function executeExit(
       }
     }
 
-    // Crear orden de salida (con volume ajustado por dust si aplica)
-    const exchange = ExchangeFactory.getTradingExchange();
-    const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: sellVolume.toFixed(8) });
+    // ─── STRICT MODE GUARD (P0) ───
+    // Solo el modo exacto "live" puede enviar ordenes reales al venue.
+    // Cualquier otro valor (simulation, undefined, null, corrupto, desconocido)
+    // se ejecuta de forma estrictamente simulada: sin contacto con el exchange.
+    const isLiveMode = isLiveExecutionMode(mode);
+
+    let sellOrder: { success: boolean; orderId?: string; txid?: string };
+    if (isLiveMode) {
+      // Crear orden de salida real (con volume ajustado por dust si aplica)
+      const exchange = ExchangeFactory.getTradingExchange();
+      sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: sellVolume.toFixed(8) });
+    } else {
+      // Ejecución simulada: fill sintético al precio de señal, sin orden real.
+      sellOrder = { success: true };
+    }
 
     if (!sellOrder) {
       throw new Error("Failed to create sell order");
@@ -241,7 +262,7 @@ async function executeExit(
     const hasOrderId = !!(sellOrder.orderId || sellOrder.txid);
 
     // Para LIVE: exigir confirmación real antes de cerrar ciclo
-    if (mode === "live" && !hasOrderId) {
+    if (isLiveMode && !hasOrderId) {
       console.error(
         `${TAG}[EXIT_BLOCKED] cycleId=${cycle.id} pair=${pair} ` +
         `mode=live reason=no_confirmed_order_id ` +

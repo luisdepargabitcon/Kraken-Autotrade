@@ -46,6 +46,9 @@ export interface ExecutionRequest {
   urgency: "low" | "medium" | "high" | "critical";
   reason: string;
   config: ExecutionConfig;
+  // STRICT MODE GUARD (P0): execution through this manager requires the exact
+  // string "live". Any other value (including undefined) fails closed.
+  mode?: string;
 }
 
 export interface ExecutionResult {
@@ -118,6 +121,12 @@ class IdcaExecutionManager {
    * Ejecuta una orden usando la estrategia configurada
    */
   async executeOrder(request: ExecutionRequest): Promise<ExecutionResult> {
+    // STRICT MODE GUARD (P0): solo el modo exacto "live" puede ejecutar ordenes
+    // reales. Cualquier otro valor — simulation, undefined, null, corrupto o
+    // desconocido — falla cerrado antes de cualquier efecto.
+    if (request.mode !== "live") {
+      throw new Error(`IDCA_EXECUTION_MODE_GUARD: executeOrder requires exact mode "live", got ${JSON.stringify(request.mode)}`);
+    }
     const startTime = Date.now();
     const state = this.initializeExecutionState(request);
     

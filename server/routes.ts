@@ -592,6 +592,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid exchange. Must be 'kraken' or 'revolutx'" });
       }
 
+      if (activeExchange === "kraken") {
+        return res.status(400).json({ error: "KRAKEN_TRADING_FORBIDDEN: Kraken es solo fuente de datos; Revolut X es el unico venue de ejecucion" });
+      }
+
       const config = await storage.getApiConfig();
       
       if (activeExchange === "kraken" && !config?.krakenConnected) {

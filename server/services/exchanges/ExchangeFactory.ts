@@ -40,8 +40,10 @@ export class ExchangeFactoryClass {
     switch (exchangeType) {
       case 'revolutx':
         if (!revolutXService.isInitialized()) {
-          console.warn('[ExchangeFactory] Revolut X not initialized, falling back to Kraken');
-          return krakenService;
+          // Fail-closed: never substitute venues silently. Kraken is data-only and
+          // must never receive order flow, even as a fallback.
+          console.error('[ExchangeFactory] VENUE_UNAVAILABLE: Revolut X not initialized; no fallback venue allowed');
+          throw new Error('VENUE_UNAVAILABLE: Revolut X not initialized');
         }
         return revolutXService;
       case 'kraken':
@@ -63,6 +65,9 @@ export class ExchangeFactoryClass {
   }
 
   setTradingExchange(type: ExchangeType): void {
+    if (type === 'kraken') {
+      throw new Error('KRAKEN_TRADING_FORBIDDEN: Kraken is data-only; Revolut X is the sole execution venue');
+    }
     if (!this.exchangeEnabled[type]) {
       throw new Error(`Exchange ${type} is not enabled`);
     }
@@ -92,6 +97,9 @@ export class ExchangeFactoryClass {
   }
 
   setActiveExchange(type: ExchangeType): void {
+    if (type === 'kraken') {
+      throw new Error('KRAKEN_TRADING_FORBIDDEN: Kraken is data-only; Revolut X is the sole execution venue');
+    }
     if (!this.exchangeEnabled[type]) {
       throw new Error(`Exchange ${type} is not enabled`);
     }
@@ -195,13 +203,31 @@ export class ExchangeFactoryClass {
       console.log('[ExchangeFactory] Revolut X initialized');
     }
 
-    const tradingEx = config.tradingExchange || config.activeExchange || 'kraken';
+    // Doctrine: Kraken is data-only. Any persisted selection of Kraken as the
+    // trading/active venue is coerced to Revolut X fail-closed: if Revolut X is
+    // not initialized, execution attempts will fail loudly instead of silently
+    // routing order flow to Kraken.
+    let tradingEx = config.tradingExchange || config.activeExchange || 'revolutx';
+    if (tradingEx === 'kraken') {
+      console.error('[ExchangeFactory] KRAKEN_TRADING_FORBIDDEN: persisted config selected Kraken for trading; coercing to revolutx');
+      tradingEx = 'revolutx';
+    }
     if (this.exchangeEnabled[tradingEx]) {
-      const exchange = this.getExchange(tradingEx);
-      if (exchange.isInitialized()) {
+      try {
+        const exchange = this.getExchange(tradingEx);
+        if (exchange.isInitialized()) {
+          this.tradingExchange = tradingEx;
+          this.activeExchange = tradingEx;
+        }
+      } catch {
+        // Venue unavailable at boot: keep fail-closed defaults; execution paths
+        // will surface VENUE_UNAVAILABLE instead of falling back to Kraken.
         this.tradingExchange = tradingEx;
         this.activeExchange = tradingEx;
       }
+    } else {
+      this.tradingExchange = tradingEx;
+      this.activeExchange = tradingEx;
     }
 
     // Data exchange is ALWAYS Kraken - it has the best OHLC/market data API
