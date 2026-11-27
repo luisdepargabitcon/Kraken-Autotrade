@@ -271,6 +271,10 @@ export async function resolveGridPlanningContext(
             maxLevelPct: input.allocationInput.maxLevelPct,
             minLevelUsd: input.allocationInput.minLevelUsd,
           },
+          {
+            mode: input.config?.mode,
+            shadowReferenceCapitalUsd: Number(input.config?.gridWalletInitialUsd ?? 0),
+          },
         );
       } catch {
         allocation = null;

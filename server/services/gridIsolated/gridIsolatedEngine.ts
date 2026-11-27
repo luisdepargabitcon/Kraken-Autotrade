@@ -6331,6 +6331,10 @@ export class GridIsolatedEngine {
         progressiveIntensity: configSnapshot.gridProgressiveIntensity ?? 0.30,
         maxLevelPct: configSnapshot.gridMaxLevelPct ?? 40,
         minLevelUsd: configSnapshot.gridMinLevelUsd ?? 30,
+      },
+      {
+        mode: configSnapshot.mode,
+        shadowReferenceCapitalUsd: Number(configSnapshot.gridWalletInitialUsd ?? 0),
       }
     );
 
