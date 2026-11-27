@@ -100,6 +100,15 @@ Las rutas de arranque cargan o inicializan múltiples subsistemas. Las evidencia
 
 Consecuencia: tras cada reinicio hay una ráfaga de inicialización, queries, jobs diferidos y posibles llamadas externas. Si el proceso muere antes de completar o mientras estos jobs corren, el siguiente arranque vuelve a lanzarlos. Esto puede amplificar carga. No demuestra por sí solo duplicación dañina: hay jobs con controles internos.
 
+### 3.1 Consultas amplias/sin límite explícito en trabajos de arranque
+
+No son prueba de OOM, pero sí hacen plausible que el coste de arranque crezca con el histórico:
+
+- `server/storage.ts:708-715` — `rebuildPnlForAllSells()` selecciona todos los trades `filled` ordenados para reconstrucción FIFO; no se observa `LIMIT` en esa consulta. Este trabajo se lanza diferido en cada arranque (`server/routes.ts:1992-1995`).
+- `server/services/institutionalDca/IdcaLiveOrderReconciler.ts:103` — `DrizzleIdcaIntentStore.listPending()` selecciona todos los intents pendientes/no aplicados sin `LIMIT` explícito. Se invoca en arranque IDCA (`server/services/institutionalDca/IdcaEngine.ts:1013`).
+
+Ambas consultas pueden ser pequeñas en operación normal; la cuestión diagnóstica es que su coste no está acotado por paginación en el código citado. Confirmar impacto requiere métricas reales de memoria/CPU y tamaño de tablas, no solo lectura estática.
+
 ## 4. Evidencia de idempotencia ya acotada en tests
 
 La auditoría añadió/valida tests que simulan arranques repetidos sin DB real ni red:
