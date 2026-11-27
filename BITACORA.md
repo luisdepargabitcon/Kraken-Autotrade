@@ -8389,3 +8389,7 @@ Registro:
 - UNIT=8/8
 - DB_MUTATION=NO (DATABASE_URL dummy a puerto muerto; ningún runner ejecutó queries)
 - EXIT_R1_STARTED=NO
+
+## 2026-11-27 — NEXA INTEGRAL (issue #22) — rama feature/nexa-integral-20261127
+
+Candidato aislado SIN APROBAR PARA PRODUCCION. P0: Kraken ejecucion prohibida incondicionalmente (KRAKEN_EXECUTION_FORBIDDEN), ExchangeFactory fail-closed sin fallback, guards de modo estrictos IDCA (isLiveExecutionMode), auth v2 server-side ECDSA P-256 (nucleo probado 11/11, enforcement legacy pendiente de cliente). P1: ticker firmado eliminado del allocator GRID, single-flight balance cache, correcciones EMA50 real y volumen relativo causal IDCA. 49 tests nuevos verdes; suite completa sin regresiones atribuibles (43 fallos preexistentes ambientales/estructurales fuera del diff). Commits: 0da52ee, 14cf539, 6360d32, 005089d. Detalle en AUDITORIAS/NEXA_INTEGRAL_2026-11-27/INFORME_IMPLEMENTACION.md. No desplegado, sin merge.
