@@ -3368,7 +3368,7 @@ export class DatabaseStorage implements IStorage {
         WHERE existing.source = ${record.source}
           AND existing.metric = ${record.metric}
           AND existing.asset IS NOT DISTINCT FROM ${record.asset}
-          AND existing.ts_provider IS NOT DISTINCT FROM ${record.tsProvider}
+          AND COALESCE(existing.ts_provider, existing.ts_ingested) = COALESCE(${record.tsProvider}, ${record.tsIngested})
         LIMIT 1
       )
     `);

@@ -92,6 +92,7 @@ export interface MarketMetricsConfig {
     netflow: number;
     whaleActivity: number;
     derivatives: number;
+    funding?: number;
   };
 }
 
@@ -105,7 +106,8 @@ export const DEFAULT_METRICS_CONFIG: MarketMetricsConfig = {
     stablecoins: 6 * 60 * 60 * 1000,   // 6h
     netflow:     6 * 60 * 60 * 1000,   // 6h
     whaleActivity: 2 * 60 * 60 * 1000, // 2h
-    derivatives: 1 * 60 * 60 * 1000,   // 1h
+    derivatives: 1 * 60 * 60 * 1000,   // 1h para OI/liquidaciones
+    funding:     9 * 60 * 60 * 1000,   // 9h: funding se publica cada 8h y el refresh nominal es 4h
   },
 };
 

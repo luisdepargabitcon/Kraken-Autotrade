@@ -35,7 +35,7 @@ describe("MarketMetricsEngine data quality", () => {
 
   it("dato caducado no puntúa y queda stale", () => {
     const key = `${METRIC_NAMES.FUNDING_RATE}:ETH`;
-    const decision = evaluate({ [key]: 0.2 }, { [key]: config.stalenessMaxMs.derivatives + 1 });
+    const decision = evaluate({ [key]: 0.2 }, { [key]: (config.stalenessMaxMs.funding ?? 9 * 60 * 60 * 1000) + 1 });
     expect(decision.dataQuality[key].state).toBe("stale");
     expect(decision.score).toBe(0);
   });

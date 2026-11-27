@@ -219,7 +219,7 @@ export class MarketMetricsEngine {
       {
         key: `${METRIC_NAMES.FUNDING_RATE}:${asset}`,
         metric: "funding_rate",
-        ttlMs: config.stalenessMaxMs.derivatives,
+        ttlMs: config.stalenessMaxMs.funding ?? 9 * 60 * 60 * 1000,
         score: value => {
           const direction = value > 0
             ? "positivo (longs pagan)"
