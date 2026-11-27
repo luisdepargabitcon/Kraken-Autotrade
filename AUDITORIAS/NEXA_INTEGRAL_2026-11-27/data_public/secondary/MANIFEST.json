@@ -1,0 +1,71 @@
+{
+  "generatedAt": "2026-11-27T22:04:25.711Z",
+  "files": [
+    {
+      "source": "bitstamp",
+      "asset": "BTC",
+      "quote": "USD",
+      "url": "https://www.bitstamp.net/api/v2/ohlc/btcusd/?step=3600&limit=720&exclude_current_candle=true",
+      "fetchedAt": "2026-11-27T22:04:11.426Z",
+      "candles": 720,
+      "first": "2026-10-28T22:00:00.000Z",
+      "last": "2026-11-27T21:00:00.000Z",
+      "sha256": "88768369183b9b975d96d5957d9dde0850b22082dab56a2a96e196ce12254c1b"
+    },
+    {
+      "source": "bitfinex",
+      "asset": "BTC",
+      "quote": "USD",
+      "url": "https://api-pub.bitfinex.com/v2/candles/trade:1h:tBTCUSD/hist?limit=720",
+      "fetchedAt": "2026-11-27T22:04:25.566Z",
+      "candles": 720,
+      "first": "2026-10-28T23:00:00.000Z",
+      "last": "2026-11-27T22:00:00.000Z",
+      "sha256": "f3b5950790401626a522994545792a3cb6e4d40b887688f1bc2c454e064fe229"
+    },
+    {
+      "source": "binance_spot",
+      "asset": "BTC",
+      "quote": "USDT",
+      "url": "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=720",
+      "fetchedAt": "2026-11-27T22:04:11.984Z",
+      "candles": 720,
+      "first": "2026-10-28T23:00:00.000Z",
+      "last": "2026-11-27T22:00:00.000Z",
+      "sha256": "c9bc2dbb830381824fe31fc08a1d1a19fa8896c65bff7a3508e4e3ff317e4f0d"
+    },
+    {
+      "source": "bitstamp",
+      "asset": "ETH",
+      "quote": "USD",
+      "url": "https://www.bitstamp.net/api/v2/ohlc/ethusd/?step=3600&limit=720&exclude_current_candle=true",
+      "fetchedAt": "2026-11-27T22:04:12.141Z",
+      "candles": 720,
+      "first": "2026-10-28T22:00:00.000Z",
+      "last": "2026-11-27T21:00:00.000Z",
+      "sha256": "d8ac0db1363fa4f2b3daba6ac7afb1211a9e86c60319b6541e9a2c14f056a8e6"
+    },
+    {
+      "source": "bitfinex",
+      "asset": "ETH",
+      "quote": "USD",
+      "url": "https://api-pub.bitfinex.com/v2/candles/trade:1h:tETHUSD/hist?limit=720",
+      "fetchedAt": "2026-11-27T22:04:25.707Z",
+      "candles": 720,
+      "first": "2026-10-28T23:00:00.000Z",
+      "last": "2026-11-27T22:00:00.000Z",
+      "sha256": "412de7e34e4fe11b7874ca0cb022003afa0ba5c467c839997d6df845cea20780"
+    },
+    {
+      "source": "binance_spot",
+      "asset": "ETH",
+      "quote": "USDT",
+      "url": "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1h&limit=720",
+      "fetchedAt": "2026-11-27T22:04:12.518Z",
+      "candles": 720,
+      "first": "2026-10-28T23:00:00.000Z",
+      "last": "2026-11-27T22:00:00.000Z",
+      "sha256": "cf37ccaf74a327e0a86b9a220752152322fdc1f8429316a893a60a33b936c627"
+    }
+  ]
+}
