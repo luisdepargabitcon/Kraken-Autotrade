@@ -234,7 +234,7 @@ export const orderIntents = pgTable("order_intents", {
   pair: text("pair").notNull(),
   side: text("side").notNull(), // 'buy' | 'sell'
   volume: decimal("volume", { precision: 18, scale: 8 }).notNull(),
-  status: text("status").notNull().default("pending"), // pending, accepted, filled, failed, expired
+  status: text("status").notNull().default("pending"), // spot legacy: pending/accepted/filled/failed/expired; IDCA: created/submitting/accepted_pending/partial/filled/rejected/expired/uncertain
   exchangeOrderId: text("exchange_order_id"), // ID devuelto por el exchange
   hybridGuardWatchId: integer("hybrid_guard_watch_id"),
   hybridGuardReason: text("hybrid_guard_reason"),

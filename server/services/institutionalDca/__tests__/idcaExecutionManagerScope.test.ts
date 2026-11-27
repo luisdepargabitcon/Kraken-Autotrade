@@ -23,9 +23,13 @@ const mocks = vi.hoisted(() => ({
   repo: {
     getCycleById: vi.fn(),
   },
+  reconciler: {
+    submitAndReconcile: vi.fn(),
+  },
 }));
 
 vi.mock("../IdcaRepository", () => mocks.repo);
+vi.mock("../IdcaLiveOrderReconciler", () => mocks.reconciler);
 vi.mock("../../exchanges/ExchangeFactory", () => ({
   ExchangeFactory: {
     getTradingExchange: vi.fn(() => mocks.exchange),
@@ -60,13 +64,14 @@ describe("IdcaExecutionManager execution scope", () => {
     }));
     mocks.repo.getCycleById.mockResolvedValue({ id: 1, pair: "BTC/USD", mode: "live" });
     mocks.exchange.isInitialized.mockReturnValue(true);
-    mocks.exchange.placeOrder.mockResolvedValue({
-      id: "order-1",
-      filled: 0.001,
-      price: 100000,
-      value: 100,
-      fees: 0.09,
-      status: "filled",
+    mocks.reconciler.submitAndReconcile.mockImplementation(async (params: any) => {
+      await mocks.exchange.placeOrder({ pair: params.pair, type: params.side, volume: params.requestedQty.toFixed(8) });
+      return {
+        state: "filled", filledQty: params.requestedQty, avgPrice: 100000,
+        feesUsd: 0.09, feeSource: "venue", remainingQty: 0, terminal: true,
+        intent: { clientOrderId: "test-intent", exchangeOrderId: "order-1" },
+        newlyAppliedFillIds: [], alreadyApplied: false,
+      };
     });
   });
 

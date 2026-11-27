@@ -58,6 +58,7 @@ import { tradeSnapshotService, type IdcaCycleContext } from "../TradeSnapshotSer
 import { tradeMetricsTracker } from "../TradeMetricsTracker";
 import { idcaHybridDecisionService } from "./IdcaHybridDecisionService";
 import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+import { submitAndReconcile, reconcilePendingIntents, type ReconciledOutcome } from "./IdcaLiveOrderReconciler";
 
 const TAG = "[IDCA]";
 
@@ -251,10 +252,18 @@ export async function executeExit(
     const isLiveMode = scope.mode === "live";
 
     let sellOrder: { success: boolean; orderId?: string; txid?: string };
+    let liveOutcome: ReconciledOutcome | null = null;
     if (isLiveMode) {
       // Crear orden de salida real (con volume ajustado por dust si aplica)
-      const exchange = ExchangeFactory.getTradingExchange();
-      sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: sellVolume.toFixed(8) });
+      const outcome = await submitAndReconcile({
+        cycleId: cycle.id, pair, side: "sell", requestedQty: sellVolume,
+        reason: signal.exitType, intentKey: `${signal.exitType}_${sellVolume.toFixed(8)}`, closePosition: true, closeReason: signal.exitType,
+      });
+      if (outcome.state !== "filled") {
+        throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}; cycle remains active`);
+      }
+      liveOutcome = outcome;
+      sellOrder = { success: true, orderId: outcome.intent.exchangeOrderId ?? outcome.intent.clientOrderId };
     } else {
       // Ejecución simulada: fill sintético al precio de señal, sin orden real.
       sellOrder = { success: true };
@@ -303,33 +312,37 @@ export async function executeExit(
     // Si sellOrder.success=true y tiene orderId, consideramos exitoso
     const isConfirmed = sellOrder.success && hasOrderId;
 
-    // Solo cerrar ciclo si hay confirmación suficiente
-    await repo.updateCycle(cycle.id, {
-      status: "closed",
-      closeReason: signal.exitType,
-      closedAt: new Date(),
-    });
-
-    // Guardar referencia a la orden de venta
-    const grossValueUsd = totalQty * signal.exitPrice;
-    const { pct: feePct } = (await import('./IdcaPnlCalculator')).resolveFeePct(config.executionFeesJson, (config as any).simulationFeePct);
-    const feesUsd = grossValueUsd * feePct / 100;
+    const accountingQty = liveOutcome?.filledQty ?? totalQty;
+    const accountingPrice = liveOutcome?.avgPrice || signal.exitPrice;
+    const grossValueUsd = accountingQty * accountingPrice;
+    const feesUsd = liveOutcome?.feesUsd ?? await (async () => {
+      const { pct: feePct } = (await import('./IdcaPnlCalculator')).resolveFeePct(config.executionFeesJson, (config as any).simulationFeePct);
+      return grossValueUsd * feePct / 100;
+    })();
     const netValueUsd = grossValueUsd - feesUsd;
 
-    await repo.createOrder({
-      cycleId: cycle.id,
-      pair,
-      mode,
-      orderType: signal.exitType === "take_profit" ? "final_sell" : "breakeven_sell",
-      side: "sell",
-      price: signal.exitPrice.toFixed(8),
-      quantity: totalQty.toFixed(8),
-      grossValueUsd: grossValueUsd.toFixed(2),
-      netValueUsd: netValueUsd.toFixed(2),
-      exchangeOrderId: sellOrder.orderId || sellOrder.txid || null,
-      triggerReason: signal.exitType,
-      humanReason: `Exit: ${signal.exitType} - ${signal.exitReason}`,
-    });
+    if (!isLiveMode) {
+      // La contabilidad live la aplica una sola vez IdcaLiveOrderReconciler.
+      await repo.updateCycle(cycle.id, {
+        status: "closed",
+        closeReason: signal.exitType,
+        closedAt: new Date(),
+      });
+      await repo.createOrder({
+        cycleId: cycle.id,
+        pair,
+        mode,
+        orderType: signal.exitType === "take_profit" ? "final_sell" : "breakeven_sell",
+        side: "sell",
+        price: accountingPrice.toFixed(8),
+        quantity: accountingQty.toFixed(8),
+        grossValueUsd: grossValueUsd.toFixed(2),
+        netValueUsd: netValueUsd.toFixed(2),
+        exchangeOrderId: sellOrder.orderId || sellOrder.txid || null,
+        triggerReason: signal.exitType,
+        humanReason: `Exit: ${signal.exitType} - ${signal.exitReason}`,
+      });
+    }
 
     // Limpiar estado de salida
     idcaExitManager.clearExitState(cycle.id);
@@ -920,6 +933,7 @@ export async function startScheduler(): Promise<void> {
     console.log(`${TAG} Running startup reconciliation before scheduler...`);
     try {
       startupReconciliationResult = await runStartupReconciliation();
+      try { await reconcilePendingIntents(); } catch (e: any) { console.error(`${TAG}[INTENT_RECONCILE_STARTUP] ${e.message}`); }
       startupReconciliationCompleted = true;
 
       if (!isSafeToStartAfterReconciliation(startupReconciliationResult)) {
@@ -1051,15 +1065,17 @@ export async function emergencyCloseAll(): Promise<number> {
     try {
       if (mode === "live" && parseFloat(String(cycle.totalQuantity)) > 0) {
         await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true, mode);
+        closed++;
+      } else {
+        const price = prices[cycle.pair] || 0;
+        await repo.updateCycle(cycle.id, {
+          status: "closed",
+          closeReason: "emergency_close_all",
+          currentPrice: price.toFixed(8),
+          closedAt: new Date(),
+        });
+        closed++;
       }
-      const price = prices[cycle.pair] || 0;
-      await repo.updateCycle(cycle.id, {
-        status: "closed",
-        closeReason: "emergency_close_all",
-        currentPrice: price.toFixed(8),
-        closedAt: new Date(),
-      });
-      closed++;
     } catch (e: any) {
       console.error(`${TAG}[EMERGENCY_CLOSE] Error closing ${cycle.pair} cycle #${cycle.id}:`, e.message);
     }
@@ -1113,6 +1129,8 @@ async function runTick(): Promise<void> {
     const mode = config.mode as IdcaMode;
 
     if (mode === "disabled") return;
+
+    try { await reconcilePendingIntents(); } catch (e: any) { console.error(`${TAG}[INTENT_RECONCILE_TICK] ${e.message}`); }
 
     // Check max drawdown
     const drawdownOk = await checkModuleDrawdown(config, mode);
@@ -5095,30 +5113,21 @@ async function executeRealBuyWithGuard(
     console.log(`${TAG}[LIVE][BUY][ADJUSTED] ${pair} ${buyType}: ${intendedQty.toFixed(8)} → ${finalQty.toFixed(8)} (${finalUsd.toFixed(2)} USD)`);
   }
 
-  // ─── FASE 2: Enviar orden al exchange ───
-  let exchangeOrderId: string | undefined;
+  // ─── FASE 2/3: Enviar una sola vez con intención durable y reconciliar fill ───
+  const intentScope = cycleId > 0
+    ? String(cycleId)
+    : `0_${pair.replace(/[^A-Za-z0-9]/g, "_")}_${finalQty.toFixed(8)}_${price.toFixed(8)}`;
+  const intentKey = `${buyType}_${buyLevel ?? 0}_${intentScope}`;
+  let outcome: ReconciledOutcome;
   try {
-    const tradingExchange = ExchangeFactory.getTradingExchange();
-    if (!tradingExchange.isInitialized()) {
-      throw new Error("Trading exchange not initialized");
-    }
-
-    console.log(`${TAG}[LIVE][BUY][SENDING] ${pair} qty=${finalQty.toFixed(8)} @ ~${price.toFixed(2)}`);
-
-    const orderResult = await tradingExchange.placeOrder({
+    outcome = await submitAndReconcile({
+      cycleId,
       pair,
-      type: "buy",
-      ordertype: "market",
-      volume: finalQty.toFixed(8),
+      side: "buy",
+      requestedQty: finalQty,
+      reason: `${buyType}_buy`,
+      intentKey,
     });
-
-    if (!orderResult.success) {
-      throw new Error(orderResult.error || "Order rejected by exchange");
-    }
-
-    exchangeOrderId = orderResult.orderId || orderResult.txid;
-    console.log(`${TAG}[LIVE][BUY][SENT] ${pair} orderId=${exchangeOrderId || "pending"}`);
-
   } catch (e: any) {
     console.error(`${TAG}[LIVE][BUY][SEND_FAILED] ${pair}: ${e.message}`);
     return {
@@ -5133,24 +5142,9 @@ async function executeRealBuyWithGuard(
     };
   }
 
-  // ─── FASE 3: Confirmar fill ───
-  if (!exchangeOrderId) {
-    return {
-      success: false,
-      executedQty: 0,
-      executedUsd: 0,
-      avgPrice: 0,
-      feeUsd: 0,
-      wasAdjusted: validation.reduced ?? false,
-      originalQty: intendedQty,
-      rejectionReason: "no_exchange_order_id",
-    };
-  }
-
-  const fillConfirmation = await liveGuard.confirmOrderFill(pair, exchangeOrderId, 30000, 2000);
-
-  if (!fillConfirmation.confirmed || fillConfirmation.filledQty <= 0) {
-    console.error(`${TAG}[LIVE][BUY][NO_FILL] ${pair} orderId=${exchangeOrderId} status=${fillConfirmation.status}`);
+  const exchangeOrderId = outcome.intent.exchangeOrderId ?? outcome.intent.clientOrderId;
+  if (outcome.filledQty <= 0) {
+    console.error(`${TAG}[LIVE][BUY][NO_FILL] ${pair} intent=${outcome.intent.clientOrderId} state=${outcome.state}`);
     return {
       success: false,
       orderId: exchangeOrderId,
@@ -5160,31 +5154,31 @@ async function executeRealBuyWithGuard(
       feeUsd: 0,
       wasAdjusted: validation.reduced ?? false,
       originalQty: intendedQty,
-      rejectionReason: `no_fill: ${fillConfirmation.status}`,
+      rejectionReason: outcome.state === "uncertain" ? `execution_unknown: ${outcome.state}` : `no_fill: ${outcome.state}`,
     };
   }
 
-  // ─── FASE 4: Éxito — retornar valores reales de ejecución ───
+  const executedUsd = outcome.filledQty * outcome.avgPrice;
   console.log(
     `${TAG}[LIVE][BUY][CONFIRMED] ${pair} orderId=${exchangeOrderId} ` +
-    `qty=${fillConfirmation.filledQty.toFixed(8)} avg=${fillConfirmation.avgFillPrice.toFixed(2)} ` +
-    `fee=${fillConfirmation.feeUsd.toFixed(4)} netQty=${fillConfirmation.netBaseQty?.toFixed(8) || 'N/A'}`
+    `qty=${outcome.filledQty.toFixed(8)} avg=${outcome.avgPrice.toFixed(2)} fee=${outcome.feesUsd.toFixed(4)}`
   );
 
+  // ─── FASE 4: Éxito — retornar valores reales de ejecución ───
   return {
     success: true,
     orderId: exchangeOrderId,
-    executedQty: fillConfirmation.filledQty,
-    executedUsd: fillConfirmation.filledUsd,
-    avgPrice: fillConfirmation.avgFillPrice,
-    feeUsd: fillConfirmation.feeUsd,
+    executedQty: outcome.filledQty,
+    executedUsd,
+    avgPrice: outcome.avgPrice,
+    feeUsd: outcome.feesUsd,
     wasAdjusted: validation.reduced ?? false,
     originalQty: validation.reduced ? intendedQty : undefined,
-    grossBaseQty: fillConfirmation.grossBaseQty,
-    netBaseQty: fillConfirmation.netBaseQty,
-    feeAsset: fillConfirmation.feeAsset,
-    feeAmount: fillConfirmation.feeAmount,
-    feeSource: fillConfirmation.feeSource,
+    grossBaseQty: outcome.filledQty,
+    netBaseQty: outcome.netFilledQty ?? outcome.filledQty,
+    feeAsset: outcome.feeSource === "estimated_preset" && (outcome.netFilledQty ?? outcome.filledQty) < outcome.filledQty ? pair.split("/")[0] : undefined,
+    feeAmount: Math.max(0, outcome.filledQty - (outcome.netFilledQty ?? outcome.filledQty)) || undefined,
+    feeSource: outcome.feeSource === "venue" ? "exchange_api" : outcome.feeSource === "estimated_preset" ? "inferred_from_default_pct" : null,
   };
 }
 
@@ -5316,7 +5310,7 @@ async function executeSafetyBuyLiveSafe(
   };
 }
 
-async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false, requestedMode: unknown = cycle.mode): Promise<void> {
+async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false, requestedMode: unknown = cycle.mode): Promise<ReconciledOutcome> {
   const scope = resolveIdcaExecutionScope(cycle, requestedMode);
   if (!scope.ok) {
     await emitInvalidExecutionScopeEvent(cycle, requestedMode, scope.reason, "executeRealSell");
@@ -5351,24 +5345,23 @@ async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, 
       console.log(`${TAG}[LIVE][SELL] Dust tolerance applied: original=${quantity.toFixed(8)} adjusted=${sellQty.toFixed(8)} reason=${validation.reason}`);
     }
 
-    const tradingExchange = ExchangeFactory.getTradingExchange();
-    if (!tradingExchange.isInitialized()) {
-      console.error(`${TAG}[LIVE][SELL] Trading exchange not initialized — order NOT sent for ${cycle.pair}`);
-      throw new Error(`Live sell blocked: exchange not initialized (pair=${cycle.pair} type=${orderType})`);
-    }
-    console.log(`${TAG}[LIVE][SELL] Placing order: ${cycle.pair} type=${orderType} qty=${sellQty.toFixed(8)}`);
-    const result = await tradingExchange.placeOrder({
+    console.log(`${TAG}[LIVE][SELL] Submitting durable intent: ${cycle.pair} type=${orderType} qty=${sellQty.toFixed(8)}`);
+    const outcome = await submitAndReconcile({
+      cycleId: cycle.id,
       pair: cycle.pair,
-      type: "sell",
-      ordertype: "market",
-      volume: sellQty.toFixed(8),
+      side: "sell",
+      requestedQty: sellQty,
+      reason: orderType,
+      intentKey: `${orderType}_${sellQty.toFixed(8)}`,
+      closePosition: isFullClose,
+      closeReason: orderType === "manual_sell" ? "manual_close" : orderType === "emergency_sell" ? "emergency_close_all" : orderType,
     });
-    if (result.success) {
-      console.log(`${TAG}[LIVE][SELL] Order accepted: ${cycle.pair} type=${orderType} orderId=${result.orderId || result.txid || "(pending)"}`);
-    } else {
-      console.error(`${TAG}[LIVE][SELL] Order FAILED: ${cycle.pair} type=${orderType} error=${result.error}`);
-      throw new Error(`Live sell order failed: ${result.error}`);
+    if (outcome.state !== "filled") {
+      console.error(`${TAG}[LIVE][SELL] Order not reconciled as filled: ${cycle.pair} type=${orderType} state=${outcome.state}`);
+      throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
     }
+    console.log(`${TAG}[LIVE][SELL] Order reconciled filled: ${cycle.pair} type=${orderType} qty=${outcome.filledQty.toFixed(8)} avg=${outcome.avgPrice.toFixed(8)}`);
+    return outcome;
   } catch (e: any) {
     console.error(`${TAG}[LIVE][SELL] Error placing order for ${cycle.pair}:`, e.message);
     throw e;
@@ -7513,6 +7506,62 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   const currentPrice = await getCurrentPrice(pair);
   if (!currentPrice || currentPrice <= 0) throw new Error(`No se pudo obtener precio actual para ${pair}`);
 
+  if (mode === "live") {
+    const outcome = await executeRealSell(cycle, "manual_sell", totalQty, true, mode);
+    if (outcome.state !== "filled") throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
+    const quantitySold = outcome.filledQty;
+    const sellPrice = outcome.avgPrice || currentPrice;
+    const grossValue = quantitySold * sellPrice;
+    const liveFees = outcome.feesUsd;
+    const netValueLive = grossValue - liveFees;
+    const capitalUsedLive = parseFloat(String(cycle.capitalUsedUsd || "0"));
+    const totalCostBasisLive = parseFloat(String((cycle as any).totalCostBasisUsd || "0")) || capitalUsedLive;
+    const prevRealizedLive = parseFloat(String(cycle.realizedPnlUsd || "0"));
+    const realizedIncrementLive = netValueLive - capitalUsedLive;
+    const realizedPnlLive = prevRealizedLive + realizedIncrementLive;
+    const realizedPnlPctLive = totalCostBasisLive > 0 ? (realizedPnlLive / totalCostBasisLive) * 100 : 0;
+
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "manual_close",
+      severity: "info",
+      message: `Cierre manual: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, PnL=${realizedPnlLive >= 0 ? "+" : ""}$${realizedPnlLive.toFixed(2)}`,
+      payloadJson: {
+        sellPrice, quantity: quantitySold, grossValueUsd: grossValue, netValueUsd: netValueLive,
+        fees: liveFees, realizedPnlUsd: realizedPnlLive, realizedPnlPct: realizedPnlPctLive,
+        capitalUsed: capitalUsedLive, clientOrderId: outcome.intent.clientOrderId,
+      },
+    }, {
+      eventType: "manual_close", pair, mode,
+      price: sellPrice, quantity: quantitySold,
+      pnlUsd: realizedPnlLive, pnlPct: realizedPnlPctLive,
+      capitalUsed: capitalUsedLive,
+    });
+
+    try {
+      const pnlSign = realizedPnlLive >= 0 ? "+" : "";
+      await telegram.sendRawMessage(
+        `🔴 *Cierre manual de posición*
+` +
+        `Par: ${pair}
+Modo: LIVE
+CycleId: #${cycle.id}
+` +
+        `Precio venta: $${sellPrice.toFixed(2)}
+Cantidad: ${quantitySold.toFixed(6)}
+` +
+        `PnL realizado: ${pnlSign}$${realizedPnlLive.toFixed(2)}`
+      );
+    } catch { /* ignore telegram errors */ }
+
+    const closedCycle = await repo.getCycleById(cycle.id);
+    return {
+      cycle: closedCycle!, sellPrice, quantity: quantitySold,
+      grossValueUsd: grossValue, netValueUsd: netValueLive,
+      realizedPnlUsd: realizedPnlLive, realizedPnlPct: realizedPnlPctLive,
+    };
+  }
+
   const sellValueUsd = totalQty * currentPrice;
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
   // Lote 4: totalCostBasisUsd = historical cost; fallback to capitalUsedUsd for legacy cycles
@@ -7550,9 +7599,6 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     humanReason: formatOrderReason("manual_sell"),
   });
 
-  if (mode === "live") {
-    await executeRealSell(cycle, "manual_sell", totalQty, true, mode);
-  }
 
   // Lote 4: zero capitalUsedUsd on full close; preserve totalCostBasisUsd as historical
   const prevRealizedCostBasis = parseFloat(String((cycle as any).realizedCostBasisUsd || "0"));

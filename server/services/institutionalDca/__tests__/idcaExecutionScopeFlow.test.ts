@@ -71,6 +71,10 @@ const mocks = vi.hoisted(() => {
     },
     snapshots: { onIdcaEvent: vi.fn() },
     metrics: { onIdcaSample: vi.fn() },
+    reconciler: {
+      submitAndReconcile: vi.fn(),
+      reconcilePendingIntents: vi.fn(async () => []),
+    },
   };
 });
 
@@ -95,6 +99,7 @@ vi.mock("../IdcaTrailingBuyTelegramState", () => mocks.tbState);
 vi.mock("../../TradeSnapshotService", () => ({ tradeSnapshotService: mocks.snapshots }));
 vi.mock("../../TradeMetricsTracker", () => ({ tradeMetricsTracker: mocks.metrics }));
 vi.mock("../IdcaExecutionManager", () => ({ idcaExecutionManager: {} }));
+vi.mock("../IdcaLiveOrderReconciler", () => mocks.reconciler);
 vi.mock("../IdcaMigrationService", () => ({ idcaMigrationService: {} }));
 vi.mock("../IdcaHybridDecisionService", () => ({ idcaHybridDecisionService: {} }));
 
@@ -172,6 +177,18 @@ function resetAll() {
     totalOrdersSimulated: 0,
   });
 
+  mocks.reconciler.submitAndReconcile.mockImplementation(async (params: any) => {
+    await mocks.exchange.placeOrder({ pair: params.pair, type: params.side, volume: params.requestedQty.toFixed(8) });
+    await mocks.repo.updateCycle(params.cycleId, { status: "closed" });
+    await mocks.repo.createOrder({ cycleId: params.cycleId, side: params.side });
+    return {
+      state: "filled", filledQty: params.requestedQty, avgPrice: 100, feesUsd: 0.09,
+      feeSource: "venue", remainingQty: 0, terminal: true,
+      intent: { clientOrderId: "test-intent", exchangeOrderId: "venue-order-1" },
+      newlyAppliedFillIds: [], alreadyApplied: false,
+    };
+  });
+
   mocks.exitRepo.getExitInstructionById.mockResolvedValue(makeInstruction("live"));
   mocks.exitRepo.getActiveExitInstruction.mockResolvedValue(null);
   mocks.exitRepo.markExecuting.mockResolvedValue(true);
@@ -186,6 +203,7 @@ describe("IDCA execution scope flow (P0)", () => {
     it("live válido envía exactamente una orden y escribe contabilidad", async () => {
       await executeExit(makeCycle("live"), makeSignal(), makeConfig("live"), {} as any, "live");
       expect(mocks.exchange.placeOrder).toHaveBeenCalledTimes(1);
+      expect(mocks.reconciler.submitAndReconcile).toHaveBeenCalledTimes(1);
       expect(mocks.repo.updateCycle).toHaveBeenCalledTimes(1);
       expect(mocks.repo.createOrder).toHaveBeenCalledTimes(1);
     });
@@ -222,6 +240,7 @@ describe("IDCA execution scope flow (P0)", () => {
     it("live válido envía exactamente una orden y cierra contabilidad", async () => {
       await manualCloseCycle(1);
       expect(mocks.exchange.placeOrder).toHaveBeenCalledTimes(1);
+      expect(mocks.reconciler.submitAndReconcile).toHaveBeenCalledTimes(1);
       expect(mocks.repo.createOrder).toHaveBeenCalledTimes(1);
       expect(mocks.repo.updateCycle).toHaveBeenCalledTimes(1);
     });
@@ -266,6 +285,7 @@ describe("IDCA execution scope flow (P0)", () => {
       const closed = await emergencyCloseAll();
       expect(closed).toBe(1);
       expect(mocks.exchange.placeOrder).toHaveBeenCalledTimes(1);
+      expect(mocks.reconciler.submitAndReconcile).toHaveBeenCalledTimes(1);
       expect(mocks.repo.updateCycle).toHaveBeenCalledTimes(1);
     });
 
@@ -309,6 +329,7 @@ describe("IDCA execution scope flow (P0)", () => {
     it("live válido envía exactamente una orden y ejecuta contabilidad", async () => {
       await executeExitInstruction(7, 100);
       expect(mocks.exchange.placeOrder).toHaveBeenCalledTimes(1);
+      expect(mocks.reconciler.submitAndReconcile).toHaveBeenCalledTimes(1);
       expect(mocks.repo.updateCycle).toHaveBeenCalledTimes(1);
       expect(mocks.repo.createOrder).toHaveBeenCalledTimes(1);
       expect(mocks.exitRepo.markExecuted).toHaveBeenCalledTimes(1);
