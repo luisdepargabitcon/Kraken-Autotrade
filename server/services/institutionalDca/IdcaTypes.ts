@@ -216,6 +216,9 @@ export interface IdcaEntryCheckResult {
   allowed: boolean;
   blockReasons: IdcaBlockReason[];
   marketScore?: number;
+  marketScoreStatus?: "ok" | "degraded" | "unavailable";
+  marketScoreMissing?: string[];
+  marketScoreRenormalized?: boolean;
   volatilityScore?: number;
   sizeProfile?: IdcaSizeProfile;
   entryDipPct?: number;

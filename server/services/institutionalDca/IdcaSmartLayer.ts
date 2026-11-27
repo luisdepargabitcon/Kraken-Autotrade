@@ -30,65 +30,105 @@ export interface MarketScoreInput {
   btcScore?: number; // only for ETH evaluation
 }
 
-export function computeMarketScore(
+export type MarketScoreComponent = keyof MarketScoreWeights;
+export type MarketScoreAvailability = Partial<Record<MarketScoreComponent, boolean>>;
+export interface MarketScoreDetailedResult {
+  score: number | null;
+  status: "ok" | "degraded" | "unavailable";
+  missing: string[];
+  renormalized: boolean;
+}
+export const MARKET_SCORE_DEGRADED_FAIL_CLOSED = true;
+
+function finiteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+export function computeMarketScoreDetailed(
   input: MarketScoreInput,
-  weights: MarketScoreWeights
-): number {
+  weights: MarketScoreWeights,
+  availability: MarketScoreAvailability = {},
+): MarketScoreDetailedResult {
   const totalWeight =
     weights.ema20_distance + weights.ema50_distance +
     weights.ema20_slope + weights.ema50_slope +
     weights.rsi + weights.relative_volume +
     weights.drawdown_from_high + weights.btc_condition;
+  if (totalWeight === 0) return { score: 50, status: "unavailable", missing: [], renormalized: false };
 
-  if (totalWeight === 0) return 50;
-
-  // EMA20 distance: price below EMA20 is bullish for DCA entry (dip buying)
-  const ema20Dist = ((input.ema20 - input.currentPrice) / input.ema20) * 100;
+  const ema20Dist = finiteNumber(input.ema20) && finiteNumber(input.currentPrice) ? ((input.ema20 - input.currentPrice) / input.ema20) * 100 : NaN;
   const ema20Score = clamp(50 + ema20Dist * 10, 0, 100);
-
-  // EMA50 distance
-  const ema50Dist = ((input.ema50 - input.currentPrice) / input.ema50) * 100;
+  const ema50Dist = finiteNumber(input.ema50) && finiteNumber(input.currentPrice) ? ((input.ema50 - input.currentPrice) / input.ema50) * 100 : NaN;
   const ema50Score = clamp(50 + ema50Dist * 8, 0, 100);
-
-  // EMA20 slope: positive slope means uptrend recovering
-  const ema20Slope = ((input.ema20 - input.prevEma20) / input.prevEma20) * 100;
+  const ema20Slope = finiteNumber(input.ema20) && finiteNumber(input.prevEma20) ? ((input.ema20 - input.prevEma20) / input.prevEma20) * 100 : NaN;
   const ema20SlopeScore = clamp(50 + ema20Slope * 20, 0, 100);
-
-  // EMA50 slope
-  const ema50Slope = ((input.ema50 - input.prevEma50) / input.prevEma50) * 100;
+  const ema50Slope = finiteNumber(input.ema50) && finiteNumber(input.prevEma50) ? ((input.ema50 - input.prevEma50) / input.prevEma50) * 100 : NaN;
   const ema50SlopeScore = clamp(50 + ema50Slope * 15, 0, 100);
 
-  // RSI: lower RSI = better for DCA entry, sweet spot 25-45
-  let rsiScore: number;
-  if (input.rsi <= 30) rsiScore = 90;
-  else if (input.rsi <= 40) rsiScore = 75;
-  else if (input.rsi <= 50) rsiScore = 60;
-  else if (input.rsi <= 60) rsiScore = 40;
-  else if (input.rsi <= 70) rsiScore = 25;
-  else rsiScore = 10;
-
-  // Relative volume: higher = more conviction
-  const volRatio = input.avgVolume > 0 ? input.currentVolume / input.avgVolume : 1;
+  let rsiScore = NaN;
+  if (finiteNumber(input.rsi)) {
+    if (input.rsi <= 30) rsiScore = 90;
+    else if (input.rsi <= 40) rsiScore = 75;
+    else if (input.rsi <= 50) rsiScore = 60;
+    else if (input.rsi <= 60) rsiScore = 40;
+    else if (input.rsi <= 70) rsiScore = 25;
+    else rsiScore = 10;
+  }
+  const volRatio = finiteNumber(input.avgVolume) && input.avgVolume > 0 && finiteNumber(input.currentVolume) ? input.currentVolume / input.avgVolume : NaN;
   const volScore = clamp(volRatio * 50, 0, 100);
-
-  // Drawdown from local high: deeper dip = better entry potential
-  const drawdown = ((input.localHigh - input.currentPrice) / input.localHigh) * 100;
+  const drawdown = finiteNumber(input.localHigh) && finiteNumber(input.currentPrice) ? ((input.localHigh - input.currentPrice) / input.localHigh) * 100 : NaN;
   const ddScore = clamp(drawdown * 15, 0, 100);
+  const btcScore = finiteNumber(input.btcScore) ? input.btcScore : 60;
 
-  // BTC condition (only for ETH): BTC health affects ETH
-  const btcScore = input.btcScore ?? 60;
+  const componentScores: Record<MarketScoreComponent, number> = {
+    ema20_distance: ema20Score,
+    ema50_distance: ema50Score,
+    ema20_slope: ema20SlopeScore,
+    ema50_slope: ema50SlopeScore,
+    rsi: rsiScore,
+    relative_volume: volScore,
+    drawdown_from_high: ddScore,
+    btc_condition: btcScore,
+  };
+  const numericAvailable: Record<MarketScoreComponent, boolean> = {
+    ema20_distance: finiteNumber(input.ema20) && finiteNumber(input.currentPrice),
+    ema50_distance: finiteNumber(input.ema50) && finiteNumber(input.currentPrice),
+    ema20_slope: finiteNumber(input.ema20) && finiteNumber(input.prevEma20),
+    ema50_slope: finiteNumber(input.ema50) && finiteNumber(input.prevEma50),
+    rsi: finiteNumber(input.rsi),
+    relative_volume: finiteNumber(input.currentVolume) && finiteNumber(input.avgVolume) && input.avgVolume > 0,
+    drawdown_from_high: finiteNumber(input.localHigh) && finiteNumber(input.currentPrice),
+    btc_condition: true,
+  };
 
-  const weighted =
-    ema20Score * weights.ema20_distance +
-    ema50Score * weights.ema50_distance +
-    ema20SlopeScore * weights.ema20_slope +
-    ema50SlopeScore * weights.ema50_slope +
-    rsiScore * weights.rsi +
-    volScore * weights.relative_volume +
-    ddScore * weights.drawdown_from_high +
-    btcScore * weights.btc_condition;
+  const missing: string[] = [];
+  let weighted = 0;
+  let availableWeight = 0;
+  for (const key of Object.keys(componentScores) as MarketScoreComponent[]) {
+    const weight = weights[key] || 0;
+    const available = availability[key] !== false && numericAvailable[key];
+    if (!available && weight > 0) missing.push(key);
+    if (available && weight > 0) {
+      weighted += componentScores[key] * weight;
+      availableWeight += weight;
+    }
+  }
+  if (availableWeight <= 0) {
+    return { score: null, status: "unavailable", missing, renormalized: missing.length > 0 };
+  }
+  return {
+    score: clamp(Math.round(weighted / availableWeight), 0, 100),
+    status: missing.length > 0 ? "degraded" : "ok",
+    missing,
+    renormalized: missing.length > 0,
+  };
+}
 
-  return clamp(Math.round(weighted / totalWeight), 0, 100);
+export function computeMarketScore(
+  input: MarketScoreInput,
+  weights: MarketScoreWeights
+): number {
+  return computeMarketScoreDetailed(input, weights).score ?? 50;
 }
 
 // ─── Relative volume inputs (H-017 correction) ─────────────────────
@@ -102,24 +142,75 @@ export function computeMarketScore(
  * - Returns null when volume data is missing or degenerate: callers must
  *   degrade (exclude the volume weight) instead of feeding an artificial 1/1.
  */
+export type RelativeVolumeResult =
+  { available: true; currentVolume: number; avgVolume: number; referenceCount: number; measuredCandleTime: number; source: string }
+  | { available: false; reason: "duplicate_timestamps" | "inconsistent_timeframe" | "last_closed_volume_missing" | "reference_gap" | "reference_missing" | "insufficient_reference" | "zero_reference" | "no_closed_candle" | "stale_candle" };
+
+function candleContentKey(c: TimestampedCandle): string {
+  return [c.open, c.high, c.low, c.close, c.volume].map(v => String(v)).join("|");
+}
+
 export function computeRelativeVolumeInputs(
   candles: TimestampedCandle[],
-  candleDurationMs: number = 3_600_000,
+  source: string,
+  candleDurationMs: number,
+  nowMs: number,
   window: number = 20,
-  nowMs: number = Date.now()
-): { currentVolume: number; avgVolume: number } | null {
-  const closed = candles.filter(
-    (c): c is TimestampedCandle & { volume: number } =>
-      typeof c.volume === "number" && Number.isFinite(c.volume) && c.volume > 0 && c.time + candleDurationMs <= nowMs
-  );
-  if (closed.length < 2) return null;
-  const measured = closed[closed.length - 1];
-  const refStart = Math.max(0, closed.length - 1 - window);
-  const reference = closed.slice(refStart, closed.length - 1);
-  if (reference.length === 0) return null;
-  const avg = reference.reduce((s, c) => s + c.volume, 0) / reference.length;
-  if (!(avg > 0) || !Number.isFinite(avg)) return null;
-  return { currentVolume: measured.volume, avgVolume: avg };
+  minReference: number = 10,
+): RelativeVolumeResult {
+  if (!source || !Number.isFinite(candleDurationMs) || candleDurationMs <= 0 || !Number.isFinite(nowMs)) {
+    return { available: false, reason: "inconsistent_timeframe" };
+  }
+  const sorted = [...candles].filter(c => Number.isFinite(c.time)).sort((a, b) => a.time - b.time);
+  const deduped: TimestampedCandle[] = [];
+  for (const c of sorted) {
+    const prev = deduped[deduped.length - 1];
+    if (prev && prev.time === c.time) {
+      if (candleContentKey(prev) !== candleContentKey(c)) return { available: false, reason: "duplicate_timestamps" };
+      continue;
+    }
+    deduped.push(c);
+  }
+  for (const c of deduped) {
+    if (c.time % candleDurationMs !== 0) return { available: false, reason: "inconsistent_timeframe" };
+  }
+  for (let i = 1; i < deduped.length; i++) {
+    if ((deduped[i].time - deduped[i - 1].time) % candleDurationMs !== 0) return { available: false, reason: "inconsistent_timeframe" };
+  }
+
+  let measuredIndex = -1;
+  for (let i = deduped.length - 1; i >= 0; i--) {
+    if (deduped[i].time + candleDurationMs <= nowMs) { measuredIndex = i; break; }
+  }
+  if (measuredIndex < 0) return { available: false, reason: "no_closed_candle" };
+  const measured = deduped[measuredIndex];
+  if (measured.time + candleDurationMs * 2 < nowMs) return { available: false, reason: "stale_candle" };
+  if (typeof measured.volume !== "number" || !Number.isFinite(measured.volume) || measured.volume < 0) {
+    return { available: false, reason: "last_closed_volume_missing" };
+  }
+
+  const reference: TimestampedCandle[] = [];
+  for (let i = measuredIndex - 1; i >= 0 && reference.length < window; i--) {
+    reference.unshift(deduped[i]);
+  }
+  if (reference.length < minReference) return { available: false, reason: "insufficient_reference" };
+  for (let i = 0; i < reference.length; i++) {
+    const expected = measured.time - candleDurationMs * (reference.length - i);
+    if (reference[i].time !== expected) return { available: false, reason: "reference_gap" };
+    const v = reference[i].volume;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return { available: false, reason: "reference_missing" };
+  }
+  const avg = reference.reduce((sum, c) => sum + (c.volume as number), 0) / reference.length;
+  if (avg === 0) return { available: false, reason: "zero_reference" };
+  if (!Number.isFinite(avg) || avg < 0) return { available: false, reason: "reference_missing" };
+  return {
+    available: true,
+    currentVolume: measured.volume,
+    avgVolume: avg,
+    referenceCount: reference.length,
+    measuredCandleTime: measured.time,
+    source,
+  };
 }
 
 // ─── Volatility-based Trailing ─────────────────────────────────────
@@ -183,6 +274,27 @@ export function computeEMA(values: number[], period: number): number[] {
     ema.push(values[i] * k + ema[i - 1] * (1 - k));
   }
   return ema;
+}
+
+export const EMA_WARMUP_FACTOR = 2;
+
+export function computeEmaStrict(
+  values: number[],
+  period: number,
+  opts: { warmupFactor?: number } = {},
+): { available: true; series: number[]; warmup: number } | { available: false; reason: "insufficient_history"; have: number; need: number } {
+  const factor = opts.warmupFactor ?? EMA_WARMUP_FACTOR;
+  const need = period * factor;
+  const clean = values.filter(v => Number.isFinite(v));
+  if (clean.length < need) return { available: false, reason: "insufficient_history", have: clean.length, need };
+  const k = 2 / (period + 1);
+  const seed = clean.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  const series: number[] = new Array(period - 1).fill(NaN);
+  series.push(seed);
+  for (let i = period; i < clean.length; i++) {
+    series.push(clean[i] * k + series[i - 1] * (1 - k));
+  }
+  return { available: true, series, warmup: need };
 }
 
 // ─── RSI Calculation ───────────────────────────────────────────────

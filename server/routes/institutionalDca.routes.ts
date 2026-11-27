@@ -2338,6 +2338,18 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             ? ((referencePrice - currentPrice) / referencePrice) * 100
             : 0;
 
+          const btcCandles = pair === "ETH/USD" ? await MarketDataService.getCandles("BTC/USD", "1h") : [];
+          const marketQuality = engine.evaluateEntryMarketScoreQuality({
+            pair,
+            currentPrice,
+            scoreCandles: candles as any,
+            btcCandles: btcCandles as any,
+            weights: (globalConfig.marketScoreWeightsJson || {}) as any,
+            localHigh: referencePrice,
+            nowMs: Date.now(),
+          });
+          const diagnosticMarketScore = marketQuality.detailed.score ?? 0;
+
           // Resolver real de distancia — refleja el mismo valor que usa el motor
           const distanceResult = resolveIdcaRequiredDistance({
             pair,
@@ -2348,7 +2360,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             entryGlobalConfig: { entryUiJson: globalConfig.entryUiJson },
             dynamicDistanceConfig: ddCfg,
             buyCount: 0,
-            marketScore: 60,
+            marketScore: diagnosticMarketScore,
             candleCount: candles.length,
             capitalUsedUsd: 0,
             capitalReservedUsd: 0,
@@ -2374,7 +2386,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             capitalUsedUsd: 0,
             capitalReservedUsd: 0,
             buyCount: 0,
-            marketScore: 60,
+            marketScore: diagnosticMarketScore,
             atrPct,
             candleCount: candles.length,
             atrReliable: candles.length >= 14,
@@ -2467,6 +2479,10 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             sliderBasePct: +(distanceResult.breakdown.sliderBasePct ?? entryConfig.effectiveMinDipPct).toFixed(2),
             atrPct: +atrPct.toFixed(3),
             candleCount: candles.length,
+            marketScore: diagnosticMarketScore,
+            marketScoreStatus: marketQuality.detailed.status,
+            marketScoreMissing: marketQuality.detailed.missing,
+            marketScoreRenormalized: marketQuality.detailed.renormalized,
             decisionClass: confluenceResult.decisionClass,
             confidenceScore: confluenceResult.confidenceScore,
             confidenceGrade: confluenceResult.confidenceGrade,

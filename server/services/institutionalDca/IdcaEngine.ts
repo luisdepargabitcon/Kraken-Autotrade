@@ -3850,6 +3850,98 @@ async function executeBreakevenExit(
 
 // ─── Entry Check Logic ─────────────────────────────────────────────
 
+
+export interface EntryMarketScoreQualityInput {
+  pair: string;
+  currentPrice: number;
+  scoreCandles: TimestampedCandle[];
+  btcCandles?: TimestampedCandle[];
+  weights: smart.MarketScoreInput & Record<string, number>;
+  localHigh: number;
+  nowMs: number;
+}
+
+function finiteOrNaN(v: number | undefined): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : NaN;
+}
+
+function buildMarketScoreInputFromCandles(
+  candles: TimestampedCandle[],
+  currentPrice: number,
+  localHigh: number,
+  nowMs: number,
+) {
+  const closes = candles.map(c => c.close);
+  const ema20Strict = smart.computeEmaStrict(closes, 20);
+  const ema50Strict = smart.computeEmaStrict(closes, 50);
+  const ema20Legacy = smart.computeEMA(closes, 20);
+  const ema50Legacy = smart.computeEMA(closes, 50);
+  const volInputs = smart.computeRelativeVolumeInputs(candles, "idca_ohlcv_cache", 3_600_000, nowMs);
+  const ema20Series = ema20Strict.available ? ema20Strict.series : ema20Legacy;
+  const ema50Series = ema50Strict.available ? ema50Strict.series : ema50Legacy;
+  const input: smart.MarketScoreInput = {
+    currentPrice,
+    ema20: finiteOrNaN(ema20Series[ema20Series.length - 1]),
+    ema50: finiteOrNaN(ema50Series[ema50Series.length - 1]),
+    prevEma20: finiteOrNaN(ema20Series[Math.max(0, ema20Series.length - 2)]),
+    prevEma50: finiteOrNaN(ema50Series[Math.max(0, ema50Series.length - 2)]),
+    rsi: smart.computeRSI(closes),
+    currentVolume: volInputs.available ? volInputs.currentVolume : NaN,
+    avgVolume: volInputs.available ? volInputs.avgVolume : NaN,
+    localHigh,
+  };
+  const availability: smart.MarketScoreAvailability = {
+    ema20_distance: ema20Strict.available,
+    ema20_slope: ema20Strict.available,
+    ema50_distance: ema50Strict.available,
+    ema50_slope: ema50Strict.available,
+    relative_volume: volInputs.available,
+  };
+  return { input, availability, ema20Strict, ema50Strict, volInputs, rsi: input.rsi };
+}
+
+export function marketScoreEntryBlock(detailed: smart.MarketScoreDetailedResult, allowDegradedMarketScore: boolean): { code: "market_score_unavailable" | "market_score_degraded"; message: string } | null {
+  if (allowDegradedMarketScore) return null;
+  if (detailed.status === "unavailable") return { code: "market_score_unavailable", message: `Market score unavailable; missing=${detailed.missing.join(",") || "inputs"}` };
+  if (detailed.status === "degraded") return { code: "market_score_degraded", message: `Market score degraded; missing=${detailed.missing.join(",")}` };
+  return null;
+}
+
+export function evaluateEntryMarketScoreQuality(args: EntryMarketScoreQualityInput): {
+  detailed: smart.MarketScoreDetailedResult;
+  btcScore?: number;
+  volume: ReturnType<typeof smart.computeRelativeVolumeInputs>;
+} {
+  const pairQuality = buildMarketScoreInputFromCandles(args.scoreCandles, args.currentPrice, args.localHigh, args.nowMs);
+  let btcScore: number | undefined;
+  if (args.pair === "ETH/USD") {
+    const btcCandles = args.btcCandles || [];
+    if (btcCandles.length > 0) {
+      const btcHigh = Math.max(...btcCandles.map(c => c.close).slice(-60));
+      const btcPrice = btcCandles[btcCandles.length - 1]?.close ?? args.currentPrice;
+      const btcQuality = buildMarketScoreInputFromCandles(btcCandles, btcPrice, btcHigh, args.nowMs);
+      const btcDetailed = smart.computeMarketScoreDetailed(
+        { ...btcQuality.input, btcScore: undefined },
+        args.weights as any,
+        { ...btcQuality.availability, btc_condition: true },
+      );
+      // Para que BTC sea un contexto fiable debe tener también su EMA50 real.
+      if (btcQuality.ema50Strict.available && btcDetailed.status === "ok" && btcDetailed.score !== null) {
+        btcScore = btcDetailed.score;
+      }
+    }
+  }
+  const detailed = smart.computeMarketScoreDetailed(
+    { ...pairQuality.input, btcScore },
+    args.weights as any,
+    {
+      ...pairQuality.availability,
+      btc_condition: args.pair === "ETH/USD" ? btcScore !== undefined : true,
+    },
+  );
+  return { detailed, btcScore, volume: pairQuality.volInputs };
+}
+
 async function performEntryCheck(
   pair: string,
   currentPrice: number,
@@ -4402,72 +4494,39 @@ async function performEntryCheck(
   let volatilityScore = 0;
   let sizeProfile: IdcaSizeProfile = "balanced";
   let btcScoreForConfluence: number | undefined;
+  let marketScoreStatus: "ok" | "degraded" | "unavailable" | undefined;
+  let marketScoreMissing: string[] = [];
+  let marketScoreRenormalized = false;
 
   if (config.smartModeEnabled) {
     const scoreCandles = ohlcCache.get(pair) || [];
-    if (scoreCandles.length >= 20) {
+    if (scoreCandles.length > 0) {
       const closes = scoreCandles.map(c => c.close);
-      const ema20 = smart.computeEMA(closes, 20);
-      const ema50 = smart.computeEMA(closes, Math.min(50, closes.length));
-      const rsi = smart.computeRSI(closes);
       const atrPct = smart.computeATRPct(scoreCandles);
       volatilityScore = atrPct;
 
       const weights = (config.marketScoreWeightsJson || {}) as smart.MarketScoreInput & Record<string, number>;
-
-      // Use basePriceResult as the reference high for score computation
       const scoreLocalHigh = basePriceResult.price > 0 ? basePriceResult.price : Math.max(...closes.slice(-60));
-
-      // Get BTC score for ETH
-      let btcScore: number | undefined;
-      if (pair === "ETH/USD") {
-        const btcScoreCandles = ohlcCache.get("BTC/USD") || [];
-        if (btcScoreCandles.length >= 20) {
-          const btcCloses = btcScoreCandles.map(c => c.close);
-          const btcEma20 = smart.computeEMA(btcCloses, 20);
-          // H-016: EMA50 must be the real 50-period EMA of BTC, not a shifted EMA20.
-          const btcEma50 = smart.computeEMA(btcCloses, Math.min(50, btcCloses.length));
-          const btcRsi = smart.computeRSI(btcCloses);
-          // H-017: real relative volume; when unavailable, degrade by dropping
-          // the volume weight instead of feeding an artificial 1/1 ratio.
-          const btcVolInputs = smart.computeRelativeVolumeInputs(btcScoreCandles);
-          const btcWeights = { ...(config.marketScoreWeightsJson as any) };
-          if (!btcVolInputs) btcWeights.relative_volume = 0;
-          btcScore = smart.computeMarketScore({
-            currentPrice: btcCloses[btcCloses.length - 1],
-            ema20: btcEma20[btcEma20.length - 1],
-            ema50: btcEma50[btcEma50.length - 1],
-            prevEma20: btcEma20[Math.max(0, btcEma20.length - 2)],
-            prevEma50: btcEma50[Math.max(0, btcEma50.length - 2)],
-            rsi: btcRsi,
-            currentVolume: btcVolInputs?.currentVolume ?? 0,
-            avgVolume: btcVolInputs?.avgVolume ?? 0,
-            localHigh: Math.max(...btcCloses.slice(-60)),
-          }, btcWeights);
-          btcScoreForConfluence = btcScore;
-        }
-      }
-
-      // H-017: real relative volume; degrade by dropping the volume weight
-      // when volume data is missing instead of feeding an artificial 1/1.
-      const volInputs = smart.computeRelativeVolumeInputs(scoreCandles);
-      const pairWeights = { ...(config.marketScoreWeightsJson as any) };
-      if (!volInputs) pairWeights.relative_volume = 0;
-      marketScore = smart.computeMarketScore({
+      const quality = evaluateEntryMarketScoreQuality({
+        pair,
         currentPrice,
-        ema20: ema20[ema20.length - 1],
-        ema50: ema50[ema50.length - 1],
-        prevEma20: ema20[Math.max(0, ema20.length - 2)],
-        prevEma50: ema50[Math.max(0, ema50.length - 2)],
-        rsi,
-        currentVolume: volInputs?.currentVolume ?? 0,
-        avgVolume: volInputs?.avgVolume ?? 0,
+        scoreCandles,
+        btcCandles: ohlcCache.get("BTC/USD") || [],
+        weights,
         localHigh: scoreLocalHigh,
-        btcScore,
-      }, pairWeights);
+        nowMs: Date.now(),
+      });
+      const detailed = quality.detailed;
+      btcScoreForConfluence = quality.btcScore;
+      marketScore = detailed.score ?? 0;
+      marketScoreStatus = detailed.status;
+      marketScoreMissing = detailed.missing;
+      marketScoreRenormalized = detailed.renormalized;
 
-      if (marketScore < 50) {
-        blocks.push({ code: "market_score_too_low", message: `Score ${marketScore} < 50`, timestamp: now });
+      const qualityBlock = marketScoreEntryBlock(detailed, (weights as any).allowDegradedMarketScore === true);
+      if (qualityBlock) blocks.push({ ...qualityBlock, timestamp: now });
+      if (detailed.score !== null && detailed.score < 50) {
+        blocks.push({ code: "market_score_too_low", message: `Score ${detailed.score} < 50`, timestamp: now });
       }
 
       sizeProfile = config.adaptivePositionSizingEnabled
@@ -4603,6 +4662,9 @@ async function performEntryCheck(
     allowed: blocks.length === 0,
     blockReasons: blocks,
     marketScore,
+    marketScoreStatus,
+    marketScoreMissing,
+    marketScoreRenormalized,
     volatilityScore,
     sizeProfile,
     entryDipPct,
