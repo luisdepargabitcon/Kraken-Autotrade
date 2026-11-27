@@ -3,6 +3,102 @@
  * No side effects, no dependencies. Used by TradingEngine, RegimeManager, etc.
  */
 
+import { macd as coreMacd, rsiWilder as coreRsiWilder } from "./indicators/core";
+
+export const INDICATOR_SHADOW_COMPARE_DEFAULT = false;
+
+export interface IndicatorShadowOptions {
+  shadowCompare?: boolean;
+}
+
+interface IndicatorShadowMetricStats {
+  comparisons: number;
+  finiteComparisons: number;
+  maxAbsDelta: number;
+  lastAbsDelta: number | null;
+  nonFiniteComparisons: number;
+  signDisagreements: number;
+}
+
+export interface IndicatorShadowStats {
+  shadowWorkUnits: number;
+  rsi: IndicatorShadowMetricStats;
+  macdLine: IndicatorShadowMetricStats;
+  macdSignal: IndicatorShadowMetricStats;
+  macdHistogram: IndicatorShadowMetricStats;
+}
+
+function emptyShadowMetricStats(): IndicatorShadowMetricStats {
+  return {
+    comparisons: 0,
+    finiteComparisons: 0,
+    maxAbsDelta: 0,
+    lastAbsDelta: null,
+    nonFiniteComparisons: 0,
+    signDisagreements: 0,
+  };
+}
+
+const shadowStats: IndicatorShadowStats = {
+  shadowWorkUnits: 0,
+  rsi: emptyShadowMetricStats(),
+  macdLine: emptyShadowMetricStats(),
+  macdSignal: emptyShadowMetricStats(),
+  macdHistogram: emptyShadowMetricStats(),
+};
+
+function shadowEnabled(options?: IndicatorShadowOptions): boolean {
+  return options?.shadowCompare ?? INDICATOR_SHADOW_COMPARE_DEFAULT;
+}
+
+function recordShadowMetric(
+  metric: IndicatorShadowMetricStats,
+  productiveValue: number,
+  referenceValue: number | null,
+): void {
+  metric.comparisons += 1;
+  shadowStats.shadowWorkUnits += 1;
+  if (referenceValue === null || !Number.isFinite(productiveValue) || !Number.isFinite(referenceValue)) {
+    metric.nonFiniteComparisons += 1;
+    return;
+  }
+  const delta = Math.abs(productiveValue - referenceValue);
+  metric.finiteComparisons += 1;
+  metric.lastAbsDelta = delta;
+  metric.maxAbsDelta = Math.max(metric.maxAbsDelta, delta);
+  if ((productiveValue > 0 && referenceValue < 0) || (productiveValue < 0 && referenceValue > 0)) {
+    metric.signDisagreements += 1;
+  }
+}
+
+function logShadowDiagnostics(): void {
+  if (shadowStats.shadowWorkUnits > 0 && shadowStats.shadowWorkUnits % 100 === 0) {
+    console.debug("[indicators-shadow] diagnóstico agregado", getIndicatorShadowStats());
+  }
+}
+
+export function getIndicatorShadowStats(): IndicatorShadowStats {
+  return {
+    shadowWorkUnits: shadowStats.shadowWorkUnits,
+    rsi: { ...shadowStats.rsi },
+    macdLine: { ...shadowStats.macdLine },
+    macdSignal: { ...shadowStats.macdSignal },
+    macdHistogram: { ...shadowStats.macdHistogram },
+  };
+}
+
+export function resetIndicatorShadowStats(): void {
+  shadowStats.shadowWorkUnits = 0;
+  for (const metric of [
+    shadowStats.rsi,
+    shadowStats.macdLine,
+    shadowStats.macdSignal,
+    shadowStats.macdHistogram,
+  ]) {
+    Object.assign(metric, emptyShadowMetricStats());
+  }
+}
+
 // === Types ===
 
 export interface PriceData {
@@ -36,7 +132,7 @@ export function calculateEMA(prices: number[], period: number): number {
 
 // === RSI ===
 
-export function calculateRSI(prices: number[]): number {
+export function calculateRSI(prices: number[], options: IndicatorShadowOptions = {}): number {
   if (prices.length < 2) return 50;
 
   let gains = 0, losses = 0;
@@ -49,9 +145,13 @@ export function calculateRSI(prices: number[]): number {
   const avgGain = gains / (prices.length - 1);
   const avgLoss = losses / (prices.length - 1);
 
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+  const result = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  if (shadowEnabled(options)) {
+    const reference = coreRsiWilder(prices, 14, { flatPolicy: "unreliable" });
+    recordShadowMetric(shadowStats.rsi, result, reference.reliable ? reference.value : null);
+    logShadowDiagnostics();
+  }
+  return result;
 }
 
 // === Volatility (CV%) ===
@@ -65,7 +165,10 @@ export function calculateVolatility(prices: number[]): number {
 
 // === MACD ===
 
-export function calculateMACD(prices: number[]): { macd: number; signal: number; histogram: number } {
+export function calculateMACD(
+  prices: number[],
+  options: IndicatorShadowOptions = {},
+): { macd: number; signal: number; histogram: number } {
   if (prices.length < 26) {
     return { macd: 0, signal: 0, histogram: 0 };
   }
@@ -83,8 +186,18 @@ export function calculateMACD(prices: number[]): { macd: number; signal: number;
 
   const signal = macdHistory.length >= 9 ? calculateEMA(macdHistory.slice(-9), 9) : 0;
   const histogram = macd - signal;
+  const result = { macd, signal, histogram };
 
-  return { macd, signal, histogram };
+  if (shadowEnabled(options)) {
+    const reference = coreMacd(prices);
+    const last = prices.length - 1;
+    recordShadowMetric(shadowStats.macdLine, result.macd, reference.line[last]);
+    recordShadowMetric(shadowStats.macdSignal, result.signal, reference.signal[last]);
+    recordShadowMetric(shadowStats.macdHistogram, result.histogram, reference.histogram[last]);
+    logShadowDiagnostics();
+  }
+
+  return result;
 }
 
 // === Bollinger Bands ===
