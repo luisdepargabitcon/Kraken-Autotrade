@@ -275,56 +275,13 @@ export const registerMarketRoutes: RegisterRoutes = (app, _deps) => {
     }
   });
 
-  app.post("/api/trade", async (req, res) => {
-    try {
-      if (String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() !== 'true') {
-        return res.status(403).json({
-          error: 'TRADING_DISABLED',
-          message: 'Trading deshabilitado por kill-switch (TRADING_ENABLED!=true).',
-        });
-      }
-
-      if (!krakenService.isInitialized()) {
-        return res.status(400).json({ error: "Kraken not configured" });
-      }
-
-      const { pair, type, ordertype, volume, price } = req.body;
-      
-      const tradeId = `T-${Date.now()}`;
-      
-      const trade = await storage.createTrade({
-        tradeId,
-        exchange: 'kraken',
-        origin: 'manual',  // Manual API call
-        pair,
-        type,
-        price: price || "0",
-        amount: volume,
-        status: "pending",
-      });
-
-      const order = await krakenService.placeOrder({
-        pair,
-        type,
-        ordertype,
-        volume,
-        price,
-      });
-
-      await storage.updateTradeStatus(tradeId, "filled", (order as any).txid?.[0]);
-      
-      await telegramService.sendTradeNotification({
-        type,
-        pair,
-        price: price || "market",
-        amount: volume,
-        status: "filled",
-      });
-
-      res.json({ success: true, trade, order });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to place trade" });
-    }
+  // Kraken es solo fuente de datos: esta ruta legacy no puede ejecutar. Se rechaza antes de crear
+  // ningún registro de trade para no dejar operaciones "pending" huérfanas.
+  app.post("/api/trade", async (_req, res) => {
+    res.status(410).json({
+      error: 'KRAKEN_EXECUTION_FORBIDDEN',
+      message: 'Kraken es solo fuente de datos; use /api/trade/revolutx (Revolut X, único venue de ejecución).',
+    });
   });
 
   // Endpoint para trading con RevolutX
