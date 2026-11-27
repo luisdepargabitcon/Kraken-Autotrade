@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { authV2WebSocketToken } from "@/lib/authV2";
 
 export interface LogLine {
   id: number;
@@ -42,6 +43,8 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
 
   const getAuthToken = useCallback((): string | null => {
     try {
+      const authV2 = authV2WebSocketToken();
+      if (authV2) return authV2;
       const token = localStorage.getItem("TERMINAL_TOKEN");
       return token && token.trim() ? token.trim() : null;
     } catch (e) {

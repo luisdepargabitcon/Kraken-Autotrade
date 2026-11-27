@@ -3,6 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine, ChevronLeft, ChevronRight, ArrowUpToLine } from "lucide-react";
 import { formatLevelEs, formatSourceEs, formatRawDetails, formatStatusEs, formatNaturalMessageEs } from "./spotTerminalSpanishFormatter";
+import { apiRequest } from "@/lib/queryClient";
+import { authV2WebSocketToken } from "@/lib/authV2";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -75,7 +77,7 @@ export function SpotTerminalPanel() {
 
   const fetchTicket = async (): Promise<string | null> => {
     try {
-      const res = await fetch("/api/spot/terminal-ticket", { method: "POST" });
+      const res = await apiRequest("POST", "/api/spot/terminal-ticket", {});
       if (!res.ok) return null;
       const data = await res.json();
       return data.ticket ?? null;
@@ -126,7 +128,8 @@ export function SpotTerminalPanel() {
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws/spot-terminal?ticket=${encodeURIComponent(ticket)}`;
+    const authToken = authV2WebSocketToken();
+    const url = `${protocol}//${window.location.host}/ws/spot-terminal?ticket=${encodeURIComponent(ticket)}${authToken ? `&token=${encodeURIComponent(authToken)}` : ""}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     setStatus("CONNECTING");
