@@ -7887,3 +7887,20 @@ El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como
 ### Estado final
 - AMA_TRUE_FINAL_COMPLETION=PASS
 
+
+## 2026-11-27 — PROTOCOLO 1 #20 (R2): auditoría Market Data, fuentes y LOW_API (SOLO LECTURA)
+
+- Informe y matrices: `AUDITORIAS/MARKET_DATA_2026-11-27/` (INFORME, FUENTES, FLUJO_CONSUMIDORES, CALIDAD_INDICADORES, SEGURIDAD_LOW_API, EVIDENCIAS).
+- Runtime staging = `3ae1831` (`integration/staging-spot-v4`, imagen 2026-09-20), no desciende de main `47d79db`.
+- P0: `POST /api/trade` con Kraken directo, API sin auth accesible en :3020, claves Kraken presentes, `TRADING_ENABLED` sin definir; IDCA `executeExit` sin guard de modo.
+- LOW_API: GRID SHADOW consulta getBalance/getTicker de Revolut X en cada planificación (5715 GET 401 en 28,5 h); 429 en fills y trades.
+- Market Metrics activo pero con 0 evaluaciones; defectos OI/funding/stale. IDCA: EMA50 BTC→ETH y volumen 1/1.
+- Sin cambios de código, configuración ni DB. Incidente E-099 (fichero temporal en /tmp del VPS, borrado). Estado: SIN APROBAR, pendiente TANGO.
+
+## 2026-11-27 — PROTOCOLO 1 #20: continuación TANGO (documental, solo análisis local)
+
+- Misma rama/PR #21. Entregables actualizados y saneados (el repo es público): sin detalle operativo de red ni reproducción de la exposición; el detalle va por canal privado al propietario.
+- Matriz de ejecución completa estática: R8 IdcaExecutionManager sin llamador operativo ni guard (H-033); R9 IdcaExitExecutor correcto por modo; AMA real no cableada y SPOT REAL bloqueado compile-time (H-034); positions close sin guard simétrico (H-028).
+- Auditoría numérica VWAP/Bollinger/MACD/RSI con fixtures autocontenidos 17/17 (E-045): VWAP correcto; percentB NaN en plano (H-030); MACD truncado ~30% y 24% de signos en desacuerdo (H-031); RSI dual indicators.ts vs Wilder (H-032).
+- Matices TANGO aplicados: 0 evaluaciones Market Metrics consistente con 0 invocaciones (gate solo en legacy deshabilitado); cruce 8/519 es del score BTC aislado, no compras ETH; recuento de bloqueos sin causalidad; H-025 exige reconciliación; H-014/H-027 causas como hipótesis.
+- Nuevo PLAN_CORRECCION.md por fases preservando la gestión legítima. Sin acceso nuevo al VPS, sin cambios operativos. Estado: SIN APROBAR, pendiente nueva revisión TANGO.
