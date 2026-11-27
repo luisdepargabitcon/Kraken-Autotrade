@@ -2,6 +2,13 @@ import crypto from 'crypto';
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata, SubmissionState } from './IExchangeService';
 import { errorAlertService, ErrorAlertService } from '../ErrorAlertService';
 import { balanceCache } from './BalanceCache';
+import {
+  RevolutXRequestScheduler,
+  REVOLUTX_PRIORITY,
+  normalizeSingleFlightKey,
+  type RevolutXPriority,
+  type ScheduledHttpResponse,
+} from './RevolutXRequestScheduler';
 
 const API_BASE_URL = 'https://revx.revolut.com';
 const REVOLUTX_MIN_TIME_MS = parseInt(process.env.REVOLUTX_MIN_TIME_MS || '250', 10);
@@ -178,6 +185,12 @@ export class RevolutXService implements IExchangeService {
   public readonly takerFeePct = 0.09;
   public readonly makerFeePct = 0.00;
 
+  private readonly requestScheduler = new RevolutXRequestScheduler({
+    // Unit/integration tests stub global fetch but do not advance the production
+    // spacing timer; scheduler-specific tests cover spacing with an injected clock.
+    minTimeMs: process.env.VITEST ? 0 : REVOLUTX_MIN_TIME_MS,
+  });
+
   // Circuit breaker para endpoints rotos
   private circuitBreakers = new Map<string, {
     isOpen: boolean;
@@ -189,21 +202,19 @@ export class RevolutXService implements IExchangeService {
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
   private pairConstraintsCache = new Map<string, { value: RevolutXPairConstraints; expiresAt: number }>();
 
-  // Rate limiter — cola FIFO para serializar peticiones privadas
-  private rlQueue: Array<{ fn: () => Promise<any>; resolve: (v: any) => void; reject: (e: any) => void; enqueuedAt: number }> = [];
-  private rlRunning = 0;
-  private rlLastCallTime = 0;
-  private rlTotalCalls = 0;
-
-  private async signedGetJson<T>(path: string, params?: Record<string, string | number | undefined>, orderedKeys?: string[]): Promise<T> {
+  private async signedGetJson<T>(path: string, params?: Record<string, string | number | undefined>, orderedKeys?: string[], retryable = true): Promise<T> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
     const queryString = params && orderedKeys ? this.buildQueryString(params, orderedKeys) : '';
     const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
-    const headers = this.getHeaders('GET', path, queryString, '');
-
     try {
-      const response = await fetch(fullUrl, { headers });
+      const response = await this.signedFetch({
+        method: 'GET',
+        path,
+        queryString,
+        priority: REVOLUTX_PRIORITY.P3_HISTORY,
+        retryable,
+      });
       if (!response.ok) {
         const statusText = typeof response.statusText === "string" ? response.statusText.trim() : "";
         throw new Error(
@@ -409,6 +420,45 @@ export class RevolutXService implements IExchangeService {
     return parts.join('&');
   }
 
+  private async signedFetch(input: {
+    method: "GET" | "POST" | "DELETE";
+    path: string;
+    queryString?: string;
+    body?: string;
+    priority: RevolutXPriority;
+    endpoint?: string;
+    singleFlight?: boolean;
+    retryable?: boolean;
+  }): Promise<ScheduledHttpResponse> {
+    const endpoint = input.endpoint ?? input.path;
+    if (this.checkCircuitBreaker(endpoint)) {
+      throw new Error(`RevolutX circuit breaker open for ${endpoint}`);
+    }
+
+    const queryString = input.queryString ?? '';
+    const fullUrl = `${API_BASE_URL}${input.path}${queryString ? `?${queryString}` : ''}`;
+    const method = input.method.toUpperCase();
+
+    return this.requestScheduler.schedule({
+      method,
+      endpoint,
+      priority: input.priority,
+      retryable: input.retryable,
+      singleFlightKey: method === 'GET' && input.singleFlight !== false
+        ? normalizeSingleFlightKey(method, input.path, queryString)
+        : undefined,
+      onAuthFailure: failedEndpoint => this.recordFailure(failedEndpoint),
+      requestFactory: () => ({
+        url: fullUrl,
+        init: {
+          method,
+          headers: this.getHeaders(method, input.path, queryString, input.body ?? ''),
+          ...(input.body !== undefined ? { body: input.body } : {}),
+        },
+      }),
+    });
+  }
+
   async listPrivateTrades(params: {
     symbol: string;
     startMs?: number;
@@ -432,25 +482,21 @@ export class RevolutXService implements IExchangeService {
       ['start_date', 'end_date', 'cursor', 'limit']
     );
 
-    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
-    const headers = this.getHeaders('GET', path, queryString, '');
-
     try {
-      const response = await fetch(fullUrl, { headers });
+      const response = await this.signedFetch({
+        method: 'GET',
+        path,
+        queryString,
+        priority: REVOLUTX_PRIORITY.P1_RECONCILIATION,
+      });
 
       if (!response.ok) {
         const errorText = await response.text();
         if (params.debug) {
-          const timestamp = headers['X-Revx-Timestamp'] || '';
-          const message = timestamp + 'GET' + path + (queryString || '') + '';
-          const msgHash = crypto.createHash('sha256').update(message).digest('hex');
-          const sigPrefix = (headers['X-Revx-Signature'] || '').slice(0, 12);
           console.error('[revolutx] listPrivateTrades DEBUG:', {
             status: response.status,
             path,
             queryString,
-            msgHash,
-            sigPrefix,
           });
         }
         console.error('[revolutx] listPrivateTrades response:', response.status, errorText);
@@ -478,43 +524,8 @@ export class RevolutXService implements IExchangeService {
     }
   }
 
-  /**
-   * Rate-limited queue for RevolutX private API calls.
-   * Ensures minimum delay between requests to avoid rate limits.
-   */
-  private scheduleRL<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      this.rlQueue.push({ fn, resolve, reject, enqueuedAt: Date.now() });
-      void this.drainRL();
-    });
-  }
-
-  private async drainRL(): Promise<void> {
-    if (this.rlRunning >= 1 || this.rlQueue.length === 0) return;
-    this.rlRunning++;
-    const task = this.rlQueue.shift()!;
-
-    const now = Date.now();
-    const wait = REVOLUTX_MIN_TIME_MS - (now - this.rlLastCallTime);
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
-
-    this.rlLastCallTime = Date.now();
-    this.rlTotalCalls++;
-    const startMs = Date.now();
-    try {
-      task.resolve(await task.fn());
-    } catch (err: any) {
-      const durationMs = Date.now() - startMs;
-      console.log(`[RevolutXRL] ERROR duration=${durationMs}ms err=${err?.message?.slice(0, 80)}`);
-      task.reject(err);
-    } finally {
-      this.rlRunning--;
-      void this.drainRL();
-    }
-  }
-
-  getRateLimiterStats(): { queueLength: number; totalCalls: number } {
-    return { queueLength: this.rlQueue.length, totalCalls: this.rlTotalCalls };
+  getRateLimiterStats() {
+    return this.requestScheduler.getStats();
   }
 
   async getBalance(): Promise<Record<string, number>> {
@@ -525,12 +536,15 @@ export class RevolutXService implements IExchangeService {
     const cached = balanceCache.get('revolutx');
     if (cached) return cached;
 
-    return balanceCache.getOrFetchCoalesced('revolutx', () => this.scheduleRL(async () => {
+    return balanceCache.getOrFetchCoalesced('revolutx', async () => {
       const path = '/api/1.0/balances';
-      const headers = this.getHeaders('GET', path);
 
       try {
-        const response = await fetch(API_BASE_URL + path, { headers });
+        const response = await this.signedFetch({
+          method: 'GET',
+          path,
+          priority: REVOLUTX_PRIORITY.P2_BALANCE,
+        });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -550,13 +564,12 @@ export class RevolutXService implements IExchangeService {
         }
 
         console.log('[revolutx] Balances fetched:', Object.keys(balances).length, 'currencies');
-        balanceCache.set('revolutx', balances);
         return balances;
       } catch (error: any) {
         console.error('[revolutx] getBalance error:', error.message);
         throw error;
       }
-    }));
+    });
   }
 
   async getTicker(pair: string): Promise<Ticker> {
@@ -742,15 +755,16 @@ export class RevolutXService implements IExchangeService {
     }
     
     const body = JSON.stringify(orderBody);
-    const headers = this.getHeaders('POST', path, '', body);
-    
+
     console.log('[revolutx] Placing order:', JSON.stringify(orderBody, null, 2));
-    
+
     try {
-      const response = await fetch(API_BASE_URL + path, {
+      const response = await this.signedFetch({
         method: 'POST',
-        headers,
-        body
+        path,
+        body,
+        priority: REVOLUTX_PRIORITY.P0_EXECUTION,
+        singleFlight: false,
       });
       
       const data = await response.json() as any;
@@ -873,12 +887,13 @@ export class RevolutXService implements IExchangeService {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
     const path = `/api/1.0/orders/${orderId}`;
-    const headers = this.getHeaders('DELETE', path);
-    
+
     try {
-      const response = await fetch(API_BASE_URL + path, {
+      const response = await this.signedFetch({
         method: 'DELETE',
-        headers
+        path,
+        priority: REVOLUTX_PRIORITY.P0_EXECUTION,
+        singleFlight: false,
       });
       
       if (!response.ok) {
@@ -916,7 +931,7 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getPairConfigurations(): Promise<RevolutXPairConfigurationRaw[]> {
-    const response = await this.signedGetJson<unknown>("/api/1.0/configuration/pairs");
+    const response = await this.signedGetJson<unknown>("/api/1.0/configuration/pairs", undefined, undefined, false);
     return extractRevolutXPairConfigurationEntries(response);
   }
 
@@ -1150,10 +1165,13 @@ export class RevolutXService implements IExchangeService {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
     const path = `/api/1.0/orders/${orderId}`;
-    const headers = this.getHeaders('GET', path);
 
     try {
-      const response = await fetch(API_BASE_URL + path, { headers });
+      const response = await this.signedFetch({
+        method: 'GET',
+        path,
+        priority: REVOLUTX_PRIORITY.P1_RECONCILIATION,
+      });
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -1321,10 +1339,13 @@ export class RevolutXService implements IExchangeService {
 
       const queryString = this.buildQueryString(queryParams, ['order_id', 'start_date', 'end_date', 'limit']);
       const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
-      const headers = this.getHeaders('GET', path, queryString, '');
-
       try {
-        const response = await fetch(fullUrl, { headers });
+        const response = await this.signedFetch({
+          method: 'GET',
+          path,
+          queryString,
+          priority: REVOLUTX_PRIORITY.P1_RECONCILIATION,
+        });
 
         if (!response.ok) {
           if (response.status === 404) {
@@ -1478,7 +1499,6 @@ export class RevolutXService implements IExchangeService {
     const DEFAULT_START = new Date('2020-01-01T00:00:00Z').getTime();
     const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
     // Per-page/window RL retry delays (ms): 10s → 30s → 60s → 120s
-    const REVOLUT_RL_DELAYS = [10_000, 30_000, 60_000, 120_000];
     const INTER_PAGE_DELAY_MS = 1_000;
 
     const startMs = params?.startMs || DEFAULT_START;
@@ -1530,27 +1550,19 @@ export class RevolutXService implements IExchangeService {
         const orderedKeys = ['symbols', 'states', 'types', 'start_date', 'end_date', 'cursor', 'limit'];
         const path = '/api/1.0/orders/historical';
         const queryString = this.buildQueryString(queryParams, orderedKeys);
-        const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
-        const headers = this.getHeaders('GET', path, queryString, '');
-
-        // Per-page RL retry — keeps cursor/window unchanged, never resets
-        let rlAttempt = 0;
         let pageFetched = false;
 
         while (true) {
           try {
-            const response = await fetch(fullUrl, { headers });
+            const response = await this.signedFetch({
+              method: 'GET',
+              path,
+              queryString,
+              priority: REVOLUTX_PRIORITY.P3_HISTORY,
+            });
 
             if (!response.ok) {
               const errorText = await response.text();
-              const isRL = response.status === 429;
-              if (isRL && rlAttempt < REVOLUT_RL_DELAYS.length) {
-                const delay = REVOLUT_RL_DELAYS[rlAttempt];
-                console.warn(`[revolutx] Rate limit on window ${new Date(windowStart).toISOString()}. Retry ${rlAttempt + 1}/${REVOLUT_RL_DELAYS.length} in ${delay / 1000}s…`);
-                await new Promise(r => setTimeout(r, delay));
-                rlAttempt++;
-                continue;
-              }
               console.error(`[revolutx] getHistoricalOrders error: ${response.status} ${errorText}`);
               windowFailed = true;
               break;
@@ -1609,14 +1621,6 @@ export class RevolutXService implements IExchangeService {
 
             break;
           } catch (error: any) {
-            const isRL = error.message?.includes("429") || error.message?.toLowerCase().includes("rate limit");
-            if (isRL && rlAttempt < REVOLUT_RL_DELAYS.length) {
-              const delay = REVOLUT_RL_DELAYS[rlAttempt];
-              console.warn(`[revolutx] Exception rate limit on window ${new Date(windowStart).toISOString()}. Retry ${rlAttempt + 1}/${REVOLUT_RL_DELAYS.length} in ${delay / 1000}s…`);
-              await new Promise(r => setTimeout(r, delay));
-              rlAttempt++;
-              continue;
-            }
             console.error(`[revolutx] getHistoricalOrders exception in window ${new Date(windowStart).toISOString()}: ${error.message}`);
             windowFailed = true;
             break;
