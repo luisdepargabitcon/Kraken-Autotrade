@@ -13,6 +13,8 @@ import {
   type Bias,
   type ScoreBreakdown,
   type MarketMetricsConfig,
+  type MarketMetricDataQuality,
+  type MarketMetricObservationMeta,
   METRIC_NAMES,
   SCORE_THRESHOLDS,
   SENSITIVITY_MULTIPLIERS,
@@ -20,45 +22,42 @@ import {
 } from "./MarketMetricsTypes";
 
 // ---- Umbrales base (aplica multiplicador de sensibilidad) ----
+// No se modifican en WP6a. Los umbrales se conservan y solo se analiza alcanzabilidad.
 const BASE_THRESHOLDS = {
-  // Flujo neto hacia exchanges muy alto (USD): señal de presión de venta
-  netflowHighBtc:     300_000_000,   // $300M/día BTC hacia exchanges = alerta
-  netflowMedBtc:      150_000_000,   // $150M/día = moderado
-
-  // Contracción de stablecoins 24h: liquidez saliendo
-  stableContractPct:  -0.5,          // más de -0.5% en 24h = contracción significativa
-
-  // Whale inflow a exchanges (USD en 2h)
-  whaleInflowHighUsd: 200_000_000,   // $200M en 2h = alerta alta
-  whaleInflowMedUsd:  80_000_000,    // $80M en 2h = moderado
-
-  // Open Interest (% cambio 24h): apalancamiento creciente
-  oiChangePct:        15,            // +15% en 24h = elevado
-
-  // Funding rate: mercado muy cargado (%)
-  fundingRateHigh:    0.1,           // 0.1% = muy alto (equivale ~3x diario)
-  fundingRateMed:     0.05,          // 0.05% = moderado
-
-  // Liquidaciones 1h (USD): mercado inestable
-  liquidationsHighUsd: 150_000_000,  // $150M en 1h = muy alto
-  liquidationsMedUsd:  50_000_000,   // $50M en 1h = moderado
+  netflowHighBtc: 300_000_000,
+  netflowMedBtc: 150_000_000,
+  stableContractPct: -0.5,
+  whaleInflowHighUsd: 200_000_000,
+  whaleInflowMedUsd: 80_000_000,
+  oiChangePct: 15,
+  fundingRateHigh: 0.1,
+  fundingRateMed: 0.05,
+  liquidationsHighUsd: 150_000_000,
+  liquidationsMedUsd: 50_000_000,
 } as const;
 
-export class MarketMetricsEngine {
+type MetricValues = Record<string, number | null>;
+type MetricMetaMap = Record<string, MarketMetricObservationMeta | undefined>;
 
+interface MetricSpec {
+  key: string;
+  metric: string;
+  ttlMs: number;
+  validate?: (value: number) => string | null;
+  score: (value: number) => { points: number; reason: string; scope?: string };
+}
+
+export class MarketMetricsEngine {
   evaluate(
     context: MetricsEvalContext,
-    latestMetrics: Record<string, number | null>,
+    latestMetrics: MetricValues,
     config: MarketMetricsConfig,
-    stalenessMs: Record<string, number>
+    stalenessMs: Record<string, number>,
+    metricMeta: MetricMetaMap = {}
   ): MarketMetricsDecision {
-
-    // --- Passthrough: módulo desactivado ---
     if (!config.enabled) {
       return makePassthroughDecision(false, config.mode);
     }
-
-    // --- Passthrough: lado no aplicable ---
     if (context.side === "buy" && !config.applyToBuy) {
       return makePassthroughDecision(true, config.mode, "Métricas no aplicadas a compras (configuración)");
     }
@@ -66,58 +65,80 @@ export class MarketMetricsEngine {
       return makePassthroughDecision(true, config.mode, "Métricas no aplicadas a ventas (configuración)");
     }
 
-    // --- Passthrough: sin datos disponibles ---
-    const hasAnyData = Object.values(latestMetrics).some(v => v !== null && Number.isFinite(v));
-    if (!hasAnyData) {
-      return makePassthroughDecision(true, config.mode, "Sin datos de métricas disponibles");
+    const specs = this.buildMetricSpecs(context, config);
+    const dataQuality: Record<string, MarketMetricDataQuality> = {};
+    const breakdown: ScoreBreakdown[] = [];
+
+    for (const spec of specs) {
+      const value = latestMetrics[spec.key];
+      const quality = this.assessMetricQuality(
+        value,
+        stalenessMs[spec.key],
+        spec.ttlMs,
+        metricMeta[spec.key]?.source ?? null,
+        spec.validate
+      );
+      dataQuality[spec.key] = quality;
+
+      if (quality.state !== "ok") {
+        if (quality.state !== "missing") {
+          breakdown.push({
+            metric: spec.metric,
+            value: typeof value === "number" && Number.isFinite(value) ? value : null,
+            points: 0,
+            reason: quality.reason ?? "Dato no evaluable",
+          });
+        }
+        continue;
+      }
+
+      const result = spec.score(value as number);
+      breakdown.push({
+        metric: spec.metric,
+        scope: result.scope,
+        value: value as number,
+        points: result.points,
+        reason: result.reason,
+      });
+    }
+
+    const okCount = Object.values(dataQuality).filter(q => q.state === "ok").length;
+    if (okCount === 0) {
+      const decision = makePassthroughDecision(
+        true,
+        config.mode,
+        "Datos de mercado insuficientes (no se evalúa)"
+      );
+      decision.status = "UNKNOWN";
+      decision.dataQuality = dataQuality;
+      decision.details.metrics = latestMetrics;
+      decision.details.stalenessMs = stalenessMs;
+      decision.details.scoreBreakdown = breakdown;
+      decision.details.thresholds = this.thresholdsForDetails();
+      return decision;
     }
 
     const mult = SENSITIVITY_MULTIPLIERS[config.sensitivity] ?? 1.0;
-    const breakdown: ScoreBreakdown[] = [];
-    let totalScore = 0;
-
-    // ---- 1. Flujo neto hacia exchanges (CoinMetrics) ----
-    this.evalNetflow(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // ---- 2. Whale inflow a exchanges (WhaleAlert) ----
-    this.evalWhaleInflow(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // ---- 3. Contracción de stablecoins (DeFiLlama) ----
-    this.evalStablecoins(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // ---- 4. Open Interest (CoinGlass) ----
-    this.evalOpenInterest(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // ---- 5. Funding Rate (CoinGlass) ----
-    this.evalFundingRate(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // ---- 6. Liquidaciones 1h (CoinGlass) ----
-    this.evalLiquidations(context, latestMetrics, stalenessMs, config, mult, breakdown);
-
-    // Sumar puntos del breakdown
-    for (const b of breakdown) totalScore += b.points;
-
-    // Aplicar multiplicador de sensibilidad al score total
-    const finalScore = Math.round(totalScore * mult);
-
+    const rawScore = breakdown.reduce((sum, item) => sum + item.points, 0);
+    const finalScore = Math.round(rawScore * mult);
     const riskLevel = this.scoreToRiskLevel(finalScore);
-    const bias = this.computeBias(latestMetrics, breakdown);
+    const bias = this.computeBias(context, latestMetrics, breakdown, dataQuality);
     const action = this.riskToAction(riskLevel, context, config);
-
-    // Construir razones en castellano natural (máx 3)
-    const reasons = this.buildReasons(breakdown, riskLevel, action);
-
-    // Ajustes si acción = AJUSTAR
+    const degraded = Object.values(dataQuality).some(q => q.state !== "ok");
+    const status = degraded ? "DEGRADED" : "OK";
+    const reasons = this.buildReasons(breakdown, action, degraded);
     const adjustments = action === "AJUSTAR"
       ? this.computeAdjustments(riskLevel, finalScore, config)
       : undefined;
 
     log(
-      `[MarketMetrics] ${context.pair} ${context.side.toUpperCase()}: score=${finalScore} risk=${riskLevel} bias=${bias} action=${action} reasons=[${reasons.join(" | ")}]`,
+      `[MarketMetrics] ${context.pair} ${context.side.toUpperCase()}: status=${status} score=${finalScore} risk=${riskLevel} bias=${bias} action=${action}`,
       "trading"
     );
 
     return {
+      status,
+      dataQuality,
       enabled: true,
       available: true,
       mode: config.mode,
@@ -129,188 +150,176 @@ export class MarketMetricsEngine {
       reasons,
       details: {
         metrics: latestMetrics,
-        thresholds: {
-          netflowHighBtc:     BASE_THRESHOLDS.netflowHighBtc,
-          stableContractPct:  BASE_THRESHOLDS.stableContractPct,
-          whaleInflowHighUsd: BASE_THRESHOLDS.whaleInflowHighUsd,
-          oiChangePct:        BASE_THRESHOLDS.oiChangePct,
-          fundingRateHigh:    BASE_THRESHOLDS.fundingRateHigh,
-          liquidationsHighUsd: BASE_THRESHOLDS.liquidationsHighUsd,
-        },
+        thresholds: this.thresholdsForDetails(),
         stalenessMs,
         scoreBreakdown: breakdown,
       },
     };
   }
 
-  // ---- Evaluaciones individuales ----
-
-  private evalNetflow(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const asset = this.extractAsset(ctx.pair);
-    const key = `${METRIC_NAMES.EXCHANGE_NETFLOW}:${asset}`;
-    const val = metrics[key] ?? metrics[`${METRIC_NAMES.EXCHANGE_NETFLOW}:BTC`] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.netflow) {
-      breakdown.push({ metric: "exchange_netflow", value: val, points: 0, reason: "Dato de flujos desactualizado" });
-      return;
-    }
-
-    if (val >= BASE_THRESHOLDS.netflowHighBtc) {
-      breakdown.push({ metric: "exchange_netflow", value: val, points: 2, reason: "Flujo neto muy alto hacia exchanges" });
-    } else if (val >= BASE_THRESHOLDS.netflowMedBtc) {
-      breakdown.push({ metric: "exchange_netflow", value: val, points: 1, reason: "Flujo neto moderado hacia exchanges" });
-    } else {
-      breakdown.push({ metric: "exchange_netflow", value: val, points: 0, reason: "Flujo neto en rango normal" });
-    }
+  private buildMetricSpecs(context: MetricsEvalContext, config: MarketMetricsConfig): MetricSpec[] {
+    const asset = this.extractAsset(context.pair);
+    return [
+      {
+        key: `${METRIC_NAMES.EXCHANGE_NETFLOW}:${asset}`,
+        metric: "exchange_netflow",
+        ttlMs: config.stalenessMaxMs.netflow,
+        score: value => {
+          if (value >= BASE_THRESHOLDS.netflowHighBtc) {
+            return { points: 2, reason: "Flujo neto muy alto hacia exchanges" };
+          }
+          if (value >= BASE_THRESHOLDS.netflowMedBtc) {
+            return { points: 1, reason: "Flujo neto moderado hacia exchanges" };
+          }
+          return { points: 0, reason: "Flujo neto en rango normal" };
+        },
+      },
+      {
+        key: `${METRIC_NAMES.WHALE_INFLOW_USD}:ALL`,
+        metric: "whale_inflow_usd",
+        ttlMs: config.stalenessMaxMs.whaleActivity,
+        score: value => {
+          if (value >= BASE_THRESHOLDS.whaleInflowHighUsd) {
+            return { points: 2, reason: "Grandes inversores enviando masivamente a exchanges" };
+          }
+          if (value >= BASE_THRESHOLDS.whaleInflowMedUsd) {
+            return { points: 1, reason: "Actividad de ballenas hacia exchanges elevada" };
+          }
+          return { points: 0, reason: "Actividad de ballenas en niveles normales" };
+        },
+      },
+      {
+        key: `${METRIC_NAMES.STABLECOIN_SUPPLY_DELTA_24H}:ALL`,
+        metric: "stablecoin_supply_delta_24h",
+        ttlMs: config.stalenessMaxMs.stablecoins,
+        validate: value => Math.abs(value) > 10
+          ? "Variación diaria de stablecoins extrema o inconsistente (>10%)"
+          : null,
+        score: value => {
+          if (value <= BASE_THRESHOLDS.stableContractPct * 2) {
+            return { points: 2, reason: "Fuerte contracción observada de liquidez agregada en stablecoins" };
+          }
+          if (value <= BASE_THRESHOLDS.stableContractPct) {
+            return { points: 1, reason: "Contracción observada de liquidez agregada en stablecoins" };
+          }
+          return { points: 0, reason: "Liquidez agregada de stablecoins estable o expansiva" };
+        },
+      },
+      {
+        key: `${METRIC_NAMES.OPEN_INTEREST_DELTA_24H_PCT}:${asset}`,
+        metric: "open_interest_delta_24h_pct",
+        ttlMs: config.stalenessMaxMs.derivatives,
+        score: value => {
+          if (value >= BASE_THRESHOLDS.oiChangePct) {
+            return { points: 1, reason: "Apalancamiento del mercado aumentando en 24h" };
+          }
+          return { points: 0, reason: "Variación de apalancamiento en niveles normales" };
+        },
+      },
+      {
+        key: `${METRIC_NAMES.FUNDING_RATE}:${asset}`,
+        metric: "funding_rate",
+        ttlMs: config.stalenessMaxMs.derivatives,
+        score: value => {
+          const direction = value > 0
+            ? "positivo (longs pagan)"
+            : value < 0
+              ? "negativo (shorts pagan)"
+              : "neutro";
+          const absValue = Math.abs(value);
+          if (absValue >= BASE_THRESHOLDS.fundingRateHigh) {
+            return { points: 2, reason: `Funding extremo ${direction}` };
+          }
+          if (absValue >= BASE_THRESHOLDS.fundingRateMed) {
+            return { points: 1, reason: `Funding elevado ${direction}` };
+          }
+          return { points: 0, reason: `Funding normal ${direction}` };
+        },
+      },
+      {
+        key: `${METRIC_NAMES.LIQUIDATIONS_1H_USD}:BTC`,
+        metric: "liquidations_1h_usd",
+        ttlMs: config.stalenessMaxMs.derivatives,
+        score: value => {
+          const scope = "BTC_MARKET_CONTEXT";
+          if (value >= BASE_THRESHOLDS.liquidationsHighUsd) {
+            return {
+              points: 2,
+              scope,
+              reason: "Liquidaciones masivas agregadas de BTC en la última hora (contexto de mercado)",
+            };
+          }
+          if (value >= BASE_THRESHOLDS.liquidationsMedUsd) {
+            return {
+              points: 1,
+              scope,
+              reason: "Liquidaciones agregadas de BTC elevadas (contexto de mercado)",
+            };
+          }
+          return {
+            points: 0,
+            scope,
+            reason: "Liquidaciones agregadas de BTC en niveles normales (contexto de mercado)",
+          };
+        },
+      },
+    ];
   }
 
-  private evalWhaleInflow(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const key = `${METRIC_NAMES.WHALE_INFLOW_USD}:ALL`;
-    const val = metrics[key] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.whaleActivity) {
-      breakdown.push({ metric: "whale_inflow_usd", value: val, points: 0, reason: "Dato de ballenas desactualizado" });
-      return;
+  private assessMetricQuality(
+    value: number | null | undefined,
+    ageMs: number | undefined,
+    ttlMs: number,
+    source: string | null,
+    validate?: (value: number) => string | null
+  ): MarketMetricDataQuality {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+      return {
+        state: "missing",
+        ageMs: null,
+        source,
+        reason: "Métrica ausente o no numérica",
+      };
     }
-
-    if (val >= BASE_THRESHOLDS.whaleInflowHighUsd) {
-      breakdown.push({ metric: "whale_inflow_usd", value: val, points: 2, reason: "Grandes inversores enviando masivamente a exchanges" });
-    } else if (val >= BASE_THRESHOLDS.whaleInflowMedUsd) {
-      breakdown.push({ metric: "whale_inflow_usd", value: val, points: 1, reason: "Actividad de ballenas hacia exchanges elevada" });
-    } else {
-      breakdown.push({ metric: "whale_inflow_usd", value: val, points: 0, reason: "Actividad de ballenas en niveles normales" });
+    const invalidReason = validate?.(value) ?? null;
+    if (invalidReason) {
+      return {
+        state: "invalid",
+        ageMs: null,
+        source,
+        reason: invalidReason,
+      };
     }
+    if (ageMs === undefined || ageMs === null || !Number.isFinite(ageMs)) {
+      return {
+        state: "unknown_age",
+        ageMs: null,
+        source,
+        reason: "Frescura desconocida: falta timestamp de proveedor",
+      };
+    }
+    const normalizedAgeMs = Math.max(0, ageMs);
+    if (normalizedAgeMs > ttlMs) {
+      return {
+        state: "stale",
+        ageMs: normalizedAgeMs,
+        source,
+        reason: `Dato caducado (${Math.round(normalizedAgeMs / 1000)}s > ${Math.round(ttlMs / 1000)}s)`,
+      };
+    }
+    return { state: "ok", ageMs: normalizedAgeMs, source };
   }
 
-  private evalStablecoins(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const key = `${METRIC_NAMES.STABLECOIN_SUPPLY_DELTA_24H}:ALL`;
-    const val = metrics[key] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.stablecoins) {
-      breakdown.push({ metric: "stablecoin_supply_delta_24h", value: val, points: 0, reason: "Dato de stablecoins desactualizado" });
-      return;
-    }
-
-    if (val <= BASE_THRESHOLDS.stableContractPct * 2) {
-      breakdown.push({ metric: "stablecoin_supply_delta_24h", value: val, points: 2, reason: "Fuerte contracción de liquidez (stablecoins)" });
-    } else if (val <= BASE_THRESHOLDS.stableContractPct) {
-      breakdown.push({ metric: "stablecoin_supply_delta_24h", value: val, points: 1, reason: "Ligera contracción de liquidez" });
-    } else {
-      breakdown.push({ metric: "stablecoin_supply_delta_24h", value: val, points: 0, reason: "Liquidez estable o expansiva" });
-    }
+  private thresholdsForDetails(): Record<string, number> {
+    return {
+      netflowHighBtc: BASE_THRESHOLDS.netflowHighBtc,
+      stableContractPct: BASE_THRESHOLDS.stableContractPct,
+      whaleInflowHighUsd: BASE_THRESHOLDS.whaleInflowHighUsd,
+      oiChangePct: BASE_THRESHOLDS.oiChangePct,
+      fundingRateHigh: BASE_THRESHOLDS.fundingRateHigh,
+      liquidationsHighUsd: BASE_THRESHOLDS.liquidationsHighUsd,
+    };
   }
-
-  private evalOpenInterest(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const asset = this.extractAsset(ctx.pair);
-    const key = `${METRIC_NAMES.OPEN_INTEREST}:${asset}`;
-    const val = metrics[key] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.derivatives) {
-      breakdown.push({ metric: "open_interest", value: val, points: 0, reason: "Dato de apalancamiento desactualizado" });
-      return;
-    }
-
-    // val aquí es % cambio 24h si disponible, o valor absoluto
-    if (val >= BASE_THRESHOLDS.oiChangePct) {
-      breakdown.push({ metric: "open_interest", value: val, points: 1, reason: "Apalancamiento del mercado aumentando" });
-    } else {
-      breakdown.push({ metric: "open_interest", value: val, points: 0, reason: "Apalancamiento en niveles normales" });
-    }
-  }
-
-  private evalFundingRate(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const asset = this.extractAsset(ctx.pair);
-    const key = `${METRIC_NAMES.FUNDING_RATE}:${asset}`;
-    const val = metrics[key] ?? metrics[`${METRIC_NAMES.FUNDING_RATE}:BTC`] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.derivatives) {
-      breakdown.push({ metric: "funding_rate", value: val, points: 0, reason: "Dato de funding desactualizado" });
-      return;
-    }
-
-    const absVal = Math.abs(val);
-    if (absVal >= BASE_THRESHOLDS.fundingRateHigh) {
-      breakdown.push({ metric: "funding_rate", value: val, points: 2, reason: "Financiación de futuros extrema (mercado muy cargado)" });
-    } else if (absVal >= BASE_THRESHOLDS.fundingRateMed) {
-      breakdown.push({ metric: "funding_rate", value: val, points: 1, reason: "Financiación de futuros elevada" });
-    } else {
-      breakdown.push({ metric: "funding_rate", value: val, points: 0, reason: "Financiación de futuros normal" });
-    }
-  }
-
-  private evalLiquidations(
-    ctx: MetricsEvalContext,
-    metrics: Record<string, number | null>,
-    stale: Record<string, number>,
-    config: MarketMetricsConfig,
-    mult: number,
-    breakdown: ScoreBreakdown[]
-  ): void {
-    const key = `${METRIC_NAMES.LIQUIDATIONS_1H_USD}:BTC`;
-    const val = metrics[key] ?? null;
-    if (val === null) return;
-
-    const staleMs = stale[key] ?? 0;
-    if (staleMs > config.stalenessMaxMs.derivatives) {
-      breakdown.push({ metric: "liquidations_1h_usd", value: val, points: 0, reason: "Dato de liquidaciones desactualizado" });
-      return;
-    }
-
-    if (val >= BASE_THRESHOLDS.liquidationsHighUsd) {
-      breakdown.push({ metric: "liquidations_1h_usd", value: val, points: 2, reason: "Liquidaciones masivas en la última hora (mercado inestable)" });
-    } else if (val >= BASE_THRESHOLDS.liquidationsMedUsd) {
-      breakdown.push({ metric: "liquidations_1h_usd", value: val, points: 1, reason: "Liquidaciones elevadas recientes" });
-    } else {
-      breakdown.push({ metric: "liquidations_1h_usd", value: val, points: 0, reason: "Liquidaciones en niveles normales" });
-    }
-  }
-
-  // ---- Helpers ----
 
   private extractAsset(pair: string): string {
     return (pair.split("/")[0] ?? pair).toUpperCase();
@@ -323,14 +332,20 @@ export class MarketMetricsEngine {
   }
 
   private computeBias(
-    metrics: Record<string, number | null>,
-    breakdown: ScoreBreakdown[]
+    context: MetricsEvalContext,
+    metrics: MetricValues,
+    breakdown: ScoreBreakdown[],
+    dataQuality: Record<string, MarketMetricDataQuality>
   ): Bias {
-    const bearishPoints = breakdown.reduce((sum, b) => sum + b.points, 0);
+    const bearishPoints = breakdown.reduce((sum, item) => sum + item.points, 0);
     if (bearishPoints >= 4) return "BAJISTA";
     if (bearishPoints >= 2) return "NEUTRAL";
-    const netflow = metrics[`${METRIC_NAMES.EXCHANGE_NETFLOW}:BTC`] ?? 0;
-    if ((netflow ?? 0) < -50_000_000) return "ALCISTA";
+    const asset = this.extractAsset(context.pair);
+    const key = `${METRIC_NAMES.EXCHANGE_NETFLOW}:${asset}`;
+    const netflow = metrics[key];
+    if (dataQuality[key]?.state === "ok" && typeof netflow === "number" && netflow < -50_000_000) {
+      return "ALCISTA";
+    }
     return "NEUTRAL";
   }
 
@@ -339,9 +354,7 @@ export class MarketMetricsEngine {
     ctx: MetricsEvalContext,
     config: MarketMetricsConfig
   ): MetricsAction {
-    // En modo observación: nunca bloquear ni ajustar
     if (config.mode === "observacion") return "PERMITIR";
-
     if (riskLevel === "ALTO" && ctx.side === "buy") return "BLOQUEAR";
     if (riskLevel === "MEDIO") return "AJUSTAR";
     return "PERMITIR";
@@ -361,22 +374,27 @@ export class MarketMetricsEngine {
 
   private buildReasons(
     breakdown: ScoreBreakdown[],
-    riskLevel: RiskLevel,
-    action: MetricsAction
+    action: MetricsAction,
+    degraded: boolean
   ): string[] {
     const relevant = breakdown
-      .filter(b => b.points > 0)
+      .filter(item => item.points > 0)
       .sort((a, b) => b.points - a.points)
       .slice(0, 3);
-
-    const reasons = relevant.map(b => b.reason);
+    const reasons = relevant.map(item => item.reason);
 
     if (reasons.length === 0) {
-      if (action === "PERMITIR") reasons.push("Condiciones de mercado favorables");
-      else reasons.push("Datos de mercado insuficientes para evaluar");
+      reasons.push(degraded
+        ? "Métricas disponibles sin riesgo relevante, pero la evaluación está degradada"
+        : "Condiciones de mercado favorables en las métricas evaluadas");
     }
-
-    return reasons;
+    if (degraded) {
+      reasons.push("Evaluación degradada: una o más métricas no están en estado ok");
+    }
+    if (action !== "PERMITIR" && reasons.length === 0) {
+      reasons.push("Datos de mercado insuficientes para evaluar");
+    }
+    return reasons.slice(0, 4);
   }
 }
 

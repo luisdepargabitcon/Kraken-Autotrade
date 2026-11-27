@@ -1951,7 +1951,7 @@ export async function registerRoutes(
         const cfg = await marketMetricsService.getConfig();
         if (cfg.enabled) {
           console.log('[startup] Market Metrics: ejecutando primer refresh...');
-          await marketMetricsService.refresh();
+          await marketMetricsService.refreshIfDue();
         }
       } catch (e: any) {
         console.warn('[startup] Market Metrics primer refresh (non-critical):', e?.message ?? e);

@@ -21,6 +21,10 @@ function providerTs(raw: unknown, now: Date): Date | null {
   return normalized.ok ? new Date(normalized.ms) : null;
 }
 
+export function convertFundingRateFractionToPct(rateFraction: number): number {
+  return parseFloat((rateFraction * 100).toFixed(6));
+}
+
 const SYMBOL_TO_ASSET: Record<string, string> = {
   BTCUSDT: "BTC",
   ETHUSDT: "ETH",
@@ -126,7 +130,7 @@ export class BinanceFuturesProvider implements IMetricsProvider {
           metric: "funding_rate",
           asset: SYMBOL_TO_ASSET[symbol] ?? symbol,
           pair: null,
-          value: parseFloat((rate * 100).toFixed(6)), // convertir a %
+          value: convertFundingRateFractionToPct(rate), // Binance publica fracción por intervalo de funding; el motor compara %.
           tsProvider: providerTs(row.fundingTime, now),
           meta: { symbol, markPrice: row.markPrice },
         });

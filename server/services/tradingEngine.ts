@@ -8171,7 +8171,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         return { blocked: false, adjustedVolume: params.tradeVolume };
       }
 
-      const { metrics, stalenessMs } = await marketMetricsService.getLatestMetrics(config);
+      const { metrics, stalenessMs, metricMeta } = await marketMetricsService.getLatestMetrics(config);
 
       const decision = marketMetricsEngine.evaluate(
         {
@@ -8184,8 +8184,10 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         },
         metrics,
         config,
-        stalenessMs
+        stalenessMs,
+        metricMeta
       );
+      marketMetricsService.recordEvaluationInvocation();
 
       // Persistir evaluación en DB (no bloqueante)
       storage.saveMarketMetricEvaluation({
@@ -8203,7 +8205,8 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
           adjustments: decision.adjustments,
           scoreBreakdown: decision.details.scoreBreakdown,
         },
-      }).catch((e: any) => log(`[MM_GATE] saveEvaluation error: ${e?.message ?? e}`, "trading"));
+      }).then(() => marketMetricsService.recordEvaluationPersisted())
+        .catch((e: any) => log(`[MM_GATE] saveEvaluation error: ${e?.message ?? e}`, "trading"));
 
       // Actualizar trace con resultado de métricas
       this.updatePairTrace(params.pair, {
