@@ -12,6 +12,8 @@ import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSe
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
 import { normalizeEpochToMs } from "../marketData/epochNormalizer";
+import { computeEntryDataHealth } from "./IdcaMarketDataHealthService";
+import { resolveEntryDataGate, resolveExitPriceInput } from "./idcaDataGate";
 import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold, shouldUpdateAnchor, shouldResetAnchor } from "./IdcaEntryReferenceResolver";
 import { buildReferenceContext, type ReferenceContext, MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT } from "./IdcaReferenceContext";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
@@ -1260,11 +1262,31 @@ async function evaluatePair(
     emitPairDisabledLog(pair, mode);
   }
 
-  const currentPrice = await getCurrentPrice(pair);
-  if (currentPrice <= 0) {
-    console.warn(`${TAG}[EVAL_SKIP] ${pair}: currentPrice=${currentPrice}`);
+  const exitPriceResolution = await resolveExitPriceForPair(pair);
+  if (exitPriceResolution.price === null) {
+    console.error(`${TAG}[EXIT_PRICE_UNAVAILABLE] ${pair}: no valid realtime/fallback price — exits not evaluated`);
+    await createHumanEvent({
+      pair,
+      mode,
+      eventType: "exit_price_unavailable",
+      severity: "critical",
+      message: "No hay precio válido para evaluar salidas IDCA. No se venderá ni se inventará precio.",
+      payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+    }, { eventType: "exit_price_unavailable", reasonCode: "exit_price_unavailable", pair, mode });
     return;
   }
+  if (exitPriceResolution.degraded) {
+    console.warn(`${TAG}[EXIT_PRICE_DEGRADED] ${pair}: source=${exitPriceResolution.source} alert=${exitPriceResolution.alert}`);
+    await createHumanEvent({
+      pair,
+      mode,
+      eventType: "exit_price_degraded",
+      severity: "warning",
+      message: "Precio de salida degradado: se usa fallback reciente autorizado. Las salidas no se bloquean.",
+      payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+    }, { eventType: "exit_price_degraded", reasonCode: "exit_price_degraded", pair, mode });
+  }
+  const currentPrice = exitPriceResolution.price;
 
   // Update price/PnL for ALL active cycles of this pair (main, plus, imported, manual)
   const allPairCycles = await repo.getAllActiveCyclesForPair(pair, mode);
@@ -4006,6 +4028,16 @@ async function performEntryCheck(
     };
   }
 
+  const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: now.getTime() });
+  const entryDataGate = resolveEntryDataGate(entryDataHealth);
+  if (!entryDataGate.allow) {
+    blocks.push({
+      code: `data_gate_blocked:${entryDataGate.code}`,
+      message: entryDataGate.reason,
+      timestamp: now,
+    });
+  }
+
   // Calculate base price using deterministic method
   const dipRefMethod = normalizeDipReferenceMethod(assetConfig.dipReference || "hybrid", { pair, origin: "assetConfig.dipReference" });
   const candles = cacheCandles;
@@ -4771,10 +4803,42 @@ function resolveSimulationFeePct(config: InstitutionalDcaConfigRow): number {
 
 // ─── Market Data Helpers ───────────────────────────────────────────
 
+const priceCacheMeta = new Map<string, { price: number; atMs: number }>();
+
+async function resolveExitPriceForPair(pair: string) {
+  const nowMs = Date.now();
+  let realtimePrice: number | null = null;
+  try {
+    const price = await MarketDataService.getPrice(pair);
+    if (price > 0) {
+      realtimePrice = price;
+      priceCache.set(pair, price);
+      priceCacheMeta.set(pair, { price, atMs: nowMs });
+    }
+  } catch {
+    realtimePrice = null;
+  }
+
+  const cached = priceCacheMeta.get(pair) ?? null;
+  const resolution = resolveExitPriceInput({
+    realtimePrice,
+    realtimeAgeMs: realtimePrice !== null ? 0 : null,
+    fallbackPrice: cached?.price ?? null,
+    fallbackAgeMs: cached ? nowMs - cached.atMs : null,
+    maxRealtimeAgeMs: 45_000,
+    maxFallbackAgeMs: 5 * 60_000,
+  });
+  if (resolution.price !== null) {
+    priceCache.set(pair, resolution.price);
+  }
+  return resolution;
+}
+
 async function getCurrentPrice(pair: string): Promise<number> {
   const price = await MarketDataService.getPrice(pair);
   if (price > 0) {
     priceCache.set(pair, price);
+    priceCacheMeta.set(pair, { price, atMs: Date.now() });
     return price;
   }
   return priceCache.get(pair) || 0;
