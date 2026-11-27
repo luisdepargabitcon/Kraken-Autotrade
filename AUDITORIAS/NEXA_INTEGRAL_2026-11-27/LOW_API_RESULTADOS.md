@@ -14,6 +14,7 @@ Commits de implementación:
 - `b78f1c5` — endurecimiento de `BalanceCache`.
 - `b0c4517` — valoración SHADOW sin consultas privadas propias.
 - `1b64555` — `publicOnly` para constraints SHADOW y pruebas de workload ampliadas.
+- `895c810` — caracterización reforzada del workload legacy.
 
 ## Diseño implementado
 
@@ -96,7 +97,7 @@ Resultados medidos en la ejecución local:
 
 | Medición | Resultado |
 |---|---:|
-| Caracterización del comportamiento previo, una valoración directa por ciclo | 72 llamadas privadas de balance |
+| Caracterización del comportamiento previo, ruta de allocation sin BalanceSource | 72 llamadas privadas de balance |
 | WP5 SHADOW, 72 ciclos | 0 llamadas a `exchange.getBalance()` |
 | WP5 SHADOW constraints, 72 resoluciones `publicOnly` | 0 llamadas firmadas a `/api/1.0/configuration/pairs`; 72 llamadas públicas de configuración |
 | Ciclos con snapshot fresco inicial | 1 ciclo `complete` |
