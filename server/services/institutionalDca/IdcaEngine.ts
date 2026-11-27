@@ -1237,6 +1237,23 @@ function emitPairDisabledLog(pair: string, mode: string): void {
   }
 }
 
+// ─── Exit-price alert throttling ─────────────────────────────────────
+const EXIT_PRICE_ALERT_THROTTLE_MS = 15 * 60 * 1000;
+const exitPriceAlertState = new Map<string, { type: "exit_price_degraded" | "exit_price_unavailable"; lastAtMs: number }>();
+
+function shouldEmitExitPriceAlert(pair: string, type: "exit_price_degraded" | "exit_price_unavailable", nowMs: number): boolean {
+  const previous = exitPriceAlertState.get(pair);
+  if (!previous || previous.type !== type || nowMs - previous.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
+    exitPriceAlertState.set(pair, { type, lastAtMs: nowMs });
+    return true;
+  }
+  return false;
+}
+
+function clearExitPriceAlertState(pair: string): void {
+  exitPriceAlertState.delete(pair);
+}
+
 // ─── Pair Evaluation ───────────────────────────────────────────────
 
 async function evaluatePair(
@@ -1265,26 +1282,32 @@ async function evaluatePair(
   const exitPriceResolution = await resolveExitPriceForPair(pair);
   if (exitPriceResolution.price === null) {
     console.error(`${TAG}[EXIT_PRICE_UNAVAILABLE] ${pair}: no valid realtime/fallback price — exits not evaluated`);
-    await createHumanEvent({
-      pair,
-      mode,
-      eventType: "exit_price_unavailable",
-      severity: "critical",
-      message: "No hay precio válido para evaluar salidas IDCA. No se venderá ni se inventará precio.",
-      payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
-    }, { eventType: "exit_price_unavailable", reasonCode: "exit_price_unavailable", pair, mode });
+    if (shouldEmitExitPriceAlert(pair, "exit_price_unavailable", Date.now())) {
+      await createHumanEvent({
+        pair,
+        mode,
+        eventType: "exit_price_unavailable",
+        severity: "critical",
+        message: "No hay precio válido para evaluar salidas IDCA. No se venderá ni se inventará precio.",
+        payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+      }, { eventType: "exit_price_unavailable", reasonCode: "exit_price_unavailable", pair, mode });
+    }
     return;
   }
   if (exitPriceResolution.degraded) {
     console.warn(`${TAG}[EXIT_PRICE_DEGRADED] ${pair}: source=${exitPriceResolution.source} alert=${exitPriceResolution.alert}`);
-    await createHumanEvent({
-      pair,
-      mode,
-      eventType: "exit_price_degraded",
-      severity: "warning",
-      message: "Precio de salida degradado: se usa fallback reciente autorizado. Las salidas no se bloquean.",
-      payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
-    }, { eventType: "exit_price_degraded", reasonCode: "exit_price_degraded", pair, mode });
+    if (shouldEmitExitPriceAlert(pair, "exit_price_degraded", Date.now())) {
+      await createHumanEvent({
+        pair,
+        mode,
+        eventType: "exit_price_degraded",
+        severity: "warning",
+        message: "Precio de salida degradado: se usa fallback reciente autorizado. Las salidas no se bloquean.",
+        payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+      }, { eventType: "exit_price_degraded", reasonCode: "exit_price_degraded", pair, mode });
+    }
+  } else {
+    clearExitPriceAlertState(pair);
   }
   const currentPrice = exitPriceResolution.price;
 
@@ -4036,6 +4059,16 @@ async function performEntryCheck(
       message: entryDataGate.reason,
       timestamp: now,
     });
+    return {
+      allowed: false,
+      blockReasons: blocks,
+      marketScore: 0,
+      volatilityScore: 0,
+      sizeProfile: "balanced" as IdcaSizeProfile,
+      entryDipPct: 0,
+      basePrice: { price: 0, type: "cycle_start_price" as BasePriceType, windowMinutes: 0, timestamp: now, isReliable: false, reason: entryDataGate.reason, meta: { candleCount: cacheCandles.length, swingHighsFound: 0 } },
+      reboundConfirmed: false,
+    };
   }
 
   // Calculate base price using deterministic method
@@ -4727,6 +4760,21 @@ async function performEntryCheck(
     referenceContext,
     confluenceResult,
   };
+}
+
+
+export const performEntryCheckForTest = performEntryCheck;
+export const evaluatePairForTest = evaluatePair;
+export function __setIdcaOhlcCacheForTest(pair: string, candles: TimestampedCandle[]): void {
+  ohlcCache.set(pair, candles);
+}
+export function __clearIdcaOhlcCacheForTest(): void {
+  ohlcCache.clear();
+}
+export function __clearExitPriceAlertThrottleForTest(): void {
+  exitPriceAlertState.clear();
+  priceCache.clear();
+  priceCacheMeta.clear();
 }
 
 // ─── Module Drawdown Check ─────────────────────────────────────────
