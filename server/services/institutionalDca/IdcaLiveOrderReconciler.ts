@@ -9,6 +9,7 @@ import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { applyReconciledBuyEffect, applyReconciledSellEffect, type IdcaAccountingPort, defaultIdcaAccountingPort } from "./IdcaLiveAccounting";
 import { deterministicClientOrderId } from "../deterministicClientOrderId";
 import * as idcaRepo from "./IdcaRepository";
+import { applyReconciledOutcomeAtomic } from "./IdcaLiveAtomicApply";
 
 export type IdcaIntentState =
   | "created" | "submitting" | "accepted_pending" | "partial"
@@ -154,6 +155,47 @@ const TERMINAL_ZERO = new Set(["CANCELLED","CANCELED","EXPIRED","REJECTED","FAIL
 const TERMINAL_ANY = new Set(["FILLED","CANCELLED","CANCELED","EXPIRED","REJECTED","FAILED"]);
 const DUST_REL_TOLERANCE = 0.0025;
 
+export interface FillValidationIssue { code: string; detail: string }
+
+/**
+ * Strict fill validation per TANGO: any discordance — symbol mismatch, filled
+ * quantity exceeding the requested amount beyond dust, incomplete pagination,
+ * non-positive prices — means uncertainty and reconciliation, never silent
+ * accounting. Excess quantity is NEVER clamped away: the position exists on
+ * the venue and must be reconciled by a human or a later explicit decision.
+ */
+export function validateFillAggregation(
+  fills: any[],
+  pair: string,
+  requestedQty: number,
+  aggQty: number,
+  pageLimit: number,
+  rawFillCount: number,
+): FillValidationIssue[] {
+  const issues: FillValidationIssue[] = [];
+  const normalizedPair = pair.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  for (const f of fills ?? []) {
+    const fs = String(f.symbol ?? f.pair ?? f.product_id ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if (fs && normalizedPair && fs !== normalizedPair) {
+      issues.push({ code: "symbol_mismatch", detail: `fill symbol=${fs} != intent pair=${normalizedPair}` });
+    }
+  }
+  if (aggQty > requestedQty * (1 + DUST_REL_TOLERANCE) + 1e-12) {
+    issues.push({ code: "excess_qty", detail: `filled=${aggQty} > requested=${requestedQty}` });
+  }
+  if (rawFillCount >= pageLimit) {
+    issues.push({ code: "pagination_incomplete", detail: `fill count ${rawFillCount} >= limit ${pageLimit}; aggregation may be partial` });
+  }
+  for (const f of fills ?? []) {
+    const q = parseFloat(String(f.quantity ?? f.qty ?? f.size ?? 0));
+    const p = parseFloat(String(f.price ?? 0));
+    if (q > 0 && !(p > 0)) {
+      issues.push({ code: "invalid_fill_price", detail: `fill id=${f.fill_id ?? f.id ?? "?"} qty>0 price=${p}` });
+    }
+  }
+  return issues;
+}
+
 function aggregateFills(fills: any[], requestedQty: number) {
   const seen = new Set<string>();
   let qty = 0, quote = 0, fees = 0, feeSeen = false;
@@ -216,8 +258,11 @@ export async function reconcileIntent(
     };
   }
 
+  const FILLS_PAGE_LIMIT = 100;
+  const rawFillCount = (fills ?? []).length;
   const agg = aggregateFills(fills, requestedQty);
   let qty = agg.qty, avg = agg.avgPrice, fees = agg.fees, feeSource: ReconciledOutcome["feeSource"] = agg.feeSeen ? "venue" : "none";
+  const validationIssues = validateFillAggregation(fills, intent.pair, requestedQty, agg.qty, FILLS_PAGE_LIMIT, rawFillCount);
   if ((!qty || qty <= 0) && order?.filledSize > 0) {
     qty = parseFloat(String(order.filledSize));
     avg = parseFloat(String(order.averagePrice ?? 0));
@@ -236,6 +281,10 @@ export async function reconcileIntent(
   else if (qty > 0) state = "partial";
   else if (status.toUpperCase() === "UNKNOWN" && !order) state = "uncertain";
   else state = "accepted_pending";
+  if (validationIssues.length > 0 && state !== "uncertain") {
+    state = "uncertain";
+    emitIntentCriticalEvent(intent, "idca_order_uncertain", `Discordancia de fills detectada: ${validationIssues.map(i => i.code).join(",")}. Conciliación manual requerida; no se contabiliza nada.`, { issues: validationIssues });
+  }
   const terminal = (state === "filled" && qty >= requestedQty * (1 - DUST_REL_TOLERANCE)) || (["filled", "partial", "rejected", "expired"].includes(state) && TERMINAL_ANY.has(status.toUpperCase()));
   const prior = new Set(meta.fillIds ?? []);
   const newEntries = agg.entries.filter(e => !prior.has(e.id));
@@ -267,7 +316,8 @@ export async function reconcileIntent(
     );
   }
 
-  if (intent.side === "buy" && ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !alreadyApplied && !options.deferBuyAccounting) {
+  const atomicStore = store instanceof DrizzleIdcaIntentStore;
+  if (intent.side === "buy" && ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !alreadyApplied && !options.deferBuyAccounting && !atomicStore) {
     await applyReconciledBuyEffect({
       cycleId: parseInt(intent.lotId, 10),
       pair: intent.pair,
@@ -287,7 +337,7 @@ export async function reconcileIntent(
     }, accounting);
   }
 
-  if (intent.side === "sell" && ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !alreadyApplied) {
+  if (intent.side === "sell" && ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !alreadyApplied && !atomicStore) {
     await applyReconciledSellEffect({
       cycleId: parseInt(intent.lotId, 10),
       pair: intent.pair,
@@ -305,6 +355,7 @@ export async function reconcileIntent(
     }, accounting);
   }
 
+  const terminalDustRemainder = terminal && state === "filled" ? Math.max(0, requestedQty - qty) : 0;
   const updated: IdcaIntentRecord = {
     ...intent,
     status: state,
@@ -312,9 +363,50 @@ export async function reconcileIntent(
     fillPrice: qty > 0 ? avg : null,
     fillVolume: Math.max(intent.fillVolume ?? 0, qty),
     feeUsd: Math.max(intent.feeUsd ?? 0, qty > 0 ? fees : 0),
-    reason: encodeReason({ ...meta, fillIds: mergedIds, appliedQty: Math.max(appliedQty, qty), appliedGrossUsd: Math.max(appliedGross, cumulativeGrossValueUsd), appliedFeesUsd: Math.max(appliedFees, fees), ...(terminal ? { applied: true } : {}) }),
+    reason: encodeReason({ ...meta, fillIds: mergedIds, appliedQty: Math.max(appliedQty, qty), appliedGrossUsd: Math.max(appliedGross, cumulativeGrossValueUsd), appliedFeesUsd: Math.max(appliedFees, fees), ...(terminalDustRemainder > 0 ? { dustRemainderQty: terminalDustRemainder } : {}), ...(terminal ? { applied: true } : {}) }),
   };
-  await store.update(updated);
+  if (atomicStore) {
+    // Atomic path: accounting order + cycle update + intent meta in ONE tx.
+    const effectBase = {
+      averagePrice: deltaFilledQty > 0 ? deltaGrossValueUsd / deltaFilledQty : avg,
+      orderType: meta.reason || `reconciled_${intent.side}`,
+      triggerReason: meta.reason || `reconciled_${intent.side}`,
+    };
+    // Accounting applies only for partial/filled states with positive delta.
+    // In any other state the cumulative inputs are zeroed so the in-tx
+    // computations produce nothing: the transaction then only persists the
+    // intent status/meta (rejected, expired, uncertain...).
+    const accountingWarranted = ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !(intent.side === "buy" && options.deferBuyAccounting) && validationIssues.length === 0;
+    const cumQty = accountingWarranted ? qty : 0;
+    const cumGross = accountingWarranted ? cumulativeGrossValueUsd : 0;
+    const cumFees = accountingWarranted ? fees : 0;
+    const effect = intent.side === "sell"
+      ? { side: "sell", cumulativeFilledQty: cumQty, cumulativeGrossValueUsd: cumGross, cumulativeFeesUsd: cumFees, deltaQty: deltaFilledQty, deltaGrossValueUsd, deltaFeesUsd, closePosition: state === "filled" && meta.closePosition === true, closeReason: meta.closeReason ?? meta.reason ?? "reconciled_sell", ...effectBase }
+      : { side: "buy", cumulativeFilledQty: cumQty, cumulativeNetFilledQty: accountingWarranted ? netFilledQty : 0, cumulativeGrossValueUsd: cumGross, cumulativeFeesUsd: cumFees, deltaQty: deltaFilledQty, deltaGrossValueUsd, deltaFeesUsd, terminal, ...effectBase };
+    try {
+      await applyReconciledOutcomeAtomic({
+        clientOrderId: intent.clientOrderId,
+        cycleId: parseInt(intent.lotId, 10),
+        pair: intent.pair,
+        exchangeOrderId: intent.exchangeOrderId ?? order?.id ?? null,
+        feeSource,
+        newStatus: state,
+        mergedFillIds: mergedIds,
+        newFillIds: newIds,
+        terminal,
+        fillPrice: qty > 0 ? avg : null,
+        fillVolume: Math.max(intent.fillVolume ?? 0, qty),
+        feeUsd: Math.max(intent.feeUsd ?? 0, qty > 0 ? fees : 0),
+        dustRemainderQty: terminalDustRemainder > 0 ? terminalDustRemainder : undefined,
+        effect: effect as any,
+      });
+    } catch (e: any) {
+      emitIntentCriticalEvent(intent, "idca_atomic_apply_failed", `Fallo de aplicación atómica (transacción revertida íntegramente): ${e.message}`, { error: e.message });
+      throw e;
+    }
+  } else {
+    await store.update(updated);
+  }
   return {
     state, filledQty: qty, grossFilledQty, netFilledQty, avgPrice: avg, feesUsd: fees, feeSource, remainingQty, terminal,
     intent: updated, newlyAppliedFillIds: newIds, alreadyApplied,
@@ -329,23 +421,48 @@ export interface SubmitReconcileParams {
   closePosition?: boolean;
   closeReason?: string;
   ordertype?: string; price?: string; dustToleranceQty?: number;
+  /** Quote reservado para compras (USD). Persistido en la intención: la
+   *  reserva ES la fila de intención, durable y recuperable tras reinicio. */
+  reservedQuoteUsd?: number;
+  /** Cap de exposición quote disponible (balance/asignación) evaluado dentro
+   *  del lock de reserva. null = sin cap de quote (el chequeo de carreras por
+   *  par+lado se aplica siempre). */
+  availableQuoteCapUsd?: number | null;
 }
 
-const memoryFallback = new InMemoryIdcaIntentStore();
+/**
+ * Persistence precondition for live execution: order_intents MUST be available
+ * with the required schema. There is NO memory fallback for real execution —
+ * without durable traceability no order may be sent, including protective
+ * exits. In-memory stores are only used when explicitly injected (tests).
+ */
+export async function verifyIdcaIntentStorePrecondition(): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const drizzle = new DrizzleIdcaIntentStore();
+    await drizzle.listPending();
+    const probe: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='order_intents' AND column_name IN ('engine_owner','internal_intent_id','lot_id','reserved_quote_usd','execution_mode')`);
+    const cols = new Set((probe.rows ?? []).map((r: any) => r.column_name));
+    const missing = ["engine_owner","internal_intent_id","lot_id","reserved_quote_usd","execution_mode"].filter(c => !cols.has(c));
+    if (missing.length > 0) return { ok: false, detail: `order_intents schema incompleto: faltan ${missing.join(",")} (migración 087)` };
+    return { ok: true, detail: "order_intents disponible con esquema requerido" };
+  } catch (e: any) {
+    return { ok: false, detail: `order_intents inaccesible: ${e.message}` };
+  }
+}
+
 async function resolveStore(store?: IdcaIntentStore): Promise<IdcaIntentStore> {
   if (store) return store;
   const drizzle = new DrizzleIdcaIntentStore();
   try { await drizzle.listPending(); return drizzle; } catch (e: any) {
     if (e?.code === "42P01" || String(e?.message).includes("does not exist")) {
-      console.error("[IDCA][INTENT_STORE] order_intents unavailable; using memory fallback. Risk-reduction exits remain enabled but recovery is process-local.");
       idcaRepo.createEvent({
-        eventType: "idca_intent_store_memory_fallback",
+        eventType: "idca_intent_store_unavailable",
         severity: "critical",
         mode: "live",
-        message: "order_intents no está disponible; IDCA usa registro de intenciones en memoria. La recuperación tras reinicio es limitada.",
+        message: "order_intents no está disponible; ejecución live IDCA bloqueada fail-closed. No se enviará ninguna orden sin trazabilidad durable.",
         payloadJson: { reason: "order_intents_missing" },
       }).catch(() => {});
-      return memoryFallback;
+      throw new Error("IDCA_INTENT_STORE_UNAVAILABLE: persistencia durable requerida para cualquier ejecución live; apply migración 007/087");
     }
     throw e;
   }
@@ -371,7 +488,31 @@ export async function submitAndReconcile(params: SubmitReconcileParams): Promise
     internalIntentId: clientOrderId, engineOwner: "IDCA", executionMode: "live", lotId: String(params.cycleId),
     reason: encodeReason({ reason: params.reason, closePosition: params.closePosition === true, venueClientOrderId, closeReason: params.closeReason }), fillPrice: null, fillVolume: null, feeUsd: null,
   };
-  const inserted = await store.insert(intent);
+  let inserted: boolean;
+  if (store instanceof DrizzleIdcaIntentStore) {
+    // Race-free durable reservation: the insert happens inside the advisory-
+    // locked transaction that evaluates global pending exposure. A violating
+    // submission is rejected BEFORE any venue contact.
+    const { insertIntentWithReservation } = await import("./IdcaLiveReservations");
+    const res = await insertIntentWithReservation({
+      clientOrderId,
+      pair: params.pair,
+      side: params.side,
+      volume: params.requestedQty,
+      reservedQuoteUsd: params.side === "buy" ? Math.max(0, params.reservedQuoteUsd ?? 0) : 0,
+      availableQuoteCapUsd: params.availableQuoteCapUsd ?? null,
+      internalIntentId: clientOrderId,
+      executionMode: "live",
+      lotId: String(params.cycleId),
+      encodedReason: intent.reason,
+    });
+    if (!res.inserted && !res.violations.includes("client_order_id_conflict")) {
+      throw new Error(`IDCA_RESERVATION_REJECTED: ${res.violations.join(",")} pair=${params.pair} side=${params.side}`);
+    }
+    inserted = res.inserted;
+  } else {
+    inserted = await store.insert(intent);
+  }
   if (!inserted) {
     const existing = await store.get(clientOrderId);
     if (existing) return reconcileIntent(existing, venue, store, params.requestedQty, params.accounting ?? defaultIdcaAccountingPort, { deferBuyAccounting: params.side === "buy" });
@@ -386,17 +527,27 @@ export async function submitAndReconcile(params: SubmitReconcileParams): Promise
     return { state: "uncertain", filledQty: 0, grossFilledQty: 0, netFilledQty: 0, avgPrice: 0, feesUsd: 0, feeSource: "none", remainingQty: params.requestedQty, terminal: false, intent, newlyAppliedFillIds: [], alreadyApplied: false, deltaFilledQty: 0, deltaGrossValueUsd: 0, deltaFeesUsd: 0 };
   }
   intent.exchangeOrderId = result?.orderId ?? result?.txid ?? null;
-  if (!result?.success || result?.submissionState === "REJECTED") {
+  // Classification matrix over the REAL adapter contract (RevolutXService.placeOrder):
+  //   success=false + submissionState=REJECTED  → rejected (unequivocal only)
+  //   success=false + submissionState=AMBIGUOUS → uncertain (never rejected!)
+  //   success=false + submissionState missing/other → uncertain (doubt = uncertain)
+  //   success=true  + submissionState=ACCEPTED/missing → accepted_pending (verify via fills)
+  //   success=true  + submissionState=REJECTED/AMBIGUOUS → inconsistent → uncertain
+  // An ambiguous result is never re-sent and never releases the reservation.
+  const submissionState = result?.submissionState;
+  const isUnequivocalReject = result?.success === false && submissionState === "REJECTED";
+  const isAccepted = result?.success === true && (submissionState === "ACCEPTED" || submissionState == null);
+  if (!isUnequivocalReject && !isAccepted) {
+    intent.status = "uncertain"; await store.update(intent);
+    emitIntentCriticalEvent(intent, "idca_order_uncertain", `Orden IDCA en estado incierto (success=${result?.success} submissionState=${submissionState ?? "ausente"}). No se reenviará ni liberará reserva hasta reconciliar.`, { submissionState: submissionState ?? null, success: result?.success ?? null, error: result?.error ?? null });
+    return { state: "uncertain", filledQty: 0, grossFilledQty: 0, netFilledQty: 0, avgPrice: 0, feesUsd: 0, feeSource: "none", remainingQty: params.requestedQty, terminal: false, intent, newlyAppliedFillIds: [], alreadyApplied: false, deltaFilledQty: 0, deltaGrossValueUsd: 0, deltaFeesUsd: 0 };
+  }
+  if (isUnequivocalReject) {
     intent.status = "rejected";
     intent.reason = encodeReason({ ...decodeReason(intent.reason), applied: true });
     await store.update(intent);
     emitIntentCriticalEvent(intent, "idca_order_rejected", `Orden IDCA rechazada inequívocamente: ${result?.error || "sin detalle"}. El ciclo no fue modificado.`, { error: result?.error ?? null });
     return { state: "rejected", filledQty: 0, grossFilledQty: 0, netFilledQty: 0, avgPrice: 0, feesUsd: 0, feeSource: "none", remainingQty: params.requestedQty, terminal: true, intent, newlyAppliedFillIds: [], alreadyApplied: false, deltaFilledQty: 0, deltaGrossValueUsd: 0, deltaFeesUsd: 0 };
-  }
-  if (result?.submissionState === "AMBIGUOUS") {
-    intent.status = "uncertain"; await store.update(intent);
-    emitIntentCriticalEvent(intent, "idca_order_uncertain", "Orden IDCA quedó en estado ambiguo. No se reenviará hasta reconciliar.", { submissionState: "AMBIGUOUS" });
-    return { state: "uncertain", filledQty: 0, grossFilledQty: 0, netFilledQty: 0, avgPrice: 0, feesUsd: 0, feeSource: "none", remainingQty: params.requestedQty, terminal: false, intent, newlyAppliedFillIds: [], alreadyApplied: false, deltaFilledQty: 0, deltaGrossValueUsd: 0, deltaFeesUsd: 0 };
   }
   intent.status = "accepted_pending"; await store.update(intent);
   return reconcileIntent(intent, venue, store, params.requestedQty, params.accounting ?? defaultIdcaAccountingPort, { deferBuyAccounting: params.side === "buy" });

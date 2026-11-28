@@ -4,6 +4,8 @@
  * Completely isolated from the main bot's TradingEngine.
  */
 import * as repo from "./IdcaRepository";
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
 import { getNearZoneThresholdPct } from "./IdcaTelegramNotifier";
@@ -1001,6 +1003,51 @@ async function loadAnchorsFromDb(): Promise<void> {
   }
 }
 
+/**
+ * WP10e: recuperación de ciclos provisionales tras reinicio.
+ * Regla:
+ *  - provisional con cantidad aplicada por reconciliación → promover a active
+ *    (todos los parámetros de estrategia ya están persistidos en la fila);
+ *  - provisional sin cantidad y sin intents pendientes → cerrar como voided;
+ *  - provisional con intents aún pendientes → mantener y alertar.
+ * Nunca muta ciclos ajenos: solo status='provisional' exacto.
+ */
+export async function recoverProvisionalCycles(): Promise<{ promoted: number[]; voided: number[]; pending: number[] }> {
+  const result = { promoted: [] as number[], voided: [] as number[], pending: [] as number[] };
+  let provisionals: any[] = [];
+  try {
+    provisionals = await repo.getCycles({ status: "provisional" } as any);
+  } catch (e: any) {
+    console.error(`${TAG}[PROVISIONAL_RECOVERY] query failed: ${e.message}`);
+    return result;
+  }
+  for (const cycle of provisionals ?? []) {
+    try {
+      const qty = parseFloat(String(cycle.totalQuantity ?? "0"));
+      // ¿hay intents pendientes para este ciclo?
+      const { rows } = await db.execute(
+        sql`SELECT client_order_id, status FROM order_intents WHERE engine_owner='IDCA' AND lot_id=${String(cycle.id)} AND status IN ('submitting','accepted_pending','uncertain','partial')`
+      );
+      const pendingIntents = rows ?? [];
+      if (qty > 0) {
+        await repo.updateCycle(cycle.id, { status: "active" } as any);
+        result.promoted.push(cycle.id);
+        console.log(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} promovido a active (qty=${qty})`);
+      } else if (pendingIntents.length > 0) {
+        result.pending.push(cycle.id);
+        console.warn(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} sigue provisional: ${pendingIntents.length} intents pendientes`);
+      } else {
+        await repo.updateCycle(cycle.id, { status: "closed", closeReason: "voided_no_fill_recovery", closedAt: new Date() } as any);
+        result.voided.push(cycle.id);
+        console.log(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} anulado sin fills`);
+      }
+    } catch (e: any) {
+      console.error(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id}: ${e.message}`);
+    }
+  }
+  return result;
+}
+
 export async function startScheduler(): Promise<void> {
   if (schedulerTimeout) return;
 
@@ -1011,6 +1058,12 @@ export async function startScheduler(): Promise<void> {
     try {
       startupReconciliationResult = await runStartupReconciliation();
       try { await reconcilePendingIntents(); } catch (e: any) { console.error(`${TAG}[INTENT_RECONCILE_STARTUP] ${e.message}`); }
+      try {
+        const rec = await recoverProvisionalCycles();
+        if (rec.promoted.length || rec.voided.length || rec.pending.length) {
+          console.log(`${TAG}[PROVISIONAL_RECOVERY] promoted=${rec.promoted.length} voided=${rec.voided.length} pending=${rec.pending.length}`);
+        }
+      } catch (e: any) { console.error(`${TAG}[PROVISIONAL_RECOVERY] ${e.message}`); }
       startupReconciliationCompleted = true;
 
       if (!isSafeToStartAfterReconciliation(startupReconciliationResult)) {
@@ -2497,13 +2550,56 @@ async function checkEntry(
   let feeAmount: number | null | undefined = null;
   let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
 
+  // ─── WP10e: ciclo provisional durable ANTES de cualquier contacto con el venue.
+  // La identidad de la operación es estable (id de ciclo real), independiente
+  // de precio/cantidad; un crash tras el fill es recuperable porque la
+  // reconciliación aplica fills al ciclo provisional y la promoción es un
+  // simple cambio de estado con todos los parámetros de estrategia ya persistidos.
+  let provisionalCycleId = 0;
   if (mode === "live") {
-    // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
+    const provisional = await repo.createCycle({
+      pair,
+      strategy: "institutional_dca_v1",
+      mode,
+      status: "provisional",
+      capitalReservedUsd: capitalForCycle.toFixed(2),
+      capitalUsedUsd: "0",
+      totalCostBasisUsd: "0",
+      totalQuantity: "0",
+      avgEntryPrice: currentPrice.toFixed(8),
+      currentPrice: currentPrice.toFixed(8),
+      buyCount: 0,
+      tpTargetPct: tpPct.toFixed(2),
+      tpTargetPrice: tpPrice.toFixed(8),
+      trailingPct: trailingPct.toFixed(2),
+      nextBuyLevelPct: nextLevel?.toFixed(2) || null,
+      nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+      marketScore: (check.marketScore || 0).toFixed(2),
+      volatilityScore: (check.volatilityScore || 0).toFixed(2),
+      adaptiveSizeProfile: check.sizeProfile || "balanced",
+      tpBreakdownJson: tpBreakdown,
+      cycleType: "main",
+      basePrice: bp.price.toFixed(8),
+      basePriceType: bp.type,
+      basePriceWindowMinutes: bp.windowMinutes,
+      basePriceTimestamp: bp.timestamp,
+      basePriceMetaJson: {
+        ...(bp.meta || {}),
+        ...(assetConfig.vwapEnabled && vc ? { vwapBands: { lowerBand2: vc.lowerBand2, lowerBand3: vc.lowerBand3 } } : {}),
+        provisionalPlanned: { quantity, baseBuyUsd, entryDipPct: check.entryDipPct || 0 },
+      },
+      entryDipPct: (check.entryDipPct || 0).toFixed(4),
+    });
+    provisionalCycleId = provisional.id;
+  }
+
+  if (mode === "live") {
+    // ─── MODO LIVE: ciclo provisional ya existe; la compra referencia su id ─
     const execResult = await executeRealBuyWithGuard(
       pair,
       quantity,
       currentPrice,
-      0, // cycleId aún no existe
+      provisionalCycleId,
       "initial",
       mode,
       assetConfig,
@@ -2511,21 +2607,45 @@ async function checkEntry(
     );
 
     if (!execResult.success) {
-      // Compra fallida - NO crear ciclo
-      console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${execResult.rejectionReason}`);
+      // Compra fallida. Regla de resolución del provisional:
+      //  - terminal sin fill (rejected/expired) o bloqueo previo sin contacto
+      //    con el venue → cerrar como voided (no hubo dinero en juego);
+      //  - cualquier incertidumbre (execution_unknown, send_failed, orden
+      //    aceptada sin fill aún) → MANTENER provisional para reconciliación.
+      const rr = execResult.rejectionReason ?? "";
+      const terminalNoFill = /^no_fill: (rejected|expired)/.test(rr);
+      const uncertainOrSent = /execution_unknown|send_failed|no_fill: (accepted_pending|uncertain|partial)/.test(rr);
+      console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${rr} provisional=${provisionalCycleId} resolution=${uncertainOrSent ? "keep_provisional" : "void"}`);
+      if (!uncertainOrSent) {
+        await repo.updateCycle(provisionalCycleId, {
+          status: "closed",
+          closeReason: terminalNoFill ? "voided_no_fill_terminal" : "voided_before_venue_contact",
+          closedAt: new Date(),
+        } as any).catch((e: any) => console.error(`${TAG}[LIVE][INITIAL_BUY] void failed: ${e.message}`));
+      } else {
+        await createHumanEvent({
+          cycleId: provisionalCycleId,
+          pair,
+          mode,
+          eventType: "provisional_cycle_pending_reconciliation",
+          severity: "critical",
+          message: `Ciclo provisional #${provisionalCycleId} pendiente de reconciliación: la orden pudo haber llegado al venue. La reconciliación aplicará fills y promoverá o anulará el ciclo.`,
+          payloadJson: { rejectionReason: rr, provisionalCycleId },
+        }, { eventType: "provisional_cycle_pending_reconciliation", pair, mode, price: currentPrice, quantity }).catch(() => {});
+      }
       await createHumanEvent({
-        cycleId: undefined,
+        cycleId: provisionalCycleId,
         pair,
         mode,
         eventType: "initial_buy_failed",
         severity: "error",
-        message: `Compra inicial bloqueada: ${execResult.rejectionReason}`,
-        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: execResult.rejectionReason },
+        message: `Compra inicial bloqueada: ${rr}`,
+        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: rr, provisionalCycleId },
       }, { eventType: "initial_buy_failed", pair, mode, price: currentPrice, quantity });
       if (trailingBuyEntry) {
         TrailingBuyManager.releasePendingTrigger(pair);
       }
-      return; // Abortar - NO crear ciclo
+      return; // Abortar - ciclo ya resuelto según la regla anterior
     }
 
     // Fill confirmado - usar valores EJECUTADOS
@@ -2553,8 +2673,10 @@ async function checkEntry(
     executedUsd = baseBuyUsd + feeUsd + slippageUsd;
   }
 
-  // ─── Crear ciclo con valores EJECUTADOS (LIVE) o PLANIFICADOS (SIM) ─
-  const cycle = await repo.createCycle({
+  // ─── Crear/promover ciclo con valores EJECUTADOS (LIVE) o PLANIFICADOS (SIM) ─
+  // LIVE: el ciclo provisional durable ya existe; se promueve a active con los
+  // valores realmente ejecutados. SIM: se crea directamente como antes.
+  const cycleValues = {
     pair,
     strategy: "institutional_dca_v1",
     mode,
@@ -2588,7 +2710,10 @@ async function checkEntry(
       ...(assetConfig.vwapEnabled && vc ? { vwapBands: { lowerBand2: vc.lowerBand2, lowerBand3: vc.lowerBand3 } } : {}),
     },
     entryDipPct: (check.entryDipPct || 0).toFixed(4),
-  });
+  };
+  const cycle = mode === "live"
+    ? await repo.updateCycle(provisionalCycleId, cycleValues as any)
+    : await repo.createCycle(cycleValues as any);
 
   // ─── FASE 4: CYCLE_START snapshot — non-blocking, write-only
   emitIdcaSnapshot({
@@ -5656,9 +5781,14 @@ async function executeRealBuyWithGuard(
   }
 
   // ─── FASE 2/3: Enviar una sola vez con intención durable y reconciliar fill ───
+  // Identidad estable: nunca depende de precio/cantidad, de modo que un
+  // reintento tras timeout/reinicio reconcilia la MISMA intención durable en
+  // lugar de enviar un duplicado. Para compras iniciales el caller crea antes
+  // un ciclo provisional durable y pasa su id real (cycleId > 0); el fallback
+  // por par solo existe para llamadas legacy sin ciclo y también es estable.
   const intentScope = cycleId > 0
     ? String(cycleId)
-    : `0_${pair.replace(/[^A-Za-z0-9]/g, "_")}_${finalQty.toFixed(8)}_${price.toFixed(8)}`;
+    : `0_${pair.replace(/[^A-Za-z0-9]/g, "_")}`;
   const intentKey = `${buyType}_${buyLevel ?? 0}_${intentScope}`;
   let outcome: ReconciledOutcome;
   try {
