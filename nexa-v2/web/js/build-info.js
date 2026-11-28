@@ -1,9 +1,8 @@
 // Sello de compilación de NEXA V2. Generado por scripts/stamp-build.mjs.
-// Valores placeholder en el árbol fuente: el sello real solo existe dentro del artefacto.
 export const BUILD_INFO = {
-  version: "0.0.0-dev",
-  commit: "source",
-  channel: "dev",
-  builtAt: null,
-  apkType: "source",
+  version: "0.13.0",
+  commit: "482da47",
+  channel: "qa",
+  builtAt: "2026-11-28T19:54:50.002Z",
+  apkType: "debug",
 };

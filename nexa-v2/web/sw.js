@@ -1,7 +1,7 @@
 // NEXA rev24 — static shell only. Never cache API/auth responses.
 // CACHE is rewritten by scripts/stamp-build.mjs at every build so each APK/web
 // version invalidates the previous shell and never serves stale modules.
-const CACHE='nexa-v2-dev';
+const CACHE='nexa-v2-0.13.0-qa-482da47';
 const SHELL=[
  './','./index.html','./manifest.webmanifest','./assets/icon.svg',
  './css/style.css','./css/premium.css','./css/dashboard.css','./css/scope-portfolio.css',
