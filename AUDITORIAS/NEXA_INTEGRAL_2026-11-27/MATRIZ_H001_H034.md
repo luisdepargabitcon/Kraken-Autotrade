@@ -1,0 +1,52 @@
+# MATRIZ H-001…H-034 (auditoría #20) y criterios de aceptación #22
+
+Leyenda de estado por fila (se distingue explícitamente): **IMPLEMENTADO** (código en la rama), **PROBADO** (tests aislados verdes), **SUBIDO** (en la PR #23), **DESPLEGADO** (nunca: nada está desplegado), **VALIDADO_USUARIO** (nunca: no hay validación del propietario). «Parcial» = existe una parte; lo que falta se nombra. Todas las pruebas usan mocks/fixtures sin red privada ni DB real. Tests citados en `server/…/__tests__/` salvo indicación.
+
+| H | Hallazgo | Cambio (commit) | Prueba | Estado | Pendiente / límite |
+|---|---|---|---|---|---|
+| H-001 | `POST /api/trade` y métodos Kraken ejecutables | `kraken.ts` lanza `KRAKEN_EXECUTION_FORBIDDEN` (incondicional, sin flag); `/api/trade` → 410 sin crear trade (0da52ee, 3c244ce) | krakenExecutionForbidden, legacyKrakenTradeRoute | IMPLEMENTADO · PROBADO · SUBIDO | Permisos reales de la clave: panel del propietario (NO_VERIFICADO) |
+| H-002 | API sin autenticación | Auth v2 (contrato NEXA real) + enforcement global deny-by-default, WebSockets, idempotencia (320845b, b41ffdf) | authV2* (service, enforcement, cobertura de 511 rutas, Drizzle/PGlite, E2E cliente NEXA real y web) | IMPLEMENTADO · PROBADO · SUBIDO | **Contención de perímetro/infraestructura NO ejecutada** (requiere autorización expresa); prerrequisitos de despliegue en `docs/AUTH_V2_DEPLOYMENT.md` (migración 095 NO registrada, `NXV2_BOOTSTRAP_CODE`, emparejado admin) |
+| H-003 | `active-exchange` admite Kraken | Ruta 400 para kraken/RX no habilitado; setters lanzan; config persistida ⇒ venue `null` sin autorizar otro venue (0da52ee, 5f7234d) | krakenExecutionForbidden, exchangeFactoryVenueSeparation | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-004 | Fallback silencioso a Kraken | `getExecutionVenue()` único, defaults `null`, `VENUE_UNAVAILABLE:<motivo>` (5f7234d) | exchangeFactoryVenueSeparation (tabla de combinaciones) | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-005 | `executeExit` ordena en cualquier modo | Scope validado contra modo persistido (desconocido/discrepante ⇒ 0 órdenes y 0 escrituras); reconciliador durable de fills (5f7234d, 6a524ed) | idcaExecutionScopeFlow, idcaLiveOrderReconciler (25), idcaModeGuard | IMPLEMENTADO · PROBADO · SUBIDO | Limitaciones declaradas: no atómico DB; compra inicial sin ciclo; sin reserva de quote durable (informe) |
+| H-006 | GRID SHADOW consulta ticker/balance firmados | Valoración con precio público del contrato (válido ≤5 min) o parcial explícito; SHADOW sin consultas privadas propias; constraints públicas en SHADOW (b0c4517, 1b64555) | gridShadowLowApiWorkload (72 ciclos: 0 privadas vs 72 legacy) | IMPLEMENTADO · PROBADO · SUBIDO | Medido en simulación, no en producción; REAL (unlock/reconcile manual) sigue usando saldo privado por diseño |
+| H-007 | Rate-limit parcial, sin Retry-After | Scheduler común con prioridades/envejecimiento, Retry-After (s y fecha HTTP), jitter, reintentos solo GET, breaker; BalanceCache con generaciones y edad (9ddc5c3…f86eac2) | revolutXRequestScheduler, balanceCacheConcurrency | IMPLEMENTADO · PROBADO · SUBIDO | Sin medida en producción |
+| H-008 | Runtime ≠ main; 17 529 reinicios | Mapa medido con git (main-only = solo docs; merge-tree sin conflictos); diagnóstico estático de reinicios (f1af550, 7a1a83f) | marketMetricsStartupIdempotence, idcaStartupReconciliationIdempotence | PARCIAL (documental + tests de arranque) | Causa de reinicios NO atribuible sin ExitCode/OOMKilled/logs reales (requiere autorización VPS read-only) |
+| H-009 | `main` sin normalización s/ms | La candidata parte del runtime (que la contiene) y añade `epochNormalizer` único (97d19cb) | epochNormalizer, spotCandleTimestamp | IMPLEMENTADO · PROBADO · SUBIDO | `main` sigue sin ella (no se despliega main) |
+| H-010 | OI absoluto vs umbral % | OI como delta causal 24 h (mismo proveedor/activo/unidad, sin lookahead) (c3beba6) | openInterestDelta, marketMetricsEngine | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-011 | Funding con fallback BTC y edad por ingesta | Sin fallback; edad por `tsProvider`; unidad explícita; ventana 9 h (8ee3ba4, 54ca789) | marketMetricsEngine (unidad 0,0001/0,0005/0,001) | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-012 | Todo stale ⇒ «favorable»; BLOQUEAR inalcanzable | Estados ok/stale/missing/unknown_age/invalid; todo no-ok ⇒ UNKNOWN (no favorable); alcanzabilidad medida (8ee3ba4, 6134d75) | marketMetricsEngine, alcanzabilidad | IMPLEMENTADO · PROBADO · SUBIDO | Umbrales NO cambiados; no activar bloqueo sin validación |
+| H-013 | Market Metrics sin consumidor | Contadores invocaciones/persistidas/consumidores; advisory IDCA informativo (c106c6a, 327065c) | marketMetricsAdvisory (no altera entrada) | IMPLEMENTADO · PROBADO · SUBIDO | Intencionalmente sin gobernar compras |
+| H-014 | Ráfagas/997 k snapshots | Dedup por observación, `refreshIfDue`, jitter, consultas acotadas; propuesta de retención (109a47c, d7918aa) | marketMetricsStorageDedupe (PGlite), startup idempotence | PARCIAL | Sin purga ni migración; causa de ráfagas = hipótesis |
+| H-015 | DeFiLlama duplicados/extremos | Dedup por símbolo y extremos `invalid` (703dcc6) | stablecoin tests | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-016 | EMA50 BTC→ETH = EMA20 previa | EMA50 real, warm-up 2×periodo, sin `Math.min` (28dd5e8) | idcaVolumeAndEma, idcaMarketScoreCallSite | IMPLEMENTADO · PROBADO · SUBIDO | Efecto medido pequeño y simétrico (IMPACTO_INDICADORES) |
+| H-017 | Volumen relativo 1/1 | Última vela cerrada por tiempo antes de validar volumen; sin sustituir/saltar; 0 válido ≠ ausente; score degradado ⇒ bloqueo por defecto (28dd5e8) | idcaVolumeAndEma, idcaMarketScoreCallSite | IMPLEMENTADO · PROBADO · SUBIDO | Calibración del score no tocada; ablation en IMPACTO_INDICADORES |
+| H-018 | Vela en formación / EMA semilla | Velas cerradas en volumen y score; semilla SMA en EMA estricta (28dd5e8, c856e5e) | idca*, indicators core | PARCIAL | Indicadores legacy de otros consumidores no migrados (INDICADORES_DIVERGENCIAS) |
+| H-019 | ATR SMA vs Wilder | Ambos disponibles con parámetro explícito; convención de cada consumidor NO cambiada (c856e5e) | indicators/core | PARCIAL | SMA +7 %…+11 % vs Wilder en muestra pública; decisión del propietario |
+| H-020 | Mezcla s/ms; filas 1970 | `normalizeEpochToMs` en toda ingesta de velas incl. caché IDCA; lectura ignora filas inválidas (97d19cb) | epochNormalizer, idca cache | IMPLEMENTADO · PROBADO · SUBIDO | MDS legacy `getCandles` conserva su unidad (contrato nuevo `getCandleSeries` en ms); sin saneado de BD real |
+| H-021 | Fallback DB parece fresco | `origin`/`providerTs`/`receivedAt`/`cachedAt` separados y veraces (ac2e120) | marketDataServiceContract | IMPLEMENTADO · PROBADO · SUBIDO | — |
+| H-022 | `getPrice` 0/stale sin metadatos | `getPricePoint` con validez y edad; salidas usan `resolveExitPriceInput` (no inventa precio) (ac2e120, a5386e3) | marketDataServiceContract, idcaEngineGateE2E | PARCIAL | `getPrice/getTicker` legacy sin cambiar de contrato (otros consumidores) |
+| H-023 | TTL 1h=90 min | Gate de entradas con edad ≤2×timeframe contra el cierre esperado (a5386e3) | idcaDataGateCallSite, idcaEngineGateE2E | PARCIAL | TTL legacy de MDS sin cambiar |
+| H-024 | GRID protective taker | Sin cambios (REAL bloqueado; no se habilita taker real) | — | N/A (confirmado, sin acción) | — |
+| H-025 | 34/39 ventas sin `exchange_order_id` | Matcher puro verified/unmatched/ambiguous + diseño de consulta de solo lectura (8b453aa) | idcaSellReconciliationMatcher (sintético) | PARCIAL | Ejecución privada por el propietario; no se corrige histórico |
+| H-026 | Contenedor legacy vivo | Sin acción (no autorizado) | — | PENDIENTE | Autorización VPS |
+| H-027 | Bloat `market_candles` | Solo propuesta de retención | — | PENDIENTE | Medición en copia autorizada |
+| H-028 | `positions/:pair/close` sin guard `TRADING_ENABLED` | Protegida por auth + csrf + permiso `spot:control`; sin bloquear reducción de riesgo | authV2Enforcement | PARCIAL | Sin guard `TRADING_ENABLED` por diseño (cierre de reducción de riesgo) |
+| H-029 | VWAP | Librería con VWAP anclado/periodo y reloj inyectado (c856e5e) | indicators/core | IMPLEMENTADO · PROBADO · SUBIDO | Consumidores productivos no migrados |
+| H-030 | `percentB` NaN con precios planos | Librería devuelve `null` + razón (c856e5e) | indicators/core | PARCIAL | Consumidores legacy no migrados |
+| H-031 | MACD truncado | MACD estándar en librería; impacto medido (0,15 % desacuerdo de signo); comparación SHADOW opcional apagada (c856e5e, fb465bf) | core, indicatorShadowCompare | PARCIAL | Migración productiva solo tras shadow en entorno del propietario |
+| H-032 | Dos RSI | Política de serie plana explícita en librería; consumidores sin cambiar (c856e5e) | core | PARCIAL | Decisión pendiente |
+| H-033 | `IdcaExecutionManager` sin guard | Scope + reconciliador en las 3 estrategias (5f7234d, 6a524ed) | idcaExecutionManagerScope | IMPLEMENTADO · PROBADO · SUBIDO | Sin llamador operativo hoy |
+| H-034 | AMA real / SPOT V4 REAL | Sin cambios (bloqueos compile-time intactos) | — | N/A (confirmado, sin acción) | — |
+
+## Criterios de aceptación #22 §9
+
+1. **Kraken imposible de ejecutar, sin fallback, auth/roles y modo seguro en todos los caminos** — IMPLEMENTADO y PROBADO en código; la contención de infraestructura queda PENDIENTE de autorización.
+2. **Ejecución idempotente y reconciliada con fills modelados** — IMPLEMENTADO y PROBADO para IDCA (limitaciones declaradas).
+3. **LOW_API medido en workload aislado** — PROBADO en simulación (0 privadas de planificación SHADOW).
+4. **Calidad y procedencia por consumidor, indicadores correctos, sin datos inventados** — IMPLEMENTADO para IDCA/contrato/health; consumidores legacy parciales (ver filas PARCIAL).
+5. **No regresión de estrategias/inventario/FISCO/contratos** — la suite completa se comparó base vs candidato en el mismo entorno: 0 regresiones en cada paquete.
+6. **Convergencia candidata trazable y probada** — MAPA_CONVERGENCIA (medido); fusión no ejecutada.
+7. **Estrategias OFF y evidencia de replay o pendientes explícitos** — todas las variantes OFF por defecto; replay de señales públicas NO CONCLUYENTE; replay privado PENDIENTE de acceso a la copia existente.
+8. **Artefactos/compatibilidad NEXA verificables** — ver ARTEFACTOS_NEXA.md.
+9. **Sin cambios productivos ni secretos publicados** — verificado en el diff (escaneo de patrones de secretos documentado en el informe).

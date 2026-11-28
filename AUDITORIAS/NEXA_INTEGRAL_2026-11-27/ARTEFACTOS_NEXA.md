@@ -1,7 +1,7 @@
 # Artefactos NEXA v2 — web ZIP y APK debug
 
-Fecha de generación: 2026-11-28  
-Commit de referencia: `4a57fdd`  
+Fecha de generación: 2026-11-28
+Commit de referencia: `4a57fdd`
 Estado: **SIN APROBAR — no publicado, no subido a GitHub, no validado por el propietario en Pixel/dispositivo real.**
 
 `<REPO>` representa el worktree del repositorio. `<ARTIFACTS>` representa la carpeta local de artefactos fuera del repositorio. `<BUILD_TMP>` representa la carpeta temporal local de build. No se incluyen rutas privadas absolutas, hosts, IP ni credenciales.
