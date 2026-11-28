@@ -282,4 +282,36 @@ describe("reservas durables PGlite", () => {
     const rows = (await db.execute(sql`SELECT * FROM order_intents`)).rows;
     expect(rows).toHaveLength(1);
   });
+
+  // TANGO-5 §2: coordinación cross-motor — la exposición pendiente de OTROS
+  // motores que comparten la cuenta consume el mismo cap.
+  it("cross-motor: compra pendiente de SPOT descuenta el cap de IDCA", async () => {
+    const { db } = await makeDb();
+    // SPOT tiene 400 USD reservados pendientes; cap total 500 → IDCA solo puede 100.
+    await db.execute(sql`INSERT INTO order_intents (client_order_id,exchange,pair,side,volume,status,internal_intent_id,engine_owner,policy_version,execution_mode,lot_id,reason,reserved_quote_usd,reserved_quote_currency)
+      VALUES ('SPOT_buy_1_x','revolutx','ETH/USD','buy','1','accepted_pending','SPOT_buy_1_x','SPOT_CANONICAL','SPOT_P1','live','5','spot','400','USD')`);
+    const exposure = await computePendingExposure("BTC/USD", "buy", db);
+    expect(exposure.pendingBuyReservedQuoteUsdAllEngines).toBeCloseTo(400, 6);
+    expect(exposure.pendingBuyReservedQuoteUsd).toBeCloseTo(0, 6); // IDCA propio: nada
+    // IDCA intenta reservar 150 → 400+150=550 > 500 → rechazo cross-motor.
+    const res = await insertIntentWithReservation({ ...baseInsert, reservedQuoteUsd: 150 }, db);
+    expect(res.inserted).toBe(false);
+    expect(res.violations).toContain("quote_cap_exceeded");
+    // Con 100 exactos sí cabe (400+100=500 ≤ 500).
+    const ok = await insertIntentWithReservation({ ...baseInsert, reservedQuoteUsd: 100 }, db);
+    expect(ok.inserted).toBe(true);
+  });
+
+  it("cross-motor: la exposición pendiente de IDCA también agrega en el total de cuenta", async () => {
+    const { db } = await makeDb();
+    const first = await insertIntentWithReservation({ ...baseInsert, reservedQuoteUsd: 300 }, db);
+    expect(first.inserted).toBe(true);
+    // Segunda compra de OTRO par (ETH) con 250: 300+250=550 > 500 → rechazada por cuenta.
+    const second = await insertIntentWithReservation({
+      ...baseInsert, clientOrderId: "IDCA_buy_10_eth", internalIntentId: "IDCA_buy_10_eth",
+      pair: "ETH/USD", reservedQuoteUsd: 250,
+    }, db);
+    expect(second.inserted).toBe(false);
+    expect(second.violations).toContain("quote_cap_exceeded");
+  });
 });

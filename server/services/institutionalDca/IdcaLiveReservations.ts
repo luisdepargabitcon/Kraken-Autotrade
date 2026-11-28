@@ -26,6 +26,8 @@ export interface PendingExposure {
   pendingSellQtyAsset: number;
   pendingBuyReservedQuoteUsd: number;
   heldQtyLiveCycles: number;
+  /** Exposición de compra pendiente agregada de TODOS los motores de la cuenta (TANGO-5 §2). */
+  pendingBuyReservedQuoteUsdAllEngines?: number;
 }
 
 export interface ReservationCheck {
@@ -40,22 +42,30 @@ export async function computePendingExposure(
   dbOrTx: any,
 ): Promise<PendingExposure> {
   // Estados fijos del módulo (constantes, no input externo): IN literales.
-  const rows = (await dbOrTx.execute(sql`SELECT pair, side, volume, reserved_quote_usd, status FROM order_intents WHERE engine_owner='IDCA' AND status IN ('submitting','accepted_pending','uncertain','partial')`)).rows ?? [];
+  const rows = (await dbOrTx.execute(sql`SELECT pair, side, volume, reserved_quote_usd, status, engine_owner FROM order_intents WHERE status IN ('submitting','accepted_pending','uncertain','partial')`)).rows ?? [];
   let pendingBuyCountPairSide = 0;
   let pendingSellQtyAsset = 0;
   let pendingBuyReservedQuoteUsd = 0;
+  // TANGO-5 §2: exposición de CUENTA — las compras pendientes de cualquier motor
+  // que comparte el capital de la cuenta (IDCA, SPOT, ...) compiten por el mismo
+  // quote. El cap de IDCA descuenta la exposición pendiente agregada cross-motor.
+  let pendingBuyReservedQuoteUsdAllEngines = 0;
   for (const r of rows) {
     const v = parseFloat(String(r.volume ?? "0")) || 0;
     if (r.side === "buy") {
-      pendingBuyReservedQuoteUsd += parseFloat(String(r.reserved_quote_usd ?? "0")) || 0;
-      if (r.pair === pair && side === "buy") pendingBuyCountPairSide++;
-    } else if (r.side === "sell" && r.pair === pair) {
+      const rq = parseFloat(String(r.reserved_quote_usd ?? "0")) || 0;
+      pendingBuyReservedQuoteUsdAllEngines += rq;
+      if (r.engine_owner === 'IDCA') {
+        pendingBuyReservedQuoteUsd += rq;
+        if (r.pair === pair && side === "buy") pendingBuyCountPairSide++;
+      }
+    } else if (r.side === "sell" && r.pair === pair && r.engine_owner === 'IDCA') {
       pendingSellQtyAsset += v;
     }
   }
   const heldRes = await dbOrTx.execute(sql`SELECT COALESCE(SUM(total_quantity),0) AS held FROM institutional_dca_cycles WHERE pair=${pair} AND mode='live' AND status IN ('active','open','running','provisional')`);
   const heldQtyLiveCycles = parseFloat(String(heldRes.rows?.[0]?.held ?? "0")) || 0;
-  return { pendingBuyCountPairSide, pendingSellQtyAsset, pendingBuyReservedQuoteUsd, heldQtyLiveCycles };
+  return { pendingBuyCountPairSide, pendingSellQtyAsset, pendingBuyReservedQuoteUsd, pendingBuyReservedQuoteUsdAllEngines, heldQtyLiveCycles };
 }
 
 export function evaluateReservation(
@@ -77,8 +87,16 @@ export function evaluateReservation(
     // opcional en el contrato real.
     if (availableQuoteCapUsd == null || !Number.isFinite(availableQuoteCapUsd) || availableQuoteCapUsd <= 0) {
       violations.push("buy_without_valid_quote_cap");
-    } else if (exposure.pendingBuyReservedQuoteUsd + newReservedQuoteUsd > availableQuoteCapUsd * (1 + 1e-9)) {
-      violations.push("quote_cap_exceeded");
+    } else {
+      // TANGO-5 §2: el cap se evalúa contra la exposición de CUENTA completa
+      // (todos los motores). La exposición de otros motores nunca se ignora.
+      const accountExposure = Math.max(
+        exposure.pendingBuyReservedQuoteUsdAllEngines ?? 0,
+        exposure.pendingBuyReservedQuoteUsd,
+      );
+      if (accountExposure + newReservedQuoteUsd > availableQuoteCapUsd * (1 + 1e-9)) {
+        violations.push("quote_cap_exceeded");
+      }
     }
   } else {
     // Ventas: disponible = tenencia live menos ventas ya pendientes. Con
@@ -123,6 +141,9 @@ export async function insertIntentWithReservation(
 ): Promise<InsertWithReservationResult> {
   return dbInstance.transaction(async (tx: any) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('idca_live_intent_reservation'))`);
+    // TANGO-5 §2: lock COMPARTIDO con SPOT — serializa las reservas de compra de
+    // todos los motores de la cuenta en el mismo dominio transaccional.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('account_live_buy_reservation'))`);
     const exposure = await computePendingExposure(params.pair, params.side, tx);
     const check = evaluateReservation(exposure, params.side, params.volume, params.reservedQuoteUsd, params.availableQuoteCapUsd);
     if (!check.ok) {
