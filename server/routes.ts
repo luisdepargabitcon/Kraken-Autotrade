@@ -30,6 +30,7 @@ import { fileURLToPath } from "url";
 import { createAuthV2Enforcement, createAuthV2WebSocketUpgradeHandler } from "./services/authV2/authV2Enforcement";
 import { getAuthV2Service } from "./services/authV2/authV2Runtime";
 import { createAuthV2Idempotency } from "./services/authV2/authV2Idempotency";
+import { createDurableFinancialIdempotency } from "./services/authV2/authV2DurableIdempotency";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -105,6 +106,9 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   app.use(createAuthV2Enforcement({ service: await getAuthV2Service() }));
+  // Durable identity for financial operations first (fail-closed without the
+  // store); the memory layer remains as optimization for everything else.
+  app.use(createDurableFinancialIdempotency());
   app.use(createAuthV2Idempotency());
 
   // Shared dependencies for modular route files
