@@ -2,6 +2,12 @@ import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import App from "./App";
 import "./index.css";
+import { installFinancialIdempotencyInterceptor } from "./lib/financialIdempotency";
+
+// Identidad durable obligatoria en acciones financieras: toda mutación a
+// rutas financieras lleva x-idempotency-key (el servidor rechaza con 428 en
+// caso contrario). Instalado antes de montar React.
+installFinancialIdempotencyInterceptor();
 
 const rootElement = document.getElementById("root");
 

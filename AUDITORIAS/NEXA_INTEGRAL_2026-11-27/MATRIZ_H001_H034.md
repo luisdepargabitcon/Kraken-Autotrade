@@ -2,6 +2,8 @@
 
 Leyenda de estado por fila (se distingue explícitamente): **IMPLEMENTADO** (código en la rama), **PROBADO** (tests aislados verdes), **SUBIDO** (en la PR #23), **DESPLEGADO** (nunca: nada está desplegado), **VALIDADO_USUARIO** (nunca: no hay validación del propietario). «Parcial» = existe una parte; lo que falta se nombra. Todas las pruebas usan mocks/fixtures sin red privada ni DB real. Tests citados en `server/…/__tests__/` salvo indicación.
 
+> **WP15 (ADENDA_TANGO3_P0):** los 4 bloqueantes P0 de la revisión TANGO de 8ccffb3 están subsanados — reconciliación incierto→válido con una sola contabilización, cierre con residual conservado, reservas positivas cableadas en el motor y venta sin tenencia rechazada, evidencia de fills estricta; identidad durable obligatoria (428 sin clave) con interceptor en cliente web/APK. Ver pruebas exactas en la adenda.
+
 | H | Hallazgo | Cambio (commit) | Prueba | Estado | Pendiente / límite |
 |---|---|---|---|---|---|
 | H-001 | `POST /api/trade` y métodos Kraken ejecutables | `kraken.ts` lanza `KRAKEN_EXECUTION_FORBIDDEN` (incondicional, sin flag); `/api/trade` → 410 sin crear trade (0da52ee, 3c244ce) | krakenExecutionForbidden, legacyKrakenTradeRoute | IMPLEMENTADO · PROBADO · SUBIDO | Permisos reales de la clave: panel del propietario (NO_VERIFICADO) |

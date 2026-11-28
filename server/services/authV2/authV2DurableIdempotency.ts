@@ -7,7 +7,7 @@
 //   - same key + same payload + in_progress → 409 (never re-execute; the client
 //     must reconcile state before retrying with a NEW key);
 //   - same key + DIFFERENT payload hash     → 409 conflict (hard error);
-//   - no key                                → pass through (unchanged behavior).
+//   - no key                                → 428 (financial identity is MANDATORY).
 // Rows expire after ttlMs; expiry only affects storage, never correctness,
 // because completed responses are the replayable artifact.
 //
@@ -77,7 +77,17 @@ export function createDurableFinancialIdempotency(options: DurableIdempotencyOpt
     if (!isFinancial(req)) { next(); return; }
     const raw = req.headers["x-idempotency-key"];
     const key = String(Array.isArray(raw) ? raw[0] : raw || "").trim();
-    if (!key || key.length > 128) { next(); return; }
+    if (!key || key.length > 128) {
+      // Identidad durable OBLIGATORIA para toda accion mutativa financiera:
+      // sin clave no existe proteccion alguna contra reenvios, dobles clicks
+      // o reintentos de red. Se rechaza fail-closed con 428; los clientes
+      // (web y APK) deben generar una clave estable por operacion.
+      res.status(428).json({
+        error: "idempotency_key_required",
+        message: "Toda accion financiera mutativa exige cabecera x-idempotency-key con una clave estable unica por operacion.",
+      });
+      return;
+    }
     if (!(await ensureTable())) {
       // Financial operations require durable identity: fail closed with 503
       // rather than silently degrading to process-local memory.

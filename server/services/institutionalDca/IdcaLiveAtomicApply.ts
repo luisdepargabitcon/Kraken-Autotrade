@@ -68,6 +68,7 @@ export interface AtomicApplyResult {
   skippedReason?: string;
   quantityApplied: number;
   closed?: boolean;
+  residualQty?: number;
 }
 
 function num(v: unknown): number {
@@ -90,6 +91,7 @@ export interface SellComputation {
   orderRow: Record<string, unknown>;
   quantitySold: number;
   closed: boolean;
+  residualQty: number;
 }
 
 export function computeSellApplication(cycle: any, e: AtomicSellInput): SellComputation | null {
@@ -100,14 +102,21 @@ export function computeSellApplication(cycle: any, e: AtomicSellInput): SellComp
   if (!(oldQty > 0)) return null;
 
   const quantitySold = Math.min(e.deltaQty, oldQty);
-  const sellRatio = e.closePosition ? 1 : Math.min(1, quantitySold / oldQty);
+  // Dust policy explicita y conservadora: el coste se consume SIEMPRE en
+  // proporcion a la cantidad realmente vendida. El ciclo solo se cierra
+  // cuando el remanente es cero efectivo (<= epsilon de redondeo); un fill
+  // terminal parcial NUNCA cierra con activo residual — el ciclo permanece
+  // activo con su cantidad y coste proporcionales y el residual queda
+  // expuesto para reapertura o cierre explicito.
+  const SELL_CLOSE_EPSILON = 1e-8;
+  const remainingQty = Math.max(0, oldQty - quantitySold);
+  const closed = remainingQty <= SELL_CLOSE_EPSILON;
+  const sellRatio = closed ? 1 : Math.min(1, quantitySold / oldQty);
   const costBasisSold = oldCapitalUsed * sellRatio;
   const remainingCost = Math.max(0, oldCapitalUsed - costBasisSold);
   const grossValue = e.deltaGrossValueUsd > 0 ? e.deltaGrossValueUsd : quantitySold * e.averagePrice;
   const netValue = grossValue - e.deltaFeesUsd;
   const realizedPnlIncrement = netValue - costBasisSold;
-  const remainingQty = e.closePosition ? 0 : Math.max(0, oldQty - quantitySold);
-  const closed = e.closePosition || remainingQty <= 0;
 
   const prevRealizedPnl = num(cycle.realized_pnl_usd ?? cycle.realizedPnlUsd);
   const prevRealizedCostBasis = num(cycle.realized_cost_basis_usd ?? cycle.realizedCostBasisUsd);
@@ -146,7 +155,7 @@ export function computeSellApplication(cycle: any, e: AtomicSellInput): SellComp
     trigger_reason: e.triggerReason,
     human_reason: "Venta live reconciliada atómica",
   };
-  return { cyclePatch, orderRow, quantitySold, closed };
+  return { cyclePatch, orderRow, quantitySold, closed, residualQty: remainingQty };
 }
 
 export interface BuyComputation {
@@ -257,6 +266,7 @@ export async function applyReconciledOutcomeAtomic(
 
     let quantityApplied = 0;
     let closed: boolean | undefined;
+    let residualQty: number | undefined;
     let skipped: string | undefined;
 
     // Recompute deltas INSIDE the transaction against the locked meta so two
@@ -316,18 +326,46 @@ export async function applyReconciledOutcomeAtomic(
           WHERE id=${params.cycleId}`);
         quantityApplied = effect.side === "sell" ? (computation as SellComputation).quantitySold : (computation as BuyComputation).qtyToApply;
         closed = effect.side === "sell" ? (computation as SellComputation).closed : undefined;
+        residualQty = effect.side === "sell" ? (computation as SellComputation).residualQty : undefined;
       } else {
         skipped = "nothing_to_apply";
       }
     }
 
-    // 5. Update intent meta in the SAME transaction: fill ids + applied marks.
+    // 5. Update intent meta in the SAME transaction. INVARIANTE CRITICA:
+    // fillIds/appliedQty solo avanzan cuando hubo aplicacion contable real en
+    // ESTA transaccion. Los fills observados pero no aplicados (validacion
+    // fallida, estado incierto, nada que aplicar) NO se marcan: en la proxima
+    // reconciliacion vuelven a ser "nuevos" y se contabilizan exactamente una
+    // vez cuando la evidencia sea valida. Jamas se pierde un fill ni se
+    // contabiliza dos veces.
+    const appliedNow = quantityApplied > 0;
+    let newAppliedQty = appliedQtyPrev;
+    let newAppliedGross = num(meta.appliedGrossUsd);
+    let newAppliedFees = num(meta.appliedFeesUsd);
+    if (appliedNow) {
+      if (effect.side === "buy") {
+        // La compra se aplica siempre con catch-up completo al acumulado.
+        newAppliedQty = Math.max(appliedQtyPrev, num((effect as AtomicBuyInput).cumulativeFilledQty));
+        newAppliedGross = Math.max(newAppliedGross, num((effect as AtomicBuyInput).cumulativeGrossValueUsd));
+        newAppliedFees = Math.max(newAppliedFees, num((effect as AtomicBuyInput).cumulativeFeesUsd));
+      } else {
+        // Venta: avance por lo efectivamente aplicado; si la aplicacion fue
+        // parcial (cap de tenencia del ciclo), gross/fees avanzan en la
+        // misma proporcion para no inflar los acumulados.
+        const se = effect as AtomicSellInput;
+        const frac = se.deltaQty > 1e-12 ? Math.min(1, quantityApplied / se.deltaQty) : 1;
+        newAppliedQty = appliedQtyPrev + quantityApplied;
+        newAppliedGross = newAppliedGross + se.deltaGrossValueUsd * frac;
+        newAppliedFees = newAppliedFees + se.deltaFeesUsd * frac;
+      }
+    }
     const newMeta = {
       ...meta,
-      fillIds: params.mergedFillIds,
-      appliedQty: Math.max(appliedQtyPrev, params.fillVolume ?? appliedQtyPrev),
-      appliedGrossUsd: Math.max(num(meta.appliedGrossUsd), effect.side === "buy" ? num((effect as AtomicBuyInput).cumulativeGrossValueUsd) : num((effect as AtomicSellInput).cumulativeGrossValueUsd)),
-      appliedFeesUsd: Math.max(num(meta.appliedFeesUsd), effect.side === "buy" ? num((effect as AtomicBuyInput).cumulativeFeesUsd) : num((effect as AtomicSellInput).cumulativeFeesUsd), params.feeUsd ?? 0),
+      fillIds: appliedNow ? params.mergedFillIds : [...priorFillIds],
+      appliedQty: newAppliedQty,
+      appliedGrossUsd: newAppliedGross,
+      appliedFeesUsd: newAppliedFees,
       ...(params.dustRemainderQty != null && params.dustRemainderQty > 0 ? { dustRemainderQty: params.dustRemainderQty } : {}),
       ...(params.terminal ? { applied: true } : {}),
     };
@@ -339,6 +377,7 @@ export async function applyReconciledOutcomeAtomic(
       skippedReason: skipped,
       quantityApplied,
       closed,
+      residualQty,
     };
   });
 }

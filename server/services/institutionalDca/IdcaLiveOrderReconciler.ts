@@ -129,7 +129,7 @@ export function createRevolutXVenuePort(): IdcaVenuePort {
   return {
     placeOrder: p => ExchangeFactory.getExecutionVenue().placeOrder(p),
     getOrder: id => (ExchangeFactory.getExecutionVenue() as any).getOrder(id),
-    getFills: p => (ExchangeFactory.getExecutionVenue() as any).getFills(p),
+    getFills: p => (ExchangeFactory.getExecutionVenue() as any).getFills({ ...p, strict: true }),
   };
 }
 
@@ -149,6 +149,9 @@ export interface ReconciledOutcome {
   deltaFilledQty: number;
   deltaGrossValueUsd: number;
   deltaFeesUsd: number;
+  /** Cantidad que permanece en el ciclo tras una venta con fill parcial
+   *  terminal o dust: el cierre no se consumo y el ciclo sigue activo. */
+  residualQty?: number;
 }
 
 const TERMINAL_ZERO = new Set(["CANCELLED","CANCELED","EXPIRED","REJECTED","FAILED"]);
@@ -238,7 +241,8 @@ export async function reconcileIntent(
   let order: any = null;
   try { order = await venue.getOrder(intent.exchangeOrderId || intent.clientOrderId); } catch { order = null; }
   let fills: any[] = [];
-  try { fills = await venue.getFills({ orderId: intent.exchangeOrderId || order?.id, symbol: intent.pair, limit: 100 }); } catch { fills = []; }
+  let fillsFetchFailed = false;
+  try { fills = await venue.getFills({ orderId: intent.exchangeOrderId || order?.id, symbol: intent.pair, limit: 100, strict: true } as any); } catch { fills = []; fillsFetchFailed = true; }
   const meta = decodeReason(intent.reason);
   const orderRef = String(intent.exchangeOrderId || order?.id || "");
   const venueClientOrderId = meta.venueClientOrderId ?? "";
@@ -262,18 +266,26 @@ export async function reconcileIntent(
   const rawFillCount = (fills ?? []).length;
   const agg = aggregateFills(fills, requestedQty);
   let qty = agg.qty, avg = agg.avgPrice, fees = agg.fees, feeSource: ReconciledOutcome["feeSource"] = agg.feeSeen ? "venue" : "none";
+  const status0 = String(order?.status ?? "UNKNOWN");
   const validationIssues = validateFillAggregation(fills, intent.pair, requestedQty, agg.qty, FILLS_PAGE_LIMIT, rawFillCount);
-  if ((!qty || qty <= 0) && order?.filledSize > 0) {
-    qty = parseFloat(String(order.filledSize));
-    avg = parseFloat(String(order.averagePrice ?? 0));
+  // P0-4: la cantidad reportada por la orden (filledSize) NO es evidencia
+  // contable por si sola. Si no hay fills corroborables que la respalden,
+  // la orden no puede declararse filled ni contabilizarse: se marca la
+  // discordancia y el estado cae a uncertain (fail-closed).
+  const orderClaimsQty = parseFloat(String(order?.filledSize ?? 0)) || 0;
+  if ((!qty || qty <= 0) && orderClaimsQty > 0) {
+    validationIssues.push({ code: "order_claims_fill_without_fill_rows", detail: `order.filledSize=${orderClaimsQty} sin fills corroborables; no se adopta como verdad contable` });
+  }
+  if (fillsFetchFailed && (orderClaimsQty > 0 || TERMINAL_ANY.has(status0))) {
+    validationIssues.push({ code: "fills_evidence_unavailable", detail: "consulta de fills fallo; no se puede corroborar la ejecucion" });
   }
   if (!feeSource || feeSource === "none") {
     if (qty > 0) { fees = qty * avg * 0.0009; feeSource = "estimated_preset"; } else feeSource = "none";
   }
+  const status = status0;
   const grossFilledQty = qty;
   const baseFeeEstimated = intent.side === "buy" && feeSource === "estimated_preset";
   const netFilledQty = baseFeeEstimated ? qty * (1 - 0.0009) : qty;
-  const status = String(order?.status ?? "UNKNOWN");
   let state: IdcaIntentState;
   if (qty > 0 && !(avg > 0)) state = "uncertain";
   else if (TERMINAL_ANY.has(status.toUpperCase())) state = terminalStateFor(status, qty, requestedQty);
@@ -317,6 +329,7 @@ export async function reconcileIntent(
   }
 
   const atomicStore = store instanceof DrizzleIdcaIntentStore;
+  let atomicResidualQty: number | undefined;
   if (intent.side === "buy" && ["partial", "filled"].includes(state) && deltaFilledQty > 1e-12 && !alreadyApplied && !options.deferBuyAccounting && !atomicStore) {
     await applyReconciledBuyEffect({
       cycleId: parseInt(intent.lotId, 10),
@@ -383,8 +396,9 @@ export async function reconcileIntent(
     const effect = intent.side === "sell"
       ? { side: "sell", cumulativeFilledQty: cumQty, cumulativeGrossValueUsd: cumGross, cumulativeFeesUsd: cumFees, deltaQty: deltaFilledQty, deltaGrossValueUsd, deltaFeesUsd, closePosition: state === "filled" && meta.closePosition === true, closeReason: meta.closeReason ?? meta.reason ?? "reconciled_sell", ...effectBase }
       : { side: "buy", cumulativeFilledQty: cumQty, cumulativeNetFilledQty: accountingWarranted ? netFilledQty : 0, cumulativeGrossValueUsd: cumGross, cumulativeFeesUsd: cumFees, deltaQty: deltaFilledQty, deltaGrossValueUsd, deltaFeesUsd, terminal, ...effectBase };
+    let atomicResult: { residualQty?: number } | null = null;
     try {
-      await applyReconciledOutcomeAtomic({
+      atomicResult = await applyReconciledOutcomeAtomic({
         clientOrderId: intent.clientOrderId,
         cycleId: parseInt(intent.lotId, 10),
         pair: intent.pair,
@@ -400,6 +414,10 @@ export async function reconcileIntent(
         dustRemainderQty: terminalDustRemainder > 0 ? terminalDustRemainder : undefined,
         effect: effect as any,
       });
+      atomicResidualQty = atomicResult?.residualQty;
+      if (atomicResult?.residualQty != null && atomicResult.residualQty > 1e-8) {
+        emitIntentCriticalEvent(intent, "idca_residual_position", `Venta reconciliada con remanente: quedan ${atomicResult.residualQty.toFixed(8)} en el ciclo (fill parcial terminal o dust). El ciclo NO se cerro; conciliar residual antes de reapertura.`, { residualQty: atomicResult.residualQty });
+      }
     } catch (e: any) {
       emitIntentCriticalEvent(intent, "idca_atomic_apply_failed", `Fallo de aplicación atómica (transacción revertida íntegramente): ${e.message}`, { error: e.message });
       throw e;
@@ -411,6 +429,7 @@ export async function reconcileIntent(
     state, filledQty: qty, grossFilledQty, netFilledQty, avgPrice: avg, feesUsd: fees, feeSource, remainingQty, terminal,
     intent: updated, newlyAppliedFillIds: newIds, alreadyApplied,
     deltaFilledQty, deltaGrossValueUsd, deltaFeesUsd,
+    residualQty: atomicResidualQty,
   };
 }
 

@@ -1300,6 +1300,10 @@ export class RevolutXService implements IExchangeService {
     symbol?: string;
     orderId?: string;
     limit?: number;
+    /** strict: los errores de consulta se propagan como excepción en lugar de
+     *  devolver [] — la reconciliación financiera exige distinguir "sin fills"
+     *  de "no se pudo consultar". Los consumidores legacy no lo pasan. */
+    strict?: boolean;
     startMs?: number;
     endMs?: number;
   }): Promise<Array<{
@@ -1354,6 +1358,7 @@ export class RevolutXService implements IExchangeService {
           }
           const errorText = await response.text();
           console.error(`[revolutx] getFills(/fills) error: ${response.status} ${errorText}`);
+          if (params?.strict) throw new Error(`REVOLUTX_FILLS_UNAVAILABLE: HTTP ${response.status}`);
           return [];
         }
 
@@ -1373,6 +1378,7 @@ export class RevolutXService implements IExchangeService {
         }));
       } catch (error: any) {
         console.error(`[revolutx] getFills(/fills) exception:`, error.message);
+        if (params?.strict) throw error instanceof Error ? error : new Error(String(error));
         return [];
       }
     };
@@ -1423,6 +1429,7 @@ export class RevolutXService implements IExchangeService {
         });
       } catch (error: any) {
         console.error(`[revolutx] getFills error for ${params.symbol}:`, error.message);
+        if (params?.strict) throw error instanceof Error ? error : new Error(String(error));
         return [];
       }
     }

@@ -91,19 +91,25 @@ describe("idempotencia durable de operaciones financieras", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("sin clave de idempotencia → comportamiento inalterado (ejecuta siempre)", async () => {
+  it("sin clave de idempotencia → 428: la identidad durable es OBLIGATORIA en acciones financieras", async () => {
     const db = await makeDb();
     const handler = vi.fn((_req, res) => res.json({ ok: true }));
     const app = makeApp(db, handler);
     const server = app.listen(0);
     const port = (server.address() as any).port;
     try {
-      for (let i = 0; i < 2; i++) {
-        await fetch(`http://127.0.0.1:${port}/api/grid-isolated/mode`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "shadow" }),
-        });
-      }
-    } finally { server.close(); }
-    expect(handler).toHaveBeenCalledTimes(2);
+      // Sin cabecera x-idempotency-key → 428 y el handler NUNCA se ejecuta.
+      const noKey = await fetch(`http://127.0.0.1:${port}/api/grid-isolated/mode`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "shadow" }),
+      });
+      expect(noKey.status).toBe(428);
+      const body = await noKey.json() as any;
+      expect(body.error).toBe("idempotency_key_required");
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      server.close();
+    }
   });
 });

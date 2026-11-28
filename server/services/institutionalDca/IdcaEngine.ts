@@ -5799,6 +5799,11 @@ async function executeRealBuyWithGuard(
       requestedQty: finalQty,
       reason: `${buyType}_buy`,
       intentKey,
+      // Reserva durable obligatoria (P0): la compra reserva el quote que
+      // intenta gastar y el cap de exposicion disponible validado por el
+      // guard; sin reserva positiva la intencion se rechaza antes del venue.
+      reservedQuoteUsd: finalUsd,
+      availableQuoteCapUsd: Number.isFinite((validation as any).balanceCheck?.availableUsd) ? (validation as any).balanceCheck.availableUsd : null,
     });
   } catch (e: any) {
     console.error(`${TAG}[LIVE][BUY][SEND_FAILED] ${pair}: ${e.message}`);

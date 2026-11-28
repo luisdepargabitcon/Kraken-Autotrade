@@ -2,7 +2,7 @@
 
 Fecha de generación: 2026-11-28
 Commit de referencia: `4a57fdd`
-Estado: **SIN APROBAR — no publicado, no subido a GitHub, no validado por el propietario en Pixel/dispositivo real.**
+Estado: **SIN APROBAR.** Publicados en la prerelease de GitHub `nexa-v2-candidate-5b94ff8` (WP13) con enlaces directos y `SHA256SUMS.txt`; build APK reproducible bit a bit verificado (dos construcciones limpias independientes, SHA-256 idéntico). No validado por el propietario en Pixel/dispositivo real; firma de publicación pendiente.
 
 `<REPO>` representa el worktree del repositorio. `<ARTIFACTS>` representa la carpeta local de artefactos fuera del repositorio. `<BUILD_TMP>` representa la carpeta temporal local de build. No se incluyen rutas privadas absolutas, hosts, IP ni credenciales.
 
@@ -13,7 +13,7 @@ Estado: **SIN APROBAR — no publicado, no subido a GitHub, no validado por el p
 | ZIP web reproducible | `<ARTIFACTS>/nexa-v2-web-4a57fdd.zip` | `7ee3280c1752dcc1229b34866841a0ea48619e4d9b4a2be8f9bf9ffc3b8470fd` | 181.822 bytes |
 | APK Android debug/QA | `<ARTIFACTS>/nexa-v2-debug-4a57fdd.apk` | `55380d789b4afb87bc6add528369894468c01939783d402d61f288ae90bd2316` | 7.247.703 bytes |
 
-Los binarios **no fueron añadidos al repositorio** ni subidos a ningún servicio externo.
+Los binarios **no fueron añadidos al repositorio**; se publicaron como assets de la prerelease `nexa-v2-candidate-5b94ff8` marcada explícitamente SIN APROBAR.
 
 ## 2. ZIP web
 

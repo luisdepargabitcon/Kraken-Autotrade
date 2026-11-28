@@ -68,13 +68,20 @@ export function evaluateReservation(
   const violations: string[] = [];
   if (side === "buy") {
     if (exposure.pendingBuyCountPairSide > 0) violations.push("pending_buy_same_pair");
+    // Toda compra real exige reserva positiva durable: sin reserva no hay
+    // proteccion de capital y la intencion no debe existir.
+    if (!(newReservedQuoteUsd > 0)) violations.push("buy_without_positive_reservation");
     if (availableQuoteCapUsd != null && Number.isFinite(availableQuoteCapUsd)) {
       if (exposure.pendingBuyReservedQuoteUsd + newReservedQuoteUsd > availableQuoteCapUsd * (1 + 1e-9)) {
         violations.push("quote_cap_exceeded");
       }
     }
   } else {
-    if (exposure.pendingSellQtyAsset + newQty > exposure.heldQtyLiveCycles * (1 + 1e-6) && exposure.heldQtyLiveCycles > 0) {
+    // Ventas: disponible = tenencia live menos ventas ya pendientes. Con
+    // tenencia cero el disponible es cero y TODA venta se rechaza; antes el
+    // chequeo solo aplicaba cuando held>0 y una venta sin tenencia pasaba.
+    const availableToSell = exposure.heldQtyLiveCycles - exposure.pendingSellQtyAsset;
+    if (!(availableToSell > 0) || newQty > availableToSell * (1 + 1e-6)) {
       violations.push("sell_exceeds_held_plus_pending");
     }
   }
