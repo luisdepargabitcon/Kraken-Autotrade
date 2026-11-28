@@ -16,7 +16,9 @@ vi.mock("../../institutionalDca/IdcaRepository", async (importOriginal) => {
     createEvent: vi.fn(async (e: any) => { events.push(e); return e; }),
     updateCycle: vi.fn(async (id: number, patch: any) => { cycleUpdates.push({ id, patch }); return {}; }),
     createOrder: vi.fn(async (o: any) => { createdOrders.push(o); return o; }),
-    getIdcaConfig: vi.fn(async () => ({ executionFeesJson: null, simulationFeePct: null, simulationSlippagePct: "0" })),
+    getIdcaConfig: vi.fn(async () => ({ executionFeesJson: null, simulationFeePct: null, simulationSlippagePct: "0", mode: "live" })),
+    getAllActiveCycles: vi.fn(async () => activeCyclesFixture),
+    getCycleById2: vi.fn(async () => null),
     getOrdersByCycle: vi.fn(async () => []),
     getCycleById: vi.fn(async (id: number) => ({ id, pair: "BTC/USD", mode: "live", status: "closed", totalQuantity: "0", capitalUsedUsd: "0", avgEntryPrice: "100", realizedPnlUsd: "9.95", buyCount: 1 })),
     getCycleByIdUnfiltered: vi.fn(async () => null),
@@ -51,6 +53,17 @@ vi.mock("../../institutionalDca/IdcaExitManager", () => ({
   },
 }));
 
+const activeCyclesFixture: any[] = [];
+vi.mock("../../institutionalDca/IdcaExitInstructionRepository", () => ({
+  getActiveExitInstruction: vi.fn(async () => null),
+  cancelActiveExitInstructionForCycle: vi.fn(async () => {}),
+  hasPendingExitInstruction: vi.fn(async () => false),
+}));
+vi.mock("../../MarketDataService", () => ({
+  MarketDataService: { getPrice: vi.fn(async () => 110) },
+  default: { getPrice: vi.fn(async () => 110) },
+}));
+
 const submitMock = vi.fn();
 vi.mock("../../institutionalDca/IdcaLiveOrderReconciler", async (orig) => {
   const actual = await orig() as any;
@@ -72,6 +85,8 @@ import {
   executeBreakevenExitForTest,
   closePlusCycleForTest,
   closeRecoveryCycleForTest,
+  manualCloseCycle,
+  emergencyCloseAll,
 } from "../IdcaEngine";
 
 function makeCycle(qty = "1") {
@@ -100,6 +115,7 @@ function outcomeFilled(residualQty: number, filledQty: number) {
 
 beforeEach(() => {
   events.length = 0; telegramMessages.length = 0; cycleUpdates.length = 0; createdOrders.length = 0;
+  activeCyclesFixture.length = 0;
   submitMock.mockReset();
 });
 
@@ -186,5 +202,57 @@ describe("TANGO-5 sistema único de ventas — recovery close", () => {
     expect(createdOrders).toHaveLength(0);
     const accountingWrites = cycleUpdates.filter(u => u.patch.status === "closed" || u.patch.totalQuantity !== undefined);
     expect(accountingWrites).toHaveLength(0);
+  });
+});
+
+describe("TANGO-5 sistema único de ventas — cierre manual", () => {
+  it("fill parcial con residual: PnL proporcional, nunca coste íntegro; evento parcial no cierre", async () => {
+    submitMock.mockResolvedValue(outcomeFilled(0.001, 0.999));
+    const repoMod = await import("../../institutionalDca/IdcaRepository") as any;
+    repoMod.getCycleById.mockReset?.();
+    // manualCloseCycle usa repo.getCycleById: primera lectura = ciclo activo, segunda = estado final.
+    const active = makeCycle("1");
+    let calls = 0;
+    repoMod.getCycleById.mockImplementation(async () => (++calls === 1 ? active : { ...active, status: "active" }));
+    // nota: el mock del repo se inyectó via vi.mock — getCycleById está en el objeto dbFree.
+    const res = await manualCloseCycle(88).catch((e: any) => ({ error: e.message }));
+    if ((res as any).error) throw new Error((res as any).error);
+    // coste proporcional: vendido 0.999/1 → coste consumido 99.9 no 100.
+    // netValue = 0.999*110 - 0.05 = 109.84; incremento = 109.84 - 99.9 = 9.94
+    expect((res as any).realizedPnlUsd).toBeCloseTo(9.94, 1);
+    const types = events.map(e => e.eventType);
+    expect(types).toContain("exit_partial_executed");
+    expect(types).not.toContain("manual_close");
+  });
+
+  it("fill total: evento manual_close con PnL sobre coste completo", async () => {
+    submitMock.mockResolvedValue(outcomeFilled(0, 1));
+    const repoMod = await import("../../institutionalDca/IdcaRepository") as any;
+    const active = makeCycle("1");
+    let calls = 0;
+    repoMod.getCycleById.mockImplementation(async () => (++calls === 1 ? active : { ...active, status: "closed" }));
+    const res = await manualCloseCycle(88).catch((e: any) => ({ error: e.message }));
+    if ((res as any).error) throw new Error((res as any).error);
+    // vendido 1 @110 - 0.05 fee = 109.95 neto; coste 100 → PnL 9.95
+    expect((res as any).realizedPnlUsd).toBeCloseTo(9.95, 2);
+    const types = events.map(e => e.eventType);
+    expect(types).toContain("manual_close");
+  });
+});
+
+describe("TANGO-5 sistema único de ventas — emergency close all", () => {
+  it("fill con residual NO cuenta como cerrado; fill total sí", async () => {
+    // Dos ciclos: uno cierra total, otro queda con residual.
+    activeCyclesFixture.push(makeCycle("1"), { ...makeCycle("1"), id: 89 });
+    submitMock
+      .mockResolvedValueOnce(outcomeFilled(0, 1))
+      .mockResolvedValueOnce({ ...outcomeFilled(0.001, 0.999), intent: { clientOrderId: "IDCA_sell_89_x", exchangeOrderId: "o2" } });
+    const closedCount = await emergencyCloseAll();
+    expect(closedCount).toBe(1);
+    const types = events.map(e => e.eventType);
+    expect(types).toContain("exit_partial_executed");
+    // En live ningún ciclo se cierra por escritura paralela del caller.
+    const closingWrites = cycleUpdates.filter(u => u.patch.status === "closed");
+    expect(closingWrites).toHaveLength(0);
   });
 });
