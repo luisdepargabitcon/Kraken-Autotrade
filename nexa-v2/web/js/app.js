@@ -308,13 +308,17 @@ function openAction(actionId, params){
       <button class="btn danger" id="act-run">Ejecutar</button>
       <button class="btn" id="act-cancel">Cancelar</button></div>
     <div id="act-result" class="small" style="margin-top:10px"></div>`);
+  // TANGO-5 §10.3: cada gesto de confirmación es una operación NUEVA con seed
+  // propio — una repetición intencionada (mismo payload) nunca se confunde con
+  // la anterior. Los reintentos del mismo gesto (timeout, re-toque) conservan el seed.
+  const gestureSeed = `g-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(2))[0].toString(36)}`;
   modal.root.querySelector('#act-cancel').addEventListener('click',()=>modal.close());
   modal.root.querySelector('#act-run').addEventListener('click', async ev=>{
     if(dbl && modal.root.querySelector('#act-confirm').value!=='CONFIRMAR'){
       modal.root.querySelector('#act-result').textContent='Escribe CONFIRMAR.'; return;
     }
     ev.target.disabled = true;
-    const r = await runAction(actionId, params);
+    const r = await runAction(actionId, params, { operationSeed: gestureSeed });
     modal.root.querySelector('#act-result').innerHTML = r.ok
       ? `<span class="pos">Aceptada (HTTP ${r.status||200})</span>`
       : `<span class="neg">Rechazada: ${esc(r.error||'error')}${r.status?` (HTTP ${r.status})`:''}</span>`;

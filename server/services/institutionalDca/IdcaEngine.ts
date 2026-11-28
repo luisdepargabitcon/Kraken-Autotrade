@@ -1244,8 +1244,19 @@ export async function emergencyCloseAll(): Promise<number> {
   for (const cycle of scopedCycles) {
     try {
       if (mode === "live" && parseFloat(String(cycle.totalQuantity)) > 0) {
-        await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true, mode);
-        closed++;
+        // TANGO-5: contar como cerrado solo si la tx atómica confirmó cierre sin remanente.
+        const outcome = await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true, mode);
+        if ((outcome.residualQty ?? 0) > 1e-8) {
+          await createHumanEvent({
+            cycleId: cycle.id, pair: cycle.pair, mode,
+            eventType: "exit_partial_executed",
+            severity: "critical",
+            message: `Cierre de emergencia con remanente: vendido ${outcome.filledQty.toFixed(8)}, residual ${(outcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO contabilizar como cerrado.`,
+            payloadJson: { residualQty: outcome.residualQty, filledQty: outcome.filledQty, intentKey: outcome.intent.clientOrderId },
+          }, { eventType: "exit_partial_executed", pair: cycle.pair, mode, cycleId: cycle.id, quantity: outcome.filledQty });
+        } else {
+          closed++;
+        }
       } else {
         const price = prices[cycle.pair] || 0;
         await repo.updateCycle(cycle.id, {
@@ -3860,6 +3871,7 @@ async function armTakeProfit(
     netValue = partialValueUsd - fees - slippage;
   }
 
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "partial_sell",
@@ -3873,6 +3885,7 @@ async function armTakeProfit(
     triggerReason: `TP armed at ${pnlPct.toFixed(2)}%, partial sell ${partialPct.toFixed(0)}%`,
     humanReason: formatOrderReason("partial_sell"),
   });
+  }
 
   if (mode === "live") {
     await executeRealSell(cycle, "partial_sell", partialQty, false, mode);
@@ -3891,13 +3904,16 @@ async function armTakeProfit(
     });
   }
 
+  // TANGO-5: en live la contabilidad (cantidad/coste/PnL) ya la aplicó la tx atómica; aquí solo transición de estado del motor.
   await repo.updateCycle(cycle.id, {
     status: "trailing_active",
     tpArmedAt: new Date(),
     trailingActiveAt: new Date(),
     highestPriceAfterTp: currentPrice.toFixed(8),
-    totalQuantity: remainingQty.toFixed(8),
-    realizedPnlUsd: netValue.toFixed(2),
+    ...(mode !== "live" ? {
+      totalQuantity: remainingQty.toFixed(8),
+      realizedPnlUsd: netValue.toFixed(2),
+    } : {}),
     trailingPct: trailingPct.toFixed(2),
   });
 
@@ -4044,9 +4060,10 @@ async function executeTrailingExit(
 
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
   // Prevents fake sell history if the exchange call fails.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "final_sell", actualSellQty, true, mode);
+      liveOutcome = await executeRealSell(cycle, "final_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[TRAILING_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -4070,7 +4087,31 @@ async function executeTrailingExit(
     }
   }
 
-  // Live sell confirmed (or simulation) — now safe to write order record
+  // TANGO-5: sistema único — en live la orden y la contabilidad ya las escribió la tx atómica durable.
+  // Si queda residual, el ciclo NO está cerrado: no comunicar cierre ni emitir snapshot de salida.
+  if (mode === "live" && liveOutcome && (liveOutcome.residualQty ?? 0) > 1e-8) {
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "exit_partial_executed",
+      severity: "critical",
+      message: `Venta trailing con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO con protección — NO es un cierre.`,
+      payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+    }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+    try {
+      await telegram.sendRawMessage(
+        `⚠️ <b>[IDCA][LIVE] SALIDA PARCIAL TRAILING</b>
+
+Par: <b>${pair}</b> #${cycle.id}
+Vendido: <code>${liveOutcome.filledQty.toFixed(8)}</code>
+Residual: <code>${(liveOutcome.residualQty ?? 0).toFixed(8)}</code> — ciclo sigue ACTIVO.`
+      );
+    } catch { /* telegram best-effort */ }
+    return; // protección preservada; la conciliación del residual es la única vía de cierre
+  }
+
+  // Live sell confirmed (or simulation) — now safe to write order record.
+  // TANGO-5: en live la orden ya existe (fila durable de la tx atómica); no duplicar.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "final_sell",
@@ -4084,6 +4125,7 @@ async function executeTrailingExit(
     triggerReason: dustAdjusted ? "trailing_exit_dust_adj" : "trailing_exit",
     humanReason: formatOrderReason("final_sell"),
   });
+  }
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const totalRealized = prevRealized + netValue;
@@ -4099,6 +4141,8 @@ async function executeTrailingExit(
 
   // Store net profit (proceeds − costBasis) so DB semantic is consistent with all other close types
   const trailingNetProfitUsd = totalRealized - capitalUsedForPnl;
+  // TANGO-5: en live el cierre contable ya lo aplicó la tx atómica (status/coste/PnL dentro de la misma transacción).
+  if (mode !== "live") {
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "trailing_exit",
@@ -4107,6 +4151,7 @@ async function executeTrailingExit(
     closedAt,
     ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
   } as any);
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -4243,9 +4288,10 @@ async function executeBreakevenExit(
   }
 
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "breakeven_sell", actualSellQty, true, mode);
+      liveOutcome = await executeRealSell(cycle, "breakeven_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[BREAKEVEN_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -4268,7 +4314,21 @@ async function executeBreakevenExit(
     }
   }
 
-  // Live sell confirmed (or simulation) — now safe to write order record
+  // TANGO-5: en live, si queda residual el ciclo NO está cerrado — no comunicar cierre.
+  if (mode === "live" && liveOutcome && (liveOutcome.residualQty ?? 0) > 1e-8) {
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "exit_partial_executed",
+      severity: "critical",
+      message: `Venta breakeven con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO con protección — NO es un cierre.`,
+      payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+    }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+    return; // protección preservada; conciliación del residual es la única vía de cierre
+  }
+
+  // Live sell confirmed (or simulation) — now safe to write order record.
+  // TANGO-5: en live la orden ya existe (fila durable de la tx atómica); no duplicar.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "breakeven_sell",
@@ -4282,10 +4342,13 @@ async function executeBreakevenExit(
     triggerReason: dustAdjusted ? "breakeven_protection_dust_adj" : "breakeven_protection",
     humanReason: formatOrderReason("breakeven_sell"),
   });
+  }
 
   // Store net profit (may be near-zero for breakeven)
   const capitalUsedForBe = parseFloat(String(cycle.capitalUsedUsd || "0"));
   const beNetProfitUsd = netValue - capitalUsedForBe;
+  // TANGO-5: en live el cierre contable ya lo aplicó la tx atómica.
+  if (mode !== "live") {
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "breakeven_exit",
@@ -4294,6 +4357,7 @@ async function executeBreakevenExit(
     closedAt: new Date(),
     ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
   } as any);
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -5288,6 +5352,11 @@ async function performEntryCheck(
 
 
 export const performEntryCheckForTest = performEntryCheck;
+// TANGO-5: aliases de prueba para verificar las rutas de venta unificadas.
+export const executeTrailingExitForTest = executeTrailingExit;
+export const executeBreakevenExitForTest = executeBreakevenExit;
+export const closePlusCycleForTest = closePlusCycle;
+export const closeRecoveryCycleForTest = closeRecoveryCycle;
 export const getReboundStrengthForTest = getReboundStrength;
 export const selectReboundCandlesForTest = selectReboundCandles;
 export const resolveEngineReboundVariantForTest = resolveEngineReboundVariant;
@@ -6773,6 +6842,24 @@ async function closePlusCycle(
 
   const realizedPnl = netValue - capitalUsed;
 
+  // TANGO-5: en live ejecutar PRIMERO — jamás precontabilizar orden ni cierre antes del venue.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
+  if (mode === "live") {
+    liveOutcome = await executeRealSell(plusCycle, "final_sell", totalQty, true, mode);
+    if ((liveOutcome.residualQty ?? 0) > 1e-8) {
+      await createHumanEvent({
+        cycleId: plusCycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "critical",
+        message: `Cierre PLUS con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO es un cierre.`,
+        payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: plusCycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+      return; // protección preservada; conciliación del residual es la única vía de cierre
+    }
+  }
+
+  // TANGO-5: en live la orden y el cierre contable ya los escribió la tx atómica durable.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: plusCycle.id,
     pair,
@@ -6797,6 +6884,7 @@ async function closePlusCycle(
     currentPrice: currentPrice.toFixed(8),
     closedAt: new Date(),
   });
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -6805,10 +6893,6 @@ async function closePlusCycle(
       usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) - capitalUsed).toFixed(2),
       realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + realizedPnl).toFixed(2),
     });
-  }
-
-  if (mode === "live") {
-    await executeRealSell(plusCycle, "final_sell", totalQty, true, mode);
   }
 
   await createHumanEvent({
@@ -8127,7 +8211,25 @@ async function closeRecoveryCycle(
   const durM = Math.floor((durMs % 3600000) / 60000);
   const durationStr = durH > 24 ? `${Math.floor(durH / 24)}d ${durH % 24}h` : `${durH}h ${durM}m`;
 
-  if (remainingQty > 0) {
+  // TANGO-5: en live ejecutar PRIMERO — jamás precontabilizar; la tx atómica escribe orden y cierre.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
+  let liveResidual = false;
+  if (mode === "live" && remainingQty > 0) {
+    liveOutcome = await executeRealSell(recoveryCycle, "final_sell", remainingQty, true, mode);
+    liveResidual = (liveOutcome.residualQty ?? 0) > 1e-8;
+    if (liveResidual) {
+      await createHumanEvent({
+        cycleId: recoveryCycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "critical",
+        message: `Cierre recovery con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO es un cierre.`,
+        payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: recoveryCycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+      return; // protección preservada; conciliación del residual es la única vía de cierre
+    }
+  }
+
+  if (remainingQty > 0 && mode !== "live") {
     await repo.createOrder({
       cycleId: recoveryCycle.id, pair, mode,
       orderType: "final_sell",
@@ -8141,13 +8243,10 @@ async function closeRecoveryCycle(
       triggerReason: `Recovery close: ${closeReason}`,
       humanReason: formatOrderReason("final_sell"),
     });
-
-    if (mode === "live") {
-      await executeRealSell(recoveryCycle, "final_sell", remainingQty, true, mode);
-    }
   }
 
-  // Store net profit
+  // Store net profit — TANGO-5: en live la tx atómica ya cerró contablemente el ciclo.
+  if (mode !== "live") {
   await repo.updateCycle(recoveryCycle.id, {
     status: "closed",
     closeReason,
@@ -8155,6 +8254,7 @@ async function closeRecoveryCycle(
     realizedPnlUsd: pnlUsd.toFixed(2),
     closedAt,
   });
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -8256,22 +8356,29 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     const capitalUsedLive = parseFloat(String(cycle.capitalUsedUsd || "0"));
     const totalCostBasisLive = parseFloat(String((cycle as any).totalCostBasisUsd || "0")) || capitalUsedLive;
     const prevRealizedLive = parseFloat(String(cycle.realizedPnlUsd || "0"));
-    const realizedIncrementLive = netValueLive - capitalUsedLive;
+    // TANGO-5: coste siempre proporcional a lo vendido — nunca consumir el coste íntegro con residual.
+    const residualLive = outcome.residualQty ?? 0;
+    const proportionLive = totalQty > 0 ? Math.min(1, quantitySold / totalQty) : 1;
+    const costConsumedLive = capitalUsedLive * proportionLive;
+    const realizedIncrementLive = netValueLive - costConsumedLive;
     const realizedPnlLive = prevRealizedLive + realizedIncrementLive;
     const realizedPnlPctLive = totalCostBasisLive > 0 ? (realizedPnlLive / totalCostBasisLive) * 100 : 0;
+    const isPartialLive = residualLive > 1e-8;
 
     await createHumanEvent({
       cycleId: cycle.id, pair, mode,
-      eventType: "manual_close",
-      severity: "info",
-      message: `Cierre manual: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, PnL=${realizedPnlLive >= 0 ? "+" : ""}$${realizedPnlLive.toFixed(2)}`,
+      eventType: isPartialLive ? "exit_partial_executed" : "manual_close",
+      severity: isPartialLive ? "critical" : "info",
+      message: isPartialLive
+        ? `Venta manual PARCIAL: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, residual ${residualLive.toFixed(8)} permanece — el ciclo sigue ACTIVO, NO es un cierre.`
+        : `Cierre manual: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, PnL=${realizedPnlLive >= 0 ? "+" : ""}$${realizedPnlLive.toFixed(2)}`,
       payloadJson: {
         sellPrice, quantity: quantitySold, grossValueUsd: grossValue, netValueUsd: netValueLive,
         fees: liveFees, realizedPnlUsd: realizedPnlLive, realizedPnlPct: realizedPnlPctLive,
         capitalUsed: capitalUsedLive, clientOrderId: outcome.intent.clientOrderId,
       },
     }, {
-      eventType: "manual_close", pair, mode,
+      eventType: isPartialLive ? "exit_partial_executed" : "manual_close", pair, mode,
       price: sellPrice, quantity: quantitySold,
       pnlUsd: realizedPnlLive, pnlPct: realizedPnlPctLive,
       capitalUsed: capitalUsedLive,
@@ -8280,7 +8387,12 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     try {
       const pnlSign = realizedPnlLive >= 0 ? "+" : "";
       await telegram.sendRawMessage(
-        `🔴 *Cierre manual de posición*
+        isPartialLive
+          ? `⚠️ *Venta manual PARCIAL*
+Par: ${pair}
+Vendido: ${quantitySold.toFixed(6)}
+Residual: ${residualLive.toFixed(8)} — ciclo sigue ACTIVO.`
+          : `🔴 *Cierre manual de posición*
 ` +
         `Par: ${pair}
 Modo: LIVE

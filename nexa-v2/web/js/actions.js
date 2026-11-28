@@ -87,18 +87,41 @@ function newKeyMaterial(){
 // reinicios de la app. operationSeed distingue gestos repetidos intencionados:
 // la UI lo genera nuevo cuando el usuario confirma una operación NUEVA, pero
 // lo conserva en reintentos del mismo gesto (ver runAction).
+// Identidad estable del dispositivo, independiente de la renovación del token
+// de sesión: la misma operación conserva su identidad aunque el token rote.
+function deviceInstanceId(){
+  try{
+    let id = localStorage.getItem('nxv2-device-instance');
+    if(!id){ id = newKeyMaterial(); localStorage.setItem('nxv2-device-instance', id); }
+    return localStorage.getItem('nxv2-device-instance') || null;
+  }catch{ return null; }
+}
 export async function operationIdentity(actionId, method, path, body, operationSeed){
-  const sessionId = session.get()?.deviceId || session.get()?.tokenHash || 'anon';
+  const sessionId = session.get()?.deviceId || deviceInstanceId() || session.get()?.tokenHash || 'anon';
   const fingerprint = await sha256hex(`${sessionId}|${method}|${path}|${canonical(body??null)}|${operationSeed}`);
   const storageKey = IDEM_PREFIX + fingerprint;
   let rec = null;
   try{ rec = JSON.parse(localStorage.getItem(storageKey)||'null'); }catch{}
-  if(rec && Date.now()-rec.createdAt < IDEM_TTL_MS){
+  // La incertidumbre NUNCA expira: una operación in_progress conserva su clave
+  // sin límite de tiempo — expirarla permitiría reenviar una operación cuyo
+  // resultado real se desconoce. Solo las completadas/fallidas pueden expirar.
+  const reusable = rec && (rec.state === 'in_progress' || Date.now()-rec.createdAt < IDEM_TTL_MS);
+  if(reusable){
     return { key: rec.key, storageKey, existing: rec };
   }
   const key = `nxv2-${newKeyMaterial()}`;
   const fresh = { key, createdAt: Date.now(), state: 'in_progress' };
-  try{ localStorage.setItem(storageKey, JSON.stringify(fresh)); }catch{}
+  // Fail-closed: si la identidad no puede persistirse ANTES del envío, la
+  // operación no se ejecuta — enviar sin identidad durable rompería la
+  // garantía exactamente-una-vez ante timeout o doble gesto.
+  let persisted = false;
+  try{
+    localStorage.setItem(storageKey, JSON.stringify(fresh));
+    persisted = localStorage.getItem(storageKey) !== null;
+  }catch{ persisted = false; }
+  if(!persisted){
+    return { key: null, storageKey, existing: null, persistenceFailed: true };
+  }
   return { key, storageKey, existing: null };
 }
 export function markOperationCompleted(storageKey, result){
@@ -122,6 +145,10 @@ export async function runAction(actionId, params={}, { operationSeed } = {}){
   // identidad es igualmente estable para la misma acción+payload, de modo que
   // un doble toque sin seed tampoco duplica la operación.
   const identity = await operationIdentity(actionId, method, path, {...body, __action:actionId}, operationSeed ?? '');
+  if(identity.persistenceFailed){
+    return { ok:false, error:'idempotency_persistence_unavailable',
+             detail:'No se pudo persistir la identidad durable de la operación antes del envío; operación NO ejecutada (fail-closed).' };
+  }
   if(identity.existing?.state === 'completed'){
     // El gesto ya se ejecutó con éxito: jamás reejecutar. El usuario ve el
     // resultado honesto y debe iniciar una operación NUEVA si realmente quiere repetirla.

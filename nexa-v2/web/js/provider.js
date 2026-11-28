@@ -253,8 +253,18 @@ export function createApiProvider(){
         const m=enrichMarket(normMarket(raw),{marketView:mv.data,entryCtx:ctxs?.[pair],sources});
         m.candlesSource=m.candlesSource||'bot-market-data';
         if(Array.isArray(m.candles)&&m.candles.length>1){
+          // TANGO-5 §10.4: los indicadores oficiales del motor (servidor) prevalecen
+          // siempre — el cálculo local NUNCA sobrescribe claves oficiales. Los valores
+          // locales son auxiliares visuales: solo rellenan huecos y quedan distinguibles
+          // por procedencia; nunca actúan como señal del motor.
           const ind=computeIndicators(m.candles);
-          if(ind)m.indicators={...(m.indicators||{}),...ind};
+          if(ind){
+            const server=(m.indicators&&typeof m.indicators==='object')?m.indicators:{};
+            const serverKeys=Object.keys(server).length;
+            m.indicators=serverKeys?server:null;
+            m.visualAuxIndicators=ind;
+            m.indicatorsProvenance=serverKeys?'server-official':'local-visual-aux';
+          }
         }else{m.candlesError='Velas no disponibles desde Market Data del bot';}
         return m;
       });

@@ -256,7 +256,7 @@ export function renderAsset(ctx){
  '<small>'+out(x.kind)+(x.key==='spot'&&x.ref.includes(':trades:')?' · motor de origen no atribuido':'')+'</small>'+ '<small>'+out(x.reason||'Abrir para ver motivo y cronología')+'</small></span>'+
  '<span><strong>'+(gain===null?usd(x.amount):pnl(gain))+'</strong><small>'+(gain===null?'Importe · no PnL':'PnL')+'</small></span>›</button>';
  }).join(''):'<p class="nxh-empty">No se han recibido operaciones atribuibles a este activo en los endpoints consultados.</p>')+'</div>'+
- section('ANÁLISIS','Indicadores completos')+indicators(q.indicators)+
+ section('ANÁLISIS','Indicadores completos'+(q.m&&q.m.indicatorsProvenance==='local-visual-aux'?' · cálculo visual local — no es señal del motor':q.m&&q.m.indicatorsProvenance==='server-official'?' · oficiales del motor':''))+indicators(q.valid?(Object.keys(q.m.indicators||{}).length?q.m.indicators:(q.m.visualAuxIndicators||{})):{})+
  section('ESTRATEGIA','Diagnóstico de entrada IDCA',go('engine:idca','Ir a IDCA'))+
  '<div class="nxh-diagnostics">'+metric('Confianza',out(val(diag,'entryScore','confidenceScore')))+
  metric('Régimen',out(val(diag,'regime','marketRegime')))+metric('ATRP',out(diag.atrpPct))+
