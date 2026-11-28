@@ -14,6 +14,14 @@ async function makeDb() {
   return drizzle(pg);
 }
 
+// Instancia unica compartida por fichero (memoria WASM de PGlite); cada test
+// usa claves de idempotencia distintas, asi que el aislamiento se mantiene.
+let sharedDbPromise: Promise<any> | null = null;
+function sharedDb() {
+  if (!sharedDbPromise) sharedDbPromise = makeDb();
+  return sharedDbPromise;
+}
+
 function makeApp(db: any, handler: (req: any, res: any) => void) {
   const app = express();
   app.use(express.json());
@@ -40,7 +48,7 @@ async function post(app: any, body: any, key: string): Promise<{ status: number;
 
 describe("idempotencia durable de operaciones financieras", () => {
   it("misma clave + mismo payload → replay durable sin reejecutar el handler", async () => {
-    const db = await makeDb();
+    const db = await sharedDb();
     const handler = vi.fn((_req, res) => res.json({ ok: true }));
     const app = makeApp(db, handler);
     const first = await post(app, { mode: "shadow" }, "k1");
@@ -52,7 +60,7 @@ describe("idempotencia durable de operaciones financieras", () => {
   });
 
   it("misma clave + payload DISTINTO → 409 conflicto, nunca replay ni ejecución", async () => {
-    const db = await makeDb();
+    const db = await sharedDb();
     const handler = vi.fn((_req, res) => res.json({ ok: true }));
     const app = makeApp(db, handler);
     await post(app, { mode: "shadow" }, "k2");
@@ -63,7 +71,7 @@ describe("idempotencia durable de operaciones financieras", () => {
   });
 
   it("operación interrumpida (in_progress) → 409 y NUNCA reejecución automática", async () => {
-    const db = await makeDb();
+    const db = await sharedDb();
     // Simular una operación que quedó interrumpida: insertar directamente la identidad en in_progress.
     const scoped = "dev1:POST:/api/grid-isolated/mode:k3";
     await db.execute((await import("drizzle-orm")).sql`INSERT INTO nexa_idempotency_keys (scoped_key, principal, method, path, payload_hash, status, expires_at) VALUES (${scoped}, 'dev1', 'POST', '/api/grid-isolated/mode', 'x', 'in_progress', NOW() + INTERVAL '1 hour')`);
@@ -79,7 +87,7 @@ describe("idempotencia durable de operaciones financieras", () => {
   });
 
   it("reinicio: la identidad sobrevive a una nueva instancia del middleware", async () => {
-    const db = await makeDb();
+    const db = await sharedDb();
     const handler = vi.fn((_req, res) => res.json({ ok: true }));
     const app1 = makeApp(db, handler);
     await post(app1, { mode: "shadow" }, "k4");
@@ -92,7 +100,7 @@ describe("idempotencia durable de operaciones financieras", () => {
   });
 
   it("sin clave de idempotencia → 428: la identidad durable es OBLIGATORIA en acciones financieras", async () => {
-    const db = await makeDb();
+    const db = await sharedDb();
     const handler = vi.fn((_req, res) => res.json({ ok: true }));
     const app = makeApp(db, handler);
     const server = app.listen(0);

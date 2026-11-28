@@ -54,9 +54,18 @@ async function makeDb() {
   await pg.exec(strip(mig("042_idca_order_fee_tracking.sql"), [/COMMENT ON[\s\S]*?;/g]));
   return { pg, db: drizzle(pg) };
 }
-async function seedCycle(db: any, qty = "1", capital = "100") {
+// Una unica instancia PGlite compartida por fichero: cada PGlite es un postgres
+// WASM completo y una instancia por test agota memoria cuando la suite completa
+// ejecuta varios ficheros en paralelo. Los tests usan claves/pares unicos.
+let sharedDbPromise: Promise<{ pg: any; db: any }> | null = null;
+function sharedDb() {
+  if (!sharedDbPromise) sharedDbPromise = makeDb();
+  return sharedDbPromise;
+}
+
+async function seedCycle(db: any, qty = "1", capital = "100", pair = "BTC/USD") {
   const res = await db.execute(sql`INSERT INTO institutional_dca_cycles (pair, mode, status, total_quantity, capital_used_usd, total_cost_basis_usd, avg_entry_price, buy_count)
-    VALUES ('BTC/USD','live','active',${qty},${capital},${capital},'100',1) RETURNING id`);
+    VALUES (${pair},'live','active',${qty},${capital},${capital},'100',1) RETURNING id`);
   return res.rows[0].id as number;
 }
 async function seedIntent(db: any, clientOrderId: string, cycleId: number, side = "sell") {
@@ -79,7 +88,7 @@ function sellParams(cycleId: number, clientOrderId: string, over: Record<string,
 
 describe("P0-1 incierto nunca se marca aplicado; recuperacion contabiliza una sola vez", () => {
   it("incierto->valido->una sola contabilizacion (DB real)", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const cycleId = await seedCycle(db);
     const key = "IDCA_sell_1_p0";
     await seedIntent(db, key, cycleId);
@@ -118,7 +127,7 @@ describe("P0-1 incierto nunca se marca aplicado; recuperacion contabiliza una so
 
 describe("P0-2 cierre con cantidad residual: coste proporcional, ciclo activo", () => {
   it("fill terminal 0.999/1 NO cierra: residual conserva activo y coste", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const cycleId = await seedCycle(db, "1", "100");
     const key = "IDCA_sell_1_resid";
     await seedIntent(db, key, cycleId);
@@ -138,7 +147,7 @@ describe("P0-2 cierre con cantidad residual: coste proporcional, ciclo activo", 
   });
 
   it("fill completo exacto si cierra y consume todo el coste (control)", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const cycleId = await seedCycle(db, "1", "100");
     const key = "IDCA_sell_1_full";
     await seedIntent(db, key, cycleId);
@@ -153,11 +162,12 @@ describe("P0-2 cierre con cantidad residual: coste proporcional, ciclo activo", 
 });
 
 describe("P0-3 reservas sin tenencia ni reserva positiva se rechazan", () => {
+  // Par aislado sin ciclos live: la exposicion se evalua por par.
   const baseInsert = {
-    pair: "BTC/USD", internalIntentId: "x", executionMode: "live", lotId: "1", encodedReason: "IDCA_META:{}",
+    pair: "XXX/USD", internalIntentId: "x", executionMode: "live", lotId: "1", encodedReason: "IDCA_META:{}",
   };
   it("venta con tenencia cero se rechaza aunque no haya pendientes", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const res = await insertIntentWithReservation({
       ...baseInsert, clientOrderId: "IDCA_sell_zero", side: "sell", volume: 0.5, reservedQuoteUsd: 0, availableQuoteCapUsd: null,
     }, db);
@@ -165,7 +175,7 @@ describe("P0-3 reservas sin tenencia ni reserva positiva se rechazan", () => {
     expect(res.violations).toContain("sell_exceeds_held_plus_pending");
   });
   it("compra sin reserva positiva se rechaza", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const res = await insertIntentWithReservation({
       ...baseInsert, clientOrderId: "IDCA_buy_nores", side: "buy", volume: 0.5, reservedQuoteUsd: 0, availableQuoteCapUsd: 500,
     }, db);
@@ -173,7 +183,7 @@ describe("P0-3 reservas sin tenencia ni reserva positiva se rechazan", () => {
     expect(res.violations).toContain("buy_without_positive_reservation");
   });
   it("compra con reserva positiva dentro del cap se acepta (control)", async () => {
-    const { db } = await makeDb();
+    const { db } = await sharedDb();
     const res = await insertIntentWithReservation({
       ...baseInsert, clientOrderId: "IDCA_buy_ok", side: "buy", volume: 0.5, reservedQuoteUsd: 100, availableQuoteCapUsd: 500,
     }, db);
