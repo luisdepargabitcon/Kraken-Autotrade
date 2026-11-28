@@ -71,10 +71,14 @@ export function evaluateReservation(
     // Toda compra real exige reserva positiva durable: sin reserva no hay
     // proteccion de capital y la intencion no debe existir.
     if (!(newReservedQuoteUsd > 0)) violations.push("buy_without_positive_reservation");
-    if (availableQuoteCapUsd != null && Number.isFinite(availableQuoteCapUsd)) {
-      if (exposure.pendingBuyReservedQuoteUsd + newReservedQuoteUsd > availableQuoteCapUsd * (1 + 1e-9)) {
-        violations.push("quote_cap_exceeded");
-      }
+    // Cap de exposición OBLIGATORIO (P0 TANGO 10.2): toda compra live exige
+    // un cap finito y positivo validado en backend. Cap ausente, NaN,
+    // infinito o no positivo → rechazo ANTES de contactar el venue. Nunca es
+    // opcional en el contrato real.
+    if (availableQuoteCapUsd == null || !Number.isFinite(availableQuoteCapUsd) || availableQuoteCapUsd <= 0) {
+      violations.push("buy_without_valid_quote_cap");
+    } else if (exposure.pendingBuyReservedQuoteUsd + newReservedQuoteUsd > availableQuoteCapUsd * (1 + 1e-9)) {
+      violations.push("quote_cap_exceeded");
     }
   } else {
     // Ventas: disponible = tenencia live menos ventas ya pendientes. Con

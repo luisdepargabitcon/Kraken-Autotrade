@@ -59,13 +59,57 @@ export function isDanger(actionId, params){
 }
 export function needsDouble(actionId){ return !!ACTIONS[actionId]?.doubleConfirm; }
 
-let idemSeed = 0;
-function idemKey(){
-  return `nxv2-${Date.now().toString(36)}-${(++idemSeed).toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+// ── Idempotencia durable POR OPERACIÓN DE USUARIO (TANGO 10.3) ──
+// La identidad de la operación se crea UNA vez por gesto del usuario, se
+// persiste ANTES del primer envío en localStorage y se reutiliza en cualquier
+// reintento: timeout, pérdida de respuesta, doble toque, cierre/reapertura de
+// la app. Dos invocaciones del mismo gesto NUNCA crean dos operaciones. La
+// clave queda ligada a acción+payload+identidad de sesión; jamás se reutiliza
+// para un payload distinto (nuevo gesto = nueva identidad). Las entradas
+// expiran a las 24 h; no se guardan tokens ni secretos aquí.
+const IDEM_TTL_MS = 24*60*60*1000;
+const IDEM_PREFIX = 'nxv2op:';
+
+function canonical(value){
+  if(value===null||typeof value!=='object')return JSON.stringify(value);
+  if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
+  return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
+}
+async function sha256hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function newKeyMaterial(){
+  return `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(2))[0].toString(36)}${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+}
+
+// Identidad estable de la operación: persiste antes del envío y sobrevive a
+// reinicios de la app. operationSeed distingue gestos repetidos intencionados:
+// la UI lo genera nuevo cuando el usuario confirma una operación NUEVA, pero
+// lo conserva en reintentos del mismo gesto (ver runAction).
+export async function operationIdentity(actionId, method, path, body, operationSeed){
+  const sessionId = session.get()?.deviceId || session.get()?.tokenHash || 'anon';
+  const fingerprint = await sha256hex(`${sessionId}|${method}|${path}|${canonical(body??null)}|${operationSeed}`);
+  const storageKey = IDEM_PREFIX + fingerprint;
+  let rec = null;
+  try{ rec = JSON.parse(localStorage.getItem(storageKey)||'null'); }catch{}
+  if(rec && Date.now()-rec.createdAt < IDEM_TTL_MS){
+    return { key: rec.key, storageKey, existing: rec };
+  }
+  const key = `nxv2-${newKeyMaterial()}`;
+  const fresh = { key, createdAt: Date.now(), state: 'in_progress' };
+  try{ localStorage.setItem(storageKey, JSON.stringify(fresh)); }catch{}
+  return { key, storageKey, existing: null };
+}
+export function markOperationCompleted(storageKey, result){
+  try{
+    const rec = JSON.parse(localStorage.getItem(storageKey)||'null');
+    if(rec){ rec.state = result.ok ? 'completed' : 'failed'; rec.status = result.status??null; localStorage.setItem(storageKey, JSON.stringify(rec)); }
+  }catch{}
 }
 
 // Ejecuta la acción tras la confirmación UI. Devuelve resultado honesto.
-export async function runAction(actionId, params={}){
+export async function runAction(actionId, params={}, { operationSeed } = {}){
   const a = ACTIONS[actionId];
   if(!a) return { ok:false, error:'unknown_action' };
   if(!session.get()) return { ok:false, error:'auth_required' };
@@ -73,22 +117,46 @@ export async function runAction(actionId, params={}){
   const [method, path, body] = a.req(params);
   const s = session.get();
   const t0 = Date.now();
+  // operationSeed: lo fija la UI al confirmar el gesto; los reintentos del
+  // mismo gesto lo conservan (doble toque, timeout, reanudación). Sin seed la
+  // identidad es igualmente estable para la misma acción+payload, de modo que
+  // un doble toque sin seed tampoco duplica la operación.
+  const identity = await operationIdentity(actionId, method, path, {...body, __action:actionId}, operationSeed ?? '');
+  if(identity.existing?.state === 'completed'){
+    // El gesto ya se ejecutó con éxito: jamás reejecutar. El usuario ve el
+    // resultado honesto y debe iniciar una operación NUEVA si realmente quiere repetirla.
+    return { ok:true, status: identity.existing.status ?? 200, data:null, latency:0,
+             idempotentReplay:'local-operation-already-completed',
+             warning:'Esta operación ya se ejecutó; no se ha enviado duplicado.' };
+  }
   try{
     const res = await fetch(CONFIG.apiBase + path, {
       method,
       headers: {
         'Accept':'application/json','Content-Type':'application/json',
         'Authorization':`Bearer ${s.token}`,
-        'X-Idempotency-Key': idemKey(),
+        'X-Idempotency-Key': identity.key,
         ...(s.csrf ? {'X-CSRF-Token': s.csrf} : {}),
       },
       body: JSON.stringify({...body, __action:actionId}),
     });
     let data=null; try{ data=await res.json(); }catch{}
-    return { ok:res.ok, status:res.status, data, latency:Date.now()-t0,
-             error: res.ok?null:(data?.error||`http_${res.status}`) };
+    const out = { ok:res.ok, status:res.status, data, latency:Date.now()-t0,
+             error: res.ok?null:(data?.error||`http_${res.status}`),
+             idempotentReplay: res.headers.get('x-idempotent-replay') || undefined };
+    if(res.status===409 && (data?.error||'').includes('in_progress')){
+      // Operación interrumpida en el servidor: NO reejecutar ni inventar clave
+      // nueva. El usuario debe reconciliar el estado antes de reintentar.
+      out.warning = 'Operación en curso o interrumpida en el servidor: reconcilie el estado antes de reintentar; no se ha reejecutado.';
+    } else if (res.status !== 0) {
+      markOperationCompleted(identity.storageKey, out);
+    }
+    return out;
   }catch(e){
-    return { ok:false, error:'unreachable', detail:String(e?.message||e) };
+    // Fallo de transporte: la identidad permanece in_progress y el reintento
+    // reutiliza la MISMA clave — el servidor la reconocerá si ya la aplicó.
+    return { ok:false, error:'unreachable', detail:String(e?.message||e),
+             retryable:true, retryKeyHint:'same-operation-key' };
   }
 }
 

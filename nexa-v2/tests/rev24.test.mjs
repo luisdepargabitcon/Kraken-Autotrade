@@ -49,14 +49,26 @@ test('ningún módulo declara "Balance verificado" sin conciliación', () => {
 });
 
 // ---------- 3. Velas e indicadores reales ----------
-test('fetchKrakenCandles normaliza y rechaza filas corruptas', async () => {
+test('computeIndicators es matemática pura sobre velas del bot y rechaza datos insuficientes', async () => {
   const { computeIndicators, TIMEFRAMES } = await import(pathToFileURL(join(web, 'js', 'market-candles.js')));
   assert.equal(TIMEFRAMES.length, 6, 'faltan intervalos 1m/5m/15m/1h/4h/1d');
   const candles = Array.from({ length: 60 }, (_, i) => ({ t: i * 60000, o: 100 + i, h: 101 + i, l: 99 + i, c: 100.5 + i, v: 10 }));
   const ind = computeIndicators(candles);
-  assert.ok(ind && ind.source === 'kraken-public-calc', 'indicadores sin etiqueta de fuente');
+  assert.ok(ind && ind.source === 'bot-market-data-calc', 'indicadores sin etiqueta de fuente del bot');
   assert.ok(Number.isFinite(ind.ema.ema20) && Number.isFinite(ind.rsi), 'EMA/RSI no calculados');
   assert.equal(computeIndicators([{ t: 1, o: 1 }]), null, 'no debe calcular con datos insuficientes');
+});
+test('el WebView no contiene ninguna ruta de red externa al bot (TANGO 10.4)', async () => {
+  // La consulta directa a Kraken desde la app fue eliminada: las velas y los
+  // indicadores proceden exclusivamente de la API autenticada del bot.
+  for (const f of readdirSync(join(web, 'js')).filter(x => x.endsWith('.js'))) {
+    const src = readFileSync(join(web, 'js', f), 'utf8');
+    assert.ok(!src.includes('api.kraken.com'), `ruta externa Kraken alcanzable en ${f}`);
+    assert.ok(!src.includes('fetchKrakenCandles'), `fetchKrakenCandles alcanzable en ${f}`);
+    assert.ok(!/fetch\(\s*['"`]https?:\/\/(?!.*\/api)/.test(src.replace(/CONFIG.apiBase/g,'x').replace(/apiBase/g,'x')), `posible fetch externo en ${f}`);
+  }
+  const mc = readFileSync(join(web, 'js', 'market-candles.js'), 'utf8');
+  assert.ok(!mc.includes('fetch('), 'market-candles.js no debe contener ninguna llamada de red');
 });
 test('el provider incorpora velas reales etiquetadas, nunca curvas fabricadas', () => {
   const p = read('js/provider.js');

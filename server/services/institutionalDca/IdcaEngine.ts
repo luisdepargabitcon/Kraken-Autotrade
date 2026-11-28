@@ -330,6 +330,56 @@ export async function executeExit(
     })();
     const netValueUsd = grossValueUsd - feesUsd;
 
+    // ─── SALIDA CON RESIDUAL (P0 TANGO 10.1): una orden terminal/filled NO es
+    // un ciclo cerrado. Si el reconciliador atómico dejó cantidad residual en
+    // el ciclo (fill parcial terminal/dust), la contabilidad DB ya es
+    // proporcional y correcta — pero aquí NO se puede emitir cierre: sin
+    // limpieza de estado de salida, sin exit_executed, sin snapshot
+    // CYCLE_CLOSED ni alerta de venta total. La protección del ciclo sigue
+    // activa y el residual se gestiona después con identidad de intención
+    // nueva (nunca reenvío de la terminal) y reconciliación segura.
+    const residualQty = isLiveMode ? Math.max(0, liveOutcome?.residualQty ?? 0) : 0;
+    if (isLiveMode && residualQty > 1e-8) {
+      const proportion = totalQty > 0 ? accountingQty / totalQty : 0;
+      console.warn(
+        `${TAG}[EXIT_PARTIAL_RESIDUAL] cycleId=${cycle.id} pair=${pair} ` +
+        `sold=${accountingQty.toFixed(8)} residual=${residualQty.toFixed(8)} ` +
+        `exitType=${signal.exitType} — el ciclo permanece ACTIVO`
+      );
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "warn",
+        message: `Salida parcial ejecutada: vendido ${accountingQty.toFixed(8)} (${(proportion * 100).toFixed(2)}%), residual ${residualQty.toFixed(8)} permanece en el ciclo. NO es un cierre: la protección sigue activa y el residual requiere conciliación.`,
+        payloadJson: {
+          exitType: signal.exitType,
+          exitPrice: accountingPrice,
+          quantitySold: accountingQty,
+          residualQty,
+          proportion,
+          grossValueUsd,
+          feesUsd,
+          netValueUsd,
+          pnlProportionalUsd: netValueUsd - parseFloat(String(cycle.capitalUsedUsd || "0")) * proportion,
+          orderId: sellOrder.orderId || sellOrder.txid || null,
+          cycleClosed: false,
+        },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id });
+      await telegram.sendRawMessage(
+        `⚠️ <b>[IDCA][LIVE] SALIDA PARCIAL — NO ES CIERRE</b>
+
+` +
+        `Par: <b>${pair}</b> #${cycle.id}<br>
+` +
+        `Vendido: <code>${accountingQty.toFixed(8)}</code> (${(proportion * 100).toFixed(2)}%)<br>
+` +
+        `Residual: <code>${residualQty.toFixed(8)}</code> — el ciclo sigue ACTIVO con protección.<br>
+` +
+        `Conciliar el residual antes de cualquier reapertura.`
+      ).catch(() => {});
+      return; // NO cerrar: conservar estado de salida, protección y gestión del residual
+    }
+
     if (!isLiveMode) {
       // La contabilidad live la aplica una sola vez IdcaLiveOrderReconciler.
       await repo.updateCycle(cycle.id, {
