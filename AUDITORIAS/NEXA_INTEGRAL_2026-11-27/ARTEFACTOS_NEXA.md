@@ -205,3 +205,32 @@ Esto confirma que es un APK **DEBUG** firmado con la clave debug estándar del e
 6. El APK es debug/QA, no release.
 7. Los permisos no cumplen la expectativa de “solo INTERNET”.
 8. Estado final: **SIN APROBAR**.
+
+---
+
+## Adenda WP13 (2026-11-28): entrega verificable y build reproducible
+
+### Entrega binaria verificable (canal autorizado GitHub)
+
+Prerelease pública: `https://github.com/luisdepargabitcon/Kraken-Autotrade/releases/tag/nexa-v2-candidate-5b94ff8`
+
+| artefacto | SHA-256 | enlace directo |
+|---|---|---|
+| APK debug `.qa` reproducible | `55380d789b4afb87bc6add528369894468c01939783d402d61f288ae90bd2316` | `…/releases/download/nexa-v2-candidate-5b94ff8/nexa-v2-debug-reproducible.apk` |
+| ZIP web estático | `7ee3280c1752dcc1229b34866841a0ea48619e4d9b4a2be8f9bf9ffc3b8470fd` | `…/releases/download/nexa-v2-candidate-5b94ff8/nexa-v2-web-4a57fdd.zip` |
+| SHA256SUMS | — | `…/releases/download/nexa-v2-candidate-5b94ff8/SHA256SUMS.txt` |
+
+### Reproducibilidad verificada
+
+Build desde estado limpio (`npm ci --offline` reinstalando node_modules completo + `npx cap sync android` regenerando cordova-plugins + `node scripts/apply-android-build-fixes.mjs` versionado + `gradlew assembleDebug --offline`): **BUILD SUCCESSFUL**, y el SHA-256 del APK resultante es **bit a bit idéntico** al artefacto previo (`55380d78…2316` en ambas construcciones independientes).
+
+Correcciones versionadas que eliminan los ajustes manuales no versionados:
+- `nexa-v2/scripts/apply-android-build-fixes.mjs` — reemplazos AGP 8.2.1→8.13.0 y google-services 4.4.0→4.4.4, idempotente, tras cada `cap sync`.
+- `nexa-v2/android/variables.gradle` — `kotlin_version = '1.9.10'` fijada (disponible en caché Gradle; la referencia previa a 1.8.22 en BUILD_APK.md era incorrecta y se ha corregido).
+- **BUILD_APK.md quedaba parcialmente desactualizado**: la columna "objetivo" de Kotlin BOM 1.8.22 no era correcta; la versión efectiva reproducible es 1.9.10.
+
+### Límites que persisten (sin cambios)
+
+- Firma **debug**, no de publicación; variante `.qa`; no es actualización de una instalación firmada con otra clave. Compatibilidad real de actualización y firma release: pendientes del propietario.
+- Discrepancia de permisos biométricos (INTERNET + USE_BIOMETRIC/USE_FINGERPRINT) sigue abierta y documentada; no se modificó el cliente.
+- Estado: **SIN APROBAR**.
