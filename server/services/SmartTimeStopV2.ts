@@ -16,6 +16,7 @@
 
 import { log } from "../utils/logger";
 import { MarketDataService } from "./MarketDataService";
+import { ema as indicatorEma } from "./indicators/core";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ const SMART_TS_V2_CONFIG = {
 
 // ─── Indicator helpers ────────────────────────────────────────────────────────
 
-function computeEMA(values: number[], period: number): number[] {
+function legacyComputeEMA(values: number[], period: number): number[] {
   if (values.length < period) return [];
   const k = 2 / (period + 1);
   const ema: number[] = [];
@@ -86,6 +87,13 @@ function computeEMA(values: number[], period: number): number[] {
     ema.push(prev);
   }
   return ema;
+}
+
+export function computeEMA(values: number[], period: number): number[] {
+  // La librería devuelve la serie alineada con nulls de warm-up y filtra no
+  // finitos; este consumidor devolvía solo valores calculados sin filtrar.
+  if (!values.every(Number.isFinite)) return legacyComputeEMA(values, period);
+  return indicatorEma(values, period).filter((value): value is number => value !== null);
 }
 
 function computeRSI(closes: number[], period: number = 14): number {

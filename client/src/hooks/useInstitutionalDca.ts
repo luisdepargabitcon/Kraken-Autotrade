@@ -389,6 +389,18 @@ export type DataQualityLevel =
   | "good_context"
   | "full_macro_context";
 
+export interface EntryDataHealthDto {
+  validity: "valid" | "stale" | "invalid" | "unknown";
+  ageMs: number | null;
+  maxAgeMs: number;
+  missing: string[];
+  origin?: string;
+  source?: string;
+  status?: "ok" | "partial" | "degraded" | "stale" | "invalid" | "unknown";
+  warmup?: boolean;
+  components?: Record<string, { available: boolean; reason?: string }>;
+}
+
 export interface MarketDataHealthResult {
   pair: string;
   timeframe: string;
@@ -425,6 +437,7 @@ export interface MarketDataHealthResult {
   blocksNewMain: boolean;
   reason: string;
   checkedAt: string;
+  entryDataHealth?: EntryDataHealthDto | null;
 }
 
 export interface IdcaSummary {

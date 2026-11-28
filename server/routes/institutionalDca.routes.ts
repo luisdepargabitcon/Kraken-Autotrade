@@ -17,7 +17,7 @@ import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
 import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
 import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
-import { checkMarketDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
+import { checkMarketDataHealth, computeEntryDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
 import { getVwapAnchor } from "../services/institutionalDca/IdcaRepository";
 import { parseDynamicDistanceConfig } from "../services/institutionalDca/IdcaDynamicDistanceService";
 import { computeATRPct } from "../services/institutionalDca/IdcaSmartLayer";
@@ -25,6 +25,7 @@ import { evaluateIdcaEntryConfluence } from "../services/institutionalDca/IdcaCo
 import { resolveIdcaRequiredDistance } from "../services/institutionalDca/IdcaDistanceResolver";
 import { resolveIdcaDynamicRebound, getDefaultDynamicReboundConfig } from "../services/institutionalDca/IdcaDynamicReboundResolver";
 import { TrailingBuyManager } from "../services/institutionalDca/TrailingBuyManager";
+import { evaluateMarketMetricsAdvisory } from "../services/marketMetrics/marketMetricsAdvisory";
 import type { IdcaEntryMode, IdcaReboundState, IdcaReboundSource, IdcaTbPath } from "../services/institutionalDca/IdcaTypes";
 
 const PREFIX = "/api/institutional-dca";
@@ -1080,7 +1081,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const config = await repo.getIdcaConfig();
       const mode = config.mode ?? "simulation";
       const result = await checkMarketDataHealth(pair, mode);
-      res.json(result);
+      const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: Date.now() })
+        .catch(() => null);
+      res.json({ ...result, entryDataHealth });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1091,7 +1094,12 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const config = await repo.getIdcaConfig();
       const mode = config.mode ?? "simulation";
       const pairs = ["BTC/USD", "ETH/USD"];
-      const results = await Promise.all(pairs.map(p => checkMarketDataHealth(p, mode)));
+      const results = await Promise.all(pairs.map(async p => {
+        const health = await checkMarketDataHealth(p, mode);
+        const entryDataHealth = await computeEntryDataHealth(p, { nowMs: Date.now() })
+          .catch(() => null);
+        return { ...health, entryDataHealth };
+      }));
       res.json(results);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2338,6 +2346,18 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             ? ((referencePrice - currentPrice) / referencePrice) * 100
             : 0;
 
+          const btcCandles = pair === "ETH/USD" ? await MarketDataService.getCandles("BTC/USD", "1h") : [];
+          const marketQuality = engine.evaluateEntryMarketScoreQuality({
+            pair,
+            currentPrice,
+            scoreCandles: candles as any,
+            btcCandles: btcCandles as any,
+            weights: (globalConfig.marketScoreWeightsJson || {}) as any,
+            localHigh: referencePrice,
+            nowMs: Date.now(),
+          });
+          const diagnosticMarketScore = marketQuality.detailed.score ?? 0;
+
           // Resolver real de distancia — refleja el mismo valor que usa el motor
           const distanceResult = resolveIdcaRequiredDistance({
             pair,
@@ -2348,7 +2368,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             entryGlobalConfig: { entryUiJson: globalConfig.entryUiJson },
             dynamicDistanceConfig: ddCfg,
             buyCount: 0,
-            marketScore: 60,
+            marketScore: diagnosticMarketScore,
             candleCount: candles.length,
             capitalUsedUsd: 0,
             capitalReservedUsd: 0,
@@ -2374,12 +2394,26 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             capitalUsedUsd: 0,
             capitalReservedUsd: 0,
             buyCount: 0,
-            marketScore: 60,
+            marketScore: diagnosticMarketScore,
             atrPct,
             candleCount: candles.length,
             atrReliable: candles.length >= 14,
             smartAdjustmentEnabled: false,
           });
+
+          const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: Date.now() })
+            .catch(() => null);
+
+          let marketMetricsAdvisory = null;
+          try {
+            marketMetricsAdvisory = await evaluateMarketMetricsAdvisory(pair, new Date());
+          } catch (advisoryErr: any) {
+            marketMetricsAdvisory = {
+              status: "UNKNOWN",
+              available: false,
+              reasons: [`Advisory no disponible: ${advisoryErr?.message ?? advisoryErr}`],
+            };
+          }
 
           // ─── Trailing Buy state for diagnostics ─────────────────────────────
           const tbState = TrailingBuyManager.getState(pair);
@@ -2467,6 +2501,12 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             sliderBasePct: +(distanceResult.breakdown.sliderBasePct ?? entryConfig.effectiveMinDipPct).toFixed(2),
             atrPct: +atrPct.toFixed(3),
             candleCount: candles.length,
+            marketScore: diagnosticMarketScore,
+            marketScoreStatus: marketQuality.detailed.status,
+            marketScoreMissing: marketQuality.detailed.missing,
+            marketScoreRenormalized: marketQuality.detailed.renormalized,
+            entryDataHealth,
+            marketMetricsAdvisory,
             decisionClass: confluenceResult.decisionClass,
             confidenceScore: confluenceResult.confidenceScore,
             confidenceGrade: confluenceResult.confidenceGrade,

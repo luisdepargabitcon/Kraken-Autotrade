@@ -19,6 +19,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { MarketDataService } from "../MarketDataService";
+import { balanceCache } from "../exchanges/BalanceCache";
 import {
   CAPITAL_PROFILES,
   type CapitalProfile,
@@ -38,8 +40,15 @@ export interface GridCapitalConstraints {
   minLevelUsd?: number;
 }
 
+export interface CapitalAllocationBalanceInput {
+  mode?: string;
+  shadowReferenceCapitalUsd?: number;
+}
+
 export interface CapitalAllocationResult {
   totalBalanceUsd: number;
+  valuationStatus: "complete" | "partial";
+  btcValuationReason: string | null;
   reservePct: number;
   reservedAmountUsd: number;
   availableForGridUsd: number;
@@ -54,38 +63,108 @@ export interface CapitalAllocationResult {
   allocationMode: AllocationMode;
 }
 
-class GridCapitalAllocator {
+export class GridCapitalAllocator {
   private currentReservationId: string | null = null;
 
   /**
    * Get total available USD balance from the trading exchange (Revolut X).
    * Falls back to 0 if exchange not initialized.
    */
-  async getTotalBalanceUsd(): Promise<number> {
+  private async valueBalanceInUsd(balance: Record<string, number>): Promise<{
+    totalBalanceUsd: number;
+    valuationStatus: "complete" | "partial";
+    btcValuationReason: string | null;
+  }> {
+    const usdBalance = balance["USD"] || 0;
+    const btcBalance = balance["BTC"] || 0;
+
+    if (btcBalance <= 0) {
+      return {
+        totalBalanceUsd: usdBalance,
+        valuationStatus: "complete",
+        btcValuationReason: null,
+      };
+    }
+
     try {
-      const exchange = ExchangeFactory.getTradingExchange();
-      if (!exchange.isInitialized()) return 0;
+      const pricePoint = await MarketDataService.getPricePoint("BTC/USD");
+      const priceAgeOk = pricePoint.ageMs !== null && pricePoint.ageMs >= 0 && pricePoint.ageMs <= 5 * 60_000;
+      if (pricePoint.validity === "valid" && priceAgeOk && pricePoint.price !== null && pricePoint.price > 0) {
+        return {
+          totalBalanceUsd: usdBalance + btcBalance * pricePoint.price,
+          valuationStatus: "complete",
+          btcValuationReason: null,
+        };
+      }
+      return {
+        totalBalanceUsd: usdBalance,
+        valuationStatus: "partial",
+        btcValuationReason: `btc_reference_price_${pricePoint.validity}${priceAgeOk ? "" : "_or_too_old"}`,
+      };
+    } catch (error) {
+      return {
+        totalBalanceUsd: usdBalance,
+        valuationStatus: "partial",
+        btcValuationReason: `btc_reference_price_unavailable:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
 
-      const balance = await exchange.getBalance();
-      const usdBalance = balance["USD"] || 0;
-      const btcBalance = balance["BTC"] || 0;
-
-      // Convert BTC to USD using current ticker if available
-      let btcValueUsd = 0;
-      if (btcBalance > 0) {
-        try {
-          const ticker = await exchange.getTicker("BTC/USD");
-          btcValueUsd = btcBalance * ticker.last;
-        } catch {
-          // If ticker fails, just use USD balance
-        }
+  private async resolveBalanceUsdDetailed(input?: CapitalAllocationBalanceInput): Promise<{
+    totalBalanceUsd: number;
+    valuationStatus: "complete" | "partial";
+    btcValuationReason: string | null;
+  }> {
+    if (input?.mode === "SHADOW") {
+      const snapshot = balanceCache.getWithMeta("revolutx");
+      if (snapshot && !snapshot.stale) {
+        return this.valueBalanceInUsd(snapshot.data);
       }
 
-      return usdBalance + btcValueUsd;
+      const referenceUsd = Math.max(0, input.shadowReferenceCapitalUsd ?? 0);
+      const reason = snapshot
+        ? `shadow_balance_snapshot_stale_age_${snapshot.ageMs}ms_using_config_reference`
+        : "shadow_balance_snapshot_missing_using_config_reference";
+      botLogger.warn(
+        "GRID_SHADOW_BALANCE_UNKNOWN",
+        `[GridCapitalAllocator] SHADOW sin snapshot fresco de balance; se usa capital de referencia de configuración $${referenceUsd.toFixed(2)}`,
+        { reason, referenceUsd, snapshotAgeMs: snapshot?.ageMs ?? null }
+      );
+      return {
+        totalBalanceUsd: referenceUsd,
+        valuationStatus: "partial",
+        btcValuationReason: reason,
+      };
+    }
+
+    try {
+      const exchange = ExchangeFactory.getTradingExchange();
+      if (!exchange.isInitialized()) {
+        return {
+          totalBalanceUsd: 0,
+          valuationStatus: "partial",
+          btcValuationReason: "trading_exchange_not_initialized",
+        };
+      }
+
+      const balance = await exchange.getBalance();
+      return this.valueBalanceInUsd(balance);
     } catch (error) {
       botLogger.error("SYSTEM_ERROR", `[GridCapitalAllocator] Failed to get balance: ${error}`);
-      return 0;
+      return {
+        totalBalanceUsd: 0,
+        valuationStatus: "partial",
+        btcValuationReason: "balance_fetch_failed",
+      };
     }
+  }
+
+  /**
+   * Get total available USD balance from the trading exchange (Revolut X).
+   * Falls back to 0 if exchange not initialized.
+   */
+  async getTotalBalanceUsd(): Promise<number> {
+    return (await this.resolveBalanceUsdDetailed()).totalBalanceUsd;
   }
 
   /**
@@ -137,10 +216,12 @@ class GridCapitalAllocator {
     profile: CapitalProfile,
     levelsCount: number,
     netProfitTargetPct: number,
-    constraints?: GridCapitalConstraints
+    constraints?: GridCapitalConstraints,
+    balanceInput?: CapitalAllocationBalanceInput
   ): Promise<CapitalAllocationResult> {
     const profileConfig = CAPITAL_PROFILES[profile];
-    const totalBalanceUsd = await this.getTotalBalanceUsd();
+    const balanceValuation = await this.resolveBalanceUsdDetailed(balanceInput);
+    const totalBalanceUsd = balanceValuation.totalBalanceUsd;
     const otherReservedUsd = await this.getOtherStrategiesReservedUsd();
 
     // Apply profile reserve
@@ -183,8 +264,18 @@ class GridCapitalAllocator {
 
     const actualBudget = capitalPerLevelUsd * effectiveLevels;
 
+    if (balanceValuation.valuationStatus === "partial") {
+      botLogger.warn(
+        "GRID_CAPITAL_VALUATION_PARTIAL",
+        `[GridCapitalAllocator] Valoración parcial: ${balanceValuation.btcValuationReason}`,
+        { totalBalanceUsd, reason: balanceValuation.btcValuationReason }
+      );
+    }
+
     return {
       totalBalanceUsd,
+      valuationStatus: balanceValuation.valuationStatus,
+      btcValuationReason: balanceValuation.btcValuationReason,
       reservePct,
       reservedAmountUsd,
       availableForGridUsd,

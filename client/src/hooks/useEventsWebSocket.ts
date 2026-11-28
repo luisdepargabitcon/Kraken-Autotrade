@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { authV2WebSocketToken } from "@/lib/authV2";
 
 export interface BotEvent {
   id?: number;
@@ -133,6 +134,8 @@ class EventsWebSocketSingleton {
 
   private getAuthToken(): string | null {
     try {
+      const authV2 = authV2WebSocketToken();
+      if (authV2) return authV2;
       const token = localStorage.getItem("WS_ADMIN_TOKEN");
       return token && token.trim() ? token.trim() : null;
     } catch (e) {

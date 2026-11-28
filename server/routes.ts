@@ -9,6 +9,7 @@ import { TradingEngine } from "./services/tradingEngine";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { terminalWsServer as spotTerminalWsServer } from "./services/spot/spotTerminalStream";
+import { positionsWs } from "./services/positionsWebSocket";
 import { environment } from "./services/environment";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
@@ -26,6 +27,10 @@ import { db } from "./db";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { createAuthV2Enforcement, createAuthV2WebSocketUpgradeHandler } from "./services/authV2/authV2Enforcement";
+import { getAuthV2Service } from "./services/authV2/authV2Runtime";
+import { createAuthV2Idempotency } from "./services/authV2/authV2Idempotency";
+import { createDurableFinancialIdempotency } from "./services/authV2/authV2DurableIdempotency";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -81,19 +86,18 @@ export function initializeWebSockets(httpServer: Server): void {
   eventsWs.initialize(httpServer);
   terminalWsServer.initialize(httpServer);
   spotTerminalWsServer.initialize(httpServer);
-  
+  positionsWs.initialize(httpServer);
+
   httpServer.on("upgrade", (req, socket, head) => {
-    const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
-    
-    if (pathname === "/ws/events") {
-      eventsWs.handleUpgrade(req, socket, head);
-    } else if (pathname === "/ws/logs") {
-      terminalWsServer.handleUpgrade(req, socket, head);
-    } else if (pathname === "/ws/spot-terminal") {
-      spotTerminalWsServer.handleUpgrade(req, socket, head);
-    } else {
-      socket.destroy();
-    }
+    void (async () => {
+      const service = await getAuthV2Service();
+      createAuthV2WebSocketUpgradeHandler(service, {
+        "/ws/events": (q, sck, h) => eventsWs.handleUpgrade(q, sck, h),
+        "/ws/logs": (q, sck, h) => terminalWsServer.handleUpgrade(q, sck, h),
+        "/ws/spot-terminal": (q, sck, h) => spotTerminalWsServer.handleUpgrade(q, sck, h),
+        "/ws/positions": (q, sck, h) => { positionsWs.handleUpgrade(q, sck, h); },
+      })(req, socket, head);
+    })().catch(() => socket.destroy());
   });
 }
 
@@ -101,7 +105,12 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+  app.use(createAuthV2Enforcement({ service: await getAuthV2Service() }));
+  // Durable identity for financial operations first (fail-closed without the
+  // store); the memory layer remains as optimization for everything else.
+  app.use(createDurableFinancialIdempotency());
+  app.use(createAuthV2Idempotency());
+
   // Shared dependencies for modular route files
   const routerDeps: RouterDeps = {
     tradingEngine,
@@ -197,9 +206,19 @@ export async function registerRoutes(
   try {
     const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
     registerInstitutionalDcaRoutes(app);
+
     console.log('[startup] Institutional DCA routes registered');
   } catch (e: any) {
     console.error('[startup] Failed to register Institutional DCA routes:', e?.message || e);
+  }
+
+  // NEXA v2 authentication contract. Global deny-by-default enforcement is
+  // installed before all API routes above.
+  try {
+    const { registerAuthV2Routes } = await import('./routes/authV2.routes');
+    registerAuthV2Routes(app);
+  } catch (e: any) {
+    console.error('[startup] Failed to register auth v2 routes:', e?.message || e);
   }
 
   // Register IDCA Hybrid Intelligent Layers routes
@@ -259,11 +278,11 @@ export async function registerRoutes(
         revolutxApiKey: apiConfig.revolutxApiKey ?? undefined,
         revolutxPrivateKey: apiConfig.revolutxPrivateKey ?? undefined,
         revolutxEnabled: apiConfig.revolutxEnabled ?? false,
-        activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx") ?? "kraken",
-        tradingExchange: ((apiConfig as any).tradingExchange as "kraken" | "revolutx") ?? "kraken",
-        dataExchange: ((apiConfig as any).dataExchange as "kraken" | "revolutx") ?? "kraken",
+        activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx" | null) ?? undefined,
+        tradingExchange: ((apiConfig as any).tradingExchange as "kraken" | "revolutx" | null) ?? undefined,
+        dataExchange: ((apiConfig as any).dataExchange as "kraken" | "revolutx" | null) ?? undefined,
       });
-      console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType()}`);
+      console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType() ?? 'none'}`);
       
       if (apiConfig.krakenApiKey && apiConfig.krakenApiSecret && apiConfig.krakenConnected) {
         krakenService.initialize({
@@ -592,6 +611,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid exchange. Must be 'kraken' or 'revolutx'" });
       }
 
+      if (activeExchange === "kraken") {
+        return res.status(400).json({ error: "KRAKEN_TRADING_FORBIDDEN: Kraken es solo fuente de datos; Revolut X es el unico venue de ejecucion" });
+      }
+
       const config = await storage.getApiConfig();
       
       if (activeExchange === "kraken" && !config?.krakenConnected) {
@@ -600,6 +623,13 @@ export async function registerRoutes(
       
       if (activeExchange === "revolutx" && !config?.revolutxConnected) {
         return res.status(400).json({ error: "Revolut X no está conectado. Configura las credenciales primero." });
+      }
+
+      if (activeExchange === "revolutx") {
+        const revolutStatus = ExchangeFactory.getExchangeStatus().find((status) => status.name === "revolutx");
+        if (!revolutStatus?.enabled || !revolutStatus.configured) {
+          return res.status(400).json({ error: "VENUE_UNAVAILABLE: Revolut X debe estar habilitado e inicializado antes de seleccionarlo" });
+        }
       }
 
       // Update ExchangeFactory runtime state
@@ -1620,7 +1650,12 @@ export async function registerRoutes(
     let prices: Record<string, { price: string; change: string }> = {};
 
     const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
-    const tradingExchange = ExchangeFactory.getTradingExchange();
+    let tradingExchange: ReturnType<typeof ExchangeFactory.getDataExchange> | null = null;
+    try {
+      tradingExchange = ExchangeFactory.getTradingExchange();
+    } catch (e: any) {
+      console.error('[dashboard] Execution venue unavailable:', e?.message || e);
+    }
     const dataExchange = ExchangeFactory.getDataExchange();
 
     const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
@@ -1650,11 +1685,11 @@ export async function registerRoutes(
     // Fetch balance + stale tickers with hard 3s timeout
     await Promise.race([
       Promise.all([
-        tradingExchange.isInitialized()
+        tradingExchange?.isInitialized()
           ? tradingExchange.getBalance()
               .then(raw => {
                 for (const [asset, amount] of Object.entries(raw)) {
-                  const sym = normalizeSymbol(asset, tradingExchangeType);
+                  const sym = normalizeSymbol(asset, tradingExchangeType ?? 'none');
                   if (activeAssets.has(sym)) balances[sym] = (balances[sym] || 0) + amount;
                 }
               })
@@ -1675,10 +1710,10 @@ export async function registerRoutes(
       new Promise<void>(r => setTimeout(r, DASHBOARD_COLD_TIMEOUT)),
     ]);
 
-    const exchangeConnected = tradingExchange.isInitialized();
+    const exchangeConnected = tradingExchange?.isInitialized() === true;
     const responseData = {
       exchangeConnected,
-      tradingExchange: tradingExchangeType,
+      tradingExchange: tradingExchangeType ?? 'none',
       dataExchange: ExchangeFactory.getDataExchangeType(),
       krakenConnected: krakenService.isInitialized(),
       telegramConnected: apiConfig?.telegramConnected || false,
@@ -1920,7 +1955,7 @@ export async function registerRoutes(
         const cfg = await marketMetricsService.getConfig();
         if (cfg.enabled) {
           console.log('[startup] Market Metrics: ejecutando primer refresh...');
-          await marketMetricsService.refresh();
+          await marketMetricsService.refreshIfDue();
         }
       } catch (e: any) {
         console.warn('[startup] Market Metrics primer refresh (non-critical):', e?.message ?? e);

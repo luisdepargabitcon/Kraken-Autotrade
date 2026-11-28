@@ -22,7 +22,7 @@
 
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
-import { createHash } from "crypto";
+import { deterministicClientOrderId } from "../deterministicClientOrderId";
 import type { RealOrderRecord, RealOrderState, ExecutionSide, ExecutionOrderType, ExecutionMode } from "./spotTypes";
 import { SPOT_POLICY_VERSION } from "./spotTypes";
 import { SPOT_ENGINE_OWNER } from "./spotEngine";
@@ -56,8 +56,7 @@ export function generateClientOrderId(internalIntentId: string): string {
   if (cached?.clientOrderId) {
     return cached.clientOrderId;
   }
-  const hash = createHash("sha256").update(internalIntentId).digest("hex");
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+  return deterministicClientOrderId(internalIntentId);
 }
 
 export class RealIntentPersistenceError extends Error {

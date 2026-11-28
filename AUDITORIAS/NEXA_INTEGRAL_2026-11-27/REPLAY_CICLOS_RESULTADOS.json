@@ -1,0 +1,320 @@
+{
+  "BTC": {
+    "A0_legacy": {
+      "summary": {
+        "cycles": 20,
+        "closedCycles": 19,
+        "winRate": 1,
+        "totalPnlUsd": 23.179590091465613,
+        "avgPnlPct": 2.0673485359125343,
+        "maxDrawdownPct": 24.286748016802505,
+        "exposurePct": 84.96963562753037,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774515600000,
+          "exitTime": 1775023200000,
+          "levelsUsed": 3,
+          "investedUsd": 100,
+          "exitValueUsd": 101.88802082085164,
+          "pnlUsd": 1.8880208208516365,
+          "pnlPct": 1.8880208208516367,
+          "holdingHours": 141,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 4.136401699558512
+        },
+        {
+          "entryTime": 1775095200000,
+          "exitTime": 1775426400000,
+          "levelsUsed": 1,
+          "investedUsd": 50,
+          "exitValueUsd": 51.005996395083244,
+          "pnlUsd": 1.005996395083244,
+          "pnlPct": 2.011992790166488,
+          "holdingHours": 92,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 1.3184567633464468
+        },
+        {
+          "entryTime": 1775556000000,
+          "exitTime": 1775595600000,
+          "levelsUsed": 1,
+          "investedUsd": 50,
+          "exitValueUsd": 51.14934173137697,
+          "pnlUsd": 1.1493417313769712,
+          "pnlPct": 2.2986834627539423,
+          "holdingHours": 11,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 0.6303944475389187
+        }
+      ],
+      "closedCount": 19
+    },
+    "A2_candidate_deep": {
+      "summary": {
+        "cycles": 14,
+        "closedCycles": 13,
+        "winRate": 1,
+        "totalPnlUsd": 19.12969604422382,
+        "avgPnlPct": 2.684930160134508,
+        "maxDrawdownPct": 23.252350268421935,
+        "exposurePct": 80.28002699055331,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774537200000,
+          "exitTime": 1775466000000,
+          "levelsUsed": 2,
+          "investedUsd": 70,
+          "exitValueUsd": 71.83263431989919,
+          "pnlUsd": 1.832634319899185,
+          "pnlPct": 2.618049028427407,
+          "holdingHours": 258,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 3.8251561458906735
+        },
+        {
+          "entryTime": 1776002400000,
+          "exitTime": 1776106800000,
+          "levelsUsed": 1,
+          "investedUsd": 40,
+          "exitValueUsd": 41.41242766980924,
+          "pnlUsd": 1.4124276698092402,
+          "pnlPct": 3.531069174523101,
+          "holdingHours": 29,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 0.1817641656068858
+        },
+        {
+          "entryTime": 1776589200000,
+          "exitTime": 1776772800000,
+          "levelsUsed": 1,
+          "investedUsd": 40,
+          "exitValueUsd": 40.45795165313008,
+          "pnlUsd": 0.4579516531300811,
+          "pnlPct": 1.1448791328252028,
+          "holdingHours": 51,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 1.71553780348054
+        }
+      ],
+      "closedCount": 13
+    },
+    "A3_no_safety": {
+      "summary": {
+        "cycles": 15,
+        "closedCycles": 14,
+        "winRate": 1,
+        "totalPnlUsd": 29.215337008994453,
+        "avgPnlPct": 2.0868097863567465,
+        "maxDrawdownPct": 26.103780478229382,
+        "exposurePct": 86.89271255060729,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774515600000,
+          "exitTime": 1775599200000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 102.63336983526975,
+          "pnlUsd": 2.6333698352697468,
+          "pnlPct": 2.6333698352697468,
+          "holdingHours": 301,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 5.777675284711847
+        },
+        {
+          "entryTime": 1775966400000,
+          "exitTime": 1776106800000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 102.4625743340745,
+          "pnlUsd": 2.462574334074503,
+          "pnlPct": 2.462574334074503,
+          "holdingHours": 39,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 1.2119406220283082
+        },
+        {
+          "entryTime": 1776236400000,
+          "exitTime": 1776279600000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 101.5156394075726,
+          "pnlUsd": 1.515639407572607,
+          "pnlPct": 1.515639407572607,
+          "holdingHours": 12,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 0
+        }
+      ],
+      "closedCount": 14
+    }
+  },
+  "ETH": {
+    "A0_legacy": {
+      "summary": {
+        "cycles": 34,
+        "closedCycles": 33,
+        "winRate": 1,
+        "totalPnlUsd": 40.04703910313805,
+        "avgPnlPct": 1.9240123256018786,
+        "maxDrawdownPct": 32.65991912301243,
+        "exposurePct": 88.12415654520917,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774501200000,
+          "exitTime": 1774976400000,
+          "levelsUsed": 3,
+          "investedUsd": 100,
+          "exitValueUsd": 101.34683017427302,
+          "pnlUsd": 1.3468301742730233,
+          "pnlPct": 1.3468301742730233,
+          "holdingHours": 132,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 4.910465834362455
+        },
+        {
+          "entryTime": 1775091600000,
+          "exitTime": 1775430000000,
+          "levelsUsed": 2,
+          "investedUsd": 80,
+          "exitValueUsd": 81.13533734709263,
+          "pnlUsd": 1.13533734709263,
+          "pnlPct": 1.4191716838657875,
+          "holdingHours": 94,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 2.7902188404692936
+        },
+        {
+          "entryTime": 1775512800000,
+          "exitTime": 1775595600000,
+          "levelsUsed": 1,
+          "investedUsd": 50,
+          "exitValueUsd": 50.84133240709001,
+          "pnlUsd": 0.8413324070900075,
+          "pnlPct": 1.6826648141800147,
+          "holdingHours": 23,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 1.810491916946859
+        }
+      ],
+      "closedCount": 33
+    },
+    "A2_candidate_deep": {
+      "summary": {
+        "cycles": 25,
+        "closedCycles": 24,
+        "winRate": 1,
+        "totalPnlUsd": 30.255968365549812,
+        "avgPnlPct": 2.569053313873573,
+        "maxDrawdownPct": 30.892394220535422,
+        "exposurePct": 82.32118758434548,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774515600000,
+          "exitTime": 1774972800000,
+          "levelsUsed": 2,
+          "investedUsd": 70,
+          "exitValueUsd": 71.51309667737468,
+          "pnlUsd": 1.5130966773746763,
+          "pnlPct": 2.1615666819638233,
+          "holdingHours": 127,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 3.487761386222498
+        },
+        {
+          "entryTime": 1775095200000,
+          "exitTime": 1775440800000,
+          "levelsUsed": 1,
+          "investedUsd": 40,
+          "exitValueUsd": 41.09132885990584,
+          "pnlUsd": 1.0913288599058433,
+          "pnlPct": 2.728322149764608,
+          "holdingHours": 96,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 2.371941469861838
+        },
+        {
+          "entryTime": 1775563200000,
+          "exitTime": 1775595600000,
+          "levelsUsed": 1,
+          "investedUsd": 40,
+          "exitValueUsd": 41.04321977127548,
+          "pnlUsd": 1.0432197712754814,
+          "pnlPct": 2.6080494281887034,
+          "holdingHours": 9,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 0.9168975151558811
+        }
+      ],
+      "closedCount": 24
+    },
+    "A3_no_safety": {
+      "summary": {
+        "cycles": 24,
+        "closedCycles": 23,
+        "winRate": 1,
+        "totalPnlUsd": 41.82626798340817,
+        "avgPnlPct": 1.818533390582964,
+        "maxDrawdownPct": 36.169659572681866,
+        "exposurePct": 93.3029689608637,
+        "openCyclesAtEnd": 1
+      },
+      "firstCycles": [
+        {
+          "entryTime": 1774501200000,
+          "exitTime": 1775062800000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 101.12128963410443,
+          "pnlUsd": 1.1212896341044285,
+          "pnlPct": 1.1212896341044285,
+          "holdingHours": 156,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 6.966062533346546
+        },
+        {
+          "entryTime": 1775091600000,
+          "exitTime": 1775440800000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 101.40567347969679,
+          "pnlUsd": 1.4056734796967874,
+          "pnlPct": 1.4056734796967874,
+          "holdingHours": 97,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 3.6289231772817345
+        },
+        {
+          "entryTime": 1775512800000,
+          "exitTime": 1775595600000,
+          "levelsUsed": 1,
+          "investedUsd": 100,
+          "exitValueUsd": 101.68266481418001,
+          "pnlUsd": 1.682664814180015,
+          "pnlPct": 1.6826648141800147,
+          "holdingHours": 23,
+          "exitReason": "trailing_tp",
+          "maxDrawdownPct": 1.810491916946859
+        }
+      ],
+      "closedCount": 23
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-11-28T08:52:50.485Z",
+    "note": "Harness causal de ciclos. NO es el motor productivo; comparación causal de variantes con datos públicos. No evidencia rentabilidad. Ninguna variante activada.",
+    "dataSha256": {
+      "BTC": "60cc4d0a2e06000a40e9e567a736d3b4b09599bc6ca1ef00e88b9bf9066af669",
+      "ETH": "959643f7aaf2eba49d8b0d0083cd9f40616d14ce20f3622bbcfbc02251577cd4"
+    }
+  }
+}

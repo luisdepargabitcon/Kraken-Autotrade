@@ -8,6 +8,21 @@ export type Bias = "ALCISTA" | "BAJISTA" | "NEUTRAL" | "DESCONOCIDO";
 export type MetricsAction = "PERMITIR" | "AJUSTAR" | "BLOQUEAR";
 export type MetricsMode = "observacion" | "activo";
 export type MetricsSensitivity = "conservador" | "normal" | "agresivo";
+export type MarketMetricsDecisionStatus = "OK" | "DEGRADED" | "UNKNOWN";
+export type MarketMetricDataState = "ok" | "stale" | "missing" | "unknown_age" | "invalid";
+
+export interface MarketMetricDataQuality {
+  state: MarketMetricDataState;
+  ageMs: number | null;
+  source: string | null;
+  reason?: string;
+}
+
+export interface MarketMetricObservationMeta {
+  source: string | null;
+  tsProviderMs: number | null;
+  tsIngestedMs: number | null;
+}
 
 // ---- Snapshot de una métrica individual ----
 export interface MetricSnapshot {
@@ -25,6 +40,8 @@ export interface MetricSnapshot {
 
 // ---- Resultado de la evaluación del Engine ----
 export interface MarketMetricsDecision {
+  status: MarketMetricsDecisionStatus;
+  dataQuality: Record<string, MarketMetricDataQuality>;
   enabled: boolean;
   available: boolean;
   mode: MetricsMode;
@@ -47,6 +64,7 @@ export interface MarketMetricsDecision {
 
 export interface ScoreBreakdown {
   metric: string;
+  scope?: string;
   value: number | null;
   points: number;
   reason: string;
@@ -74,6 +92,7 @@ export interface MarketMetricsConfig {
     netflow: number;
     whaleActivity: number;
     derivatives: number;
+    funding?: number;
   };
 }
 
@@ -87,7 +106,8 @@ export const DEFAULT_METRICS_CONFIG: MarketMetricsConfig = {
     stablecoins: 6 * 60 * 60 * 1000,   // 6h
     netflow:     6 * 60 * 60 * 1000,   // 6h
     whaleActivity: 2 * 60 * 60 * 1000, // 2h
-    derivatives: 1 * 60 * 60 * 1000,   // 1h
+    derivatives: 1 * 60 * 60 * 1000,   // 1h para OI/liquidaciones
+    funding:     9 * 60 * 60 * 1000,   // 9h: funding se publica cada 8h y el refresh nominal es 4h
   },
 };
 
@@ -113,6 +133,7 @@ export const METRIC_NAMES = {
   EXCHANGE_RESERVES:           "exchange_reserves",
   WHALE_INFLOW_USD:            "whale_inflow_usd",
   OPEN_INTEREST:               "open_interest",
+  OPEN_INTEREST_DELTA_24H_PCT: "open_interest_delta_24h_pct",
   FUNDING_RATE:                "funding_rate",
   LIQUIDATIONS_1H_USD:         "liquidations_1h_usd",
 } as const;
@@ -124,6 +145,8 @@ export function makePassthroughDecision(
   reason?: string
 ): MarketMetricsDecision {
   return {
+    status: "UNKNOWN",
+    dataQuality: {},
     enabled,
     available: false,
     mode,

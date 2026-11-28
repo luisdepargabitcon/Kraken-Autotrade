@@ -4,6 +4,8 @@
  * Completely isolated from the main bot's TradingEngine.
  */
 import * as repo from "./IdcaRepository";
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
 import { getNearZoneThresholdPct } from "./IdcaTelegramNotifier";
@@ -11,6 +13,9 @@ import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
+import { computeEntryDataHealth } from "./IdcaMarketDataHealthService";
+import { resolveEntryDataGate, resolveExitPriceInput } from "./idcaDataGate";
 import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold, shouldUpdateAnchor, shouldResetAnchor } from "./IdcaEntryReferenceResolver";
 import { buildReferenceContext, type ReferenceContext, MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT } from "./IdcaReferenceContext";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
@@ -47,6 +52,10 @@ import type {
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
 import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
+import { resolveIdcaEntryPolicy } from "./IdcaEntryPolicy";
+import { resolveTrailingBuyCanonicalParams } from "./IdcaTrailingBuyCanonical";
+import { normalizeAtrpLevelWeightsTo100, nextAtrpLevelAfterBuyCount } from "./IdcaAtrpEffectivePlan";
+import { resolveMonthlyBiasSizeProfile } from "./IdcaMonthlyBias";
 import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
@@ -57,6 +66,8 @@ import { runStartupReconciliation, isSafeToStartAfterReconciliation } from "./Id
 import { tradeSnapshotService, type IdcaCycleContext } from "../TradeSnapshotService";
 import { tradeMetricsTracker } from "../TradeMetricsTracker";
 import { idcaHybridDecisionService } from "./IdcaHybridDecisionService";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+import { submitAndReconcile, reconcilePendingIntents, type ReconciledOutcome } from "./IdcaLiveOrderReconciler";
 
 const TAG = "[IDCA]";
 
@@ -192,10 +203,21 @@ async function getAtrPctForPair(pair: string): Promise<number> {
 // ─── Exit Execution ─────────────────────────────────────────────
 
 /**
+ * STRICT MODE PREDICATE (P0): only the exact string "live" authorizes real
+ * venue interaction. Any other value — simulation, shadow, undefined, null,
+ * empty, corrupted or unknown — is NOT live (fail-closed). Never invert this.
+ */
+export function isLiveExecutionMode(mode: unknown): mode is "live" {
+  return mode === "live";
+}
+
+export { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+
+/**
  * Ejecuta una salida basada en señal del ExitManager
  * GUARD CRÍTICO: Solo cierra ciclo en BD si hay confirmación de venta real (orderId/filled)
  */
-async function executeExit(
+export async function executeExit(
   cycle: InstitutionalDcaCycle,
   signal: any, // ExitSignal type
   config: InstitutionalDcaConfigRow,
@@ -204,6 +226,12 @@ async function executeExit(
 ): Promise<void> {
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
+
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeExit");
+    return;
+  }
 
   let sellVolume = totalQty; // may be adjusted by dust tolerance below
 
@@ -228,9 +256,27 @@ async function executeExit(
       }
     }
 
-    // Crear orden de salida (con volume ajustado por dust si aplica)
-    const exchange = ExchangeFactory.getTradingExchange();
-    const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: sellVolume.toFixed(8) });
+    // Scope ya validado: solo "live" contacta el venue; solo "simulation"
+    // ejecuta contabilidad simulada. No existe fallback entre modos.
+    const isLiveMode = scope.mode === "live";
+
+    let sellOrder: { success: boolean; orderId?: string; txid?: string };
+    let liveOutcome: ReconciledOutcome | null = null;
+    if (isLiveMode) {
+      // Crear orden de salida real (con volume ajustado por dust si aplica)
+      const outcome = await submitAndReconcile({
+        cycleId: cycle.id, pair, side: "sell", requestedQty: sellVolume,
+        reason: signal.exitType, intentKey: `${signal.exitType}_${sellVolume.toFixed(8)}`, closePosition: true, closeReason: signal.exitType,
+      });
+      if (outcome.state !== "filled") {
+        throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}; cycle remains active`);
+      }
+      liveOutcome = outcome;
+      sellOrder = { success: true, orderId: outcome.intent.exchangeOrderId ?? outcome.intent.clientOrderId };
+    } else {
+      // Ejecución simulada: fill sintético al precio de señal, sin orden real.
+      sellOrder = { success: true };
+    }
 
     if (!sellOrder) {
       throw new Error("Failed to create sell order");
@@ -241,7 +287,7 @@ async function executeExit(
     const hasOrderId = !!(sellOrder.orderId || sellOrder.txid);
 
     // Para LIVE: exigir confirmación real antes de cerrar ciclo
-    if (mode === "live" && !hasOrderId) {
+    if (isLiveMode && !hasOrderId) {
       console.error(
         `${TAG}[EXIT_BLOCKED] cycleId=${cycle.id} pair=${pair} ` +
         `mode=live reason=no_confirmed_order_id ` +
@@ -275,33 +321,87 @@ async function executeExit(
     // Si sellOrder.success=true y tiene orderId, consideramos exitoso
     const isConfirmed = sellOrder.success && hasOrderId;
 
-    // Solo cerrar ciclo si hay confirmación suficiente
-    await repo.updateCycle(cycle.id, {
-      status: "closed",
-      closeReason: signal.exitType,
-      closedAt: new Date(),
-    });
-
-    // Guardar referencia a la orden de venta
-    const grossValueUsd = totalQty * signal.exitPrice;
-    const { pct: feePct } = (await import('./IdcaPnlCalculator')).resolveFeePct(config.executionFeesJson, (config as any).simulationFeePct);
-    const feesUsd = grossValueUsd * feePct / 100;
+    const accountingQty = liveOutcome?.filledQty ?? totalQty;
+    const accountingPrice = liveOutcome?.avgPrice || signal.exitPrice;
+    const grossValueUsd = accountingQty * accountingPrice;
+    const feesUsd = liveOutcome?.feesUsd ?? await (async () => {
+      const { pct: feePct } = (await import('./IdcaPnlCalculator')).resolveFeePct(config.executionFeesJson, (config as any).simulationFeePct);
+      return grossValueUsd * feePct / 100;
+    })();
     const netValueUsd = grossValueUsd - feesUsd;
 
-    await repo.createOrder({
-      cycleId: cycle.id,
-      pair,
-      mode,
-      orderType: signal.exitType === "take_profit" ? "final_sell" : "breakeven_sell",
-      side: "sell",
-      price: signal.exitPrice.toFixed(8),
-      quantity: totalQty.toFixed(8),
-      grossValueUsd: grossValueUsd.toFixed(2),
-      netValueUsd: netValueUsd.toFixed(2),
-      exchangeOrderId: sellOrder.orderId || sellOrder.txid || null,
-      triggerReason: signal.exitType,
-      humanReason: `Exit: ${signal.exitType} - ${signal.exitReason}`,
-    });
+    // ─── SALIDA CON RESIDUAL (P0 TANGO 10.1): una orden terminal/filled NO es
+    // un ciclo cerrado. Si el reconciliador atómico dejó cantidad residual en
+    // el ciclo (fill parcial terminal/dust), la contabilidad DB ya es
+    // proporcional y correcta — pero aquí NO se puede emitir cierre: sin
+    // limpieza de estado de salida, sin exit_executed, sin snapshot
+    // CYCLE_CLOSED ni alerta de venta total. La protección del ciclo sigue
+    // activa y el residual se gestiona después con identidad de intención
+    // nueva (nunca reenvío de la terminal) y reconciliación segura.
+    const residualQty = isLiveMode ? Math.max(0, liveOutcome?.residualQty ?? 0) : 0;
+    if (isLiveMode && residualQty > 1e-8) {
+      const proportion = totalQty > 0 ? accountingQty / totalQty : 0;
+      console.warn(
+        `${TAG}[EXIT_PARTIAL_RESIDUAL] cycleId=${cycle.id} pair=${pair} ` +
+        `sold=${accountingQty.toFixed(8)} residual=${residualQty.toFixed(8)} ` +
+        `exitType=${signal.exitType} — el ciclo permanece ACTIVO`
+      );
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "warn",
+        message: `Salida parcial ejecutada: vendido ${accountingQty.toFixed(8)} (${(proportion * 100).toFixed(2)}%), residual ${residualQty.toFixed(8)} permanece en el ciclo. NO es un cierre: la protección sigue activa y el residual requiere conciliación.`,
+        payloadJson: {
+          exitType: signal.exitType,
+          exitPrice: accountingPrice,
+          quantitySold: accountingQty,
+          residualQty,
+          proportion,
+          grossValueUsd,
+          feesUsd,
+          netValueUsd,
+          pnlProportionalUsd: netValueUsd - parseFloat(String(cycle.capitalUsedUsd || "0")) * proportion,
+          orderId: sellOrder.orderId || sellOrder.txid || null,
+          cycleClosed: false,
+        },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id });
+      await telegram.sendRawMessage(
+        `⚠️ <b>[IDCA][LIVE] SALIDA PARCIAL — NO ES CIERRE</b>
+
+` +
+        `Par: <b>${pair}</b> #${cycle.id}<br>
+` +
+        `Vendido: <code>${accountingQty.toFixed(8)}</code> (${(proportion * 100).toFixed(2)}%)<br>
+` +
+        `Residual: <code>${residualQty.toFixed(8)}</code> — el ciclo sigue ACTIVO con protección.<br>
+` +
+        `Conciliar el residual antes de cualquier reapertura.`
+      ).catch(() => {});
+      return; // NO cerrar: conservar estado de salida, protección y gestión del residual
+    }
+
+    if (!isLiveMode) {
+      // La contabilidad live la aplica una sola vez IdcaLiveOrderReconciler.
+      await repo.updateCycle(cycle.id, {
+        status: "closed",
+        closeReason: signal.exitType,
+        closedAt: new Date(),
+      });
+      await repo.createOrder({
+        cycleId: cycle.id,
+        pair,
+        mode,
+        orderType: signal.exitType === "take_profit" ? "final_sell" : "breakeven_sell",
+        side: "sell",
+        price: accountingPrice.toFixed(8),
+        quantity: accountingQty.toFixed(8),
+        grossValueUsd: grossValueUsd.toFixed(2),
+        netValueUsd: netValueUsd.toFixed(2),
+        exchangeOrderId: sellOrder.orderId || sellOrder.txid || null,
+        triggerReason: signal.exitType,
+        humanReason: `Exit: ${signal.exitType} - ${signal.exitReason}`,
+      });
+    }
 
     // Limpiar estado de salida
     idcaExitManager.clearExitState(cycle.id);
@@ -489,15 +589,85 @@ function getDynamicTpConfig(config: InstitutionalDcaConfigRow): DynamicTpConfig 
   return { ...DEFAULT_DYNAMIC_TP_CONFIG, ...raw };
 }
 
-function getReboundStrength(pair: string): "none" | "weak" | "strong" {
+const REBOUND_CANDLE_TIMEFRAME_MS = 60 * 60 * 1000;
+
+function selectReboundCandles(
+  candles: TimestampedCandle[],
+  variant: "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined",
+  nowMs: number = Date.now(),
+): OhlcCandle[] {
+  const causalCandles = variant === "legacy"
+    ? candles
+    : candles.filter(candle => candle.time + REBOUND_CANDLE_TIMEFRAME_MS <= nowMs);
+  return causalCandles.slice(-5).map(candle => ({
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  }));
+}
+
+function resolveEngineReboundVariant(
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined" {
+  return resolveIdcaEntryPolicy(config, mode).reboundVariant;
+}
+
+function resolveEngineConfluenceEnforcement(
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "diagnostic" | "enforced" {
+  return resolveIdcaEntryPolicy(config, mode).confluenceEnforcement;
+}
+
+interface EngineReboundEvaluationInput {
+  pair: string;
+  currentPrice: number;
+  config: InstitutionalDcaConfigRow;
+  mode: IdcaMode;
+  reboundMinPct?: number;
+  includeCurrentPriceInLocalLow?: boolean;
+  nowMs?: number;
+}
+
+function evaluateEngineRebound(input: EngineReboundEvaluationInput): {
+  variant: "legacy" | "a1a_wick_geometry" | "a1b_slowing_real_fall" | "a1c_combined";
+  result: smart.ReboundDetailedResult;
+} {
+  const variant = resolveEngineReboundVariant(input.config, input.mode);
+  const candles = ohlcCache.get(input.pair) || [];
+  const recentCandles = selectReboundCandles(candles, variant, input.nowMs);
+  const candleLows = recentCandles.map(candle => candle.low);
+  const localLow = Math.min(
+    ...candleLows,
+    ...(input.includeCurrentPriceInLocalLow || candleLows.length === 0 ? [input.currentPrice] : []),
+  );
+  return {
+    variant,
+    result: smart.detectReboundDetailed({
+      recentCandles,
+      currentPrice: input.currentPrice,
+      localLow,
+      reboundMinPct: input.reboundMinPct,
+    }, variant),
+  };
+}
+
+function getReboundStrength(
+  pair: string,
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+): "none" | "weak" | "strong" {
   const candles = ohlcCache.get(pair) || [];
   if (candles.length < 3) return "none";
-  const recentCandles = candles.slice(-5);
-  const localLow = Math.min(...recentCandles.map(c => c.low));
-  const currentPrice = priceCache.get(pair) || recentCandles[recentCandles.length - 1]?.close || 0;
-  const isRebound = smart.detectRebound({ recentCandles, currentPrice, localLow });
-  if (!isRebound) return "none";
-  const bounceFromLow = currentPrice > 0 ? ((currentPrice - localLow) / localLow) * 100 : 0;
+  const recentForPrice = candles.slice(-5);
+  const currentPrice = priceCache.get(pair) || recentForPrice[recentForPrice.length - 1]?.close || 0;
+  const evaluation = evaluateEngineRebound({ pair, currentPrice, config, mode });
+  if (!evaluation.result.confirmed) return "none";
+  const selectedLows = selectReboundCandles(candles, evaluation.variant).map(candle => candle.low);
+  const localLow = selectedLows.length > 0 ? Math.min(...selectedLows) : currentPrice;
+  const bounceFromLow = currentPrice > 0 && localLow > 0 ? ((currentPrice - localLow) / localLow) * 100 : 0;
   return bounceFromLow > 1.5 ? "strong" : "weak";
 }
 
@@ -598,6 +768,43 @@ async function createHumanEvent(
     humanTitle: hm.humanTitle,
     humanMessage: hm.humanMessage,
     technicalSummary: hm.technicalSummary,
+  });
+}
+
+async function emitInvalidExecutionScopeEvent(
+  cycle: InstitutionalDcaCycle,
+  requestedMode: unknown,
+  reason: string,
+  source: string
+): Promise<void> {
+  let requested: string;
+  if (typeof requestedMode === "string") {
+    requested = requestedMode;
+  } else if (requestedMode === undefined) {
+    requested = "undefined";
+  } else {
+    try {
+      requested = JSON.stringify(requestedMode) ?? String(requestedMode);
+    } catch {
+      requested = String(requestedMode);
+    }
+  }
+  console.error(
+    `${TAG}[EXECUTION_SCOPE_BLOCKED] source=${source} cycleId=${cycle.id} pair=${cycle.pair} ` +
+    `requested=${requested} persisted=${String(cycle.mode)} reason=${reason}`
+  );
+  await createHumanEvent({
+    cycleId: cycle.id,
+    pair: cycle.pair,
+    mode: String(cycle.mode),
+    eventType: "execution_scope_blocked",
+    severity: "critical",
+    message: `Ejecución bloqueada por scope de modo inválido (${reason}). No se envió orden ni se modificó contabilidad.`,
+    payloadJson: { source, requestedMode: requested, persistedMode: cycle.mode, reason },
+  }, {
+    eventType: "execution_scope_blocked",
+    pair: cycle.pair,
+    mode: String(cycle.mode),
   });
 }
 
@@ -846,6 +1053,51 @@ async function loadAnchorsFromDb(): Promise<void> {
   }
 }
 
+/**
+ * WP10e: recuperación de ciclos provisionales tras reinicio.
+ * Regla:
+ *  - provisional con cantidad aplicada por reconciliación → promover a active
+ *    (todos los parámetros de estrategia ya están persistidos en la fila);
+ *  - provisional sin cantidad y sin intents pendientes → cerrar como voided;
+ *  - provisional con intents aún pendientes → mantener y alertar.
+ * Nunca muta ciclos ajenos: solo status='provisional' exacto.
+ */
+export async function recoverProvisionalCycles(): Promise<{ promoted: number[]; voided: number[]; pending: number[] }> {
+  const result = { promoted: [] as number[], voided: [] as number[], pending: [] as number[] };
+  let provisionals: any[] = [];
+  try {
+    provisionals = await repo.getCycles({ status: "provisional" } as any);
+  } catch (e: any) {
+    console.error(`${TAG}[PROVISIONAL_RECOVERY] query failed: ${e.message}`);
+    return result;
+  }
+  for (const cycle of provisionals ?? []) {
+    try {
+      const qty = parseFloat(String(cycle.totalQuantity ?? "0"));
+      // ¿hay intents pendientes para este ciclo?
+      const { rows } = await db.execute(
+        sql`SELECT client_order_id, status FROM order_intents WHERE engine_owner='IDCA' AND lot_id=${String(cycle.id)} AND status IN ('submitting','accepted_pending','uncertain','partial')`
+      );
+      const pendingIntents = rows ?? [];
+      if (qty > 0) {
+        await repo.updateCycle(cycle.id, { status: "active" } as any);
+        result.promoted.push(cycle.id);
+        console.log(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} promovido a active (qty=${qty})`);
+      } else if (pendingIntents.length > 0) {
+        result.pending.push(cycle.id);
+        console.warn(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} sigue provisional: ${pendingIntents.length} intents pendientes`);
+      } else {
+        await repo.updateCycle(cycle.id, { status: "closed", closeReason: "voided_no_fill_recovery", closedAt: new Date() } as any);
+        result.voided.push(cycle.id);
+        console.log(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id} anulado sin fills`);
+      }
+    } catch (e: any) {
+      console.error(`${TAG}[PROVISIONAL_RECOVERY] cycle ${cycle.id}: ${e.message}`);
+    }
+  }
+  return result;
+}
+
 export async function startScheduler(): Promise<void> {
   if (schedulerTimeout) return;
 
@@ -855,6 +1107,13 @@ export async function startScheduler(): Promise<void> {
     console.log(`${TAG} Running startup reconciliation before scheduler...`);
     try {
       startupReconciliationResult = await runStartupReconciliation();
+      try { await reconcilePendingIntents(); } catch (e: any) { console.error(`${TAG}[INTENT_RECONCILE_STARTUP] ${e.message}`); }
+      try {
+        const rec = await recoverProvisionalCycles();
+        if (rec.promoted.length || rec.voided.length || rec.pending.length) {
+          console.log(`${TAG}[PROVISIONAL_RECOVERY] promoted=${rec.promoted.length} voided=${rec.voided.length} pending=${rec.pending.length}`);
+        }
+      } catch (e: any) { console.error(`${TAG}[PROVISIONAL_RECOVERY] ${e.message}`); }
       startupReconciliationCompleted = true;
 
       if (!isSafeToStartAfterReconciliation(startupReconciliationResult)) {
@@ -940,7 +1199,18 @@ export function getMacroContext(pair: string): IdcaMacroContext | undefined {
 export async function emergencyCloseAll(): Promise<number> {
   const config = await repo.getIdcaConfig();
   const mode = config.mode as IdcaMode;
-  if (mode === "disabled") return 0;
+
+  if (mode !== "live" && mode !== "simulation") {
+    console.error(`${TAG}[EXECUTION_SCOPE_BLOCKED] source=emergencyCloseAll requested=${String(mode)} reason=requested_mode_invalid`);
+    await createHumanEvent({
+      eventType: "execution_scope_blocked",
+      severity: "critical",
+      mode: String(mode),
+      message: "Emergency close bloqueado por scope de modo inválido. No se envió orden ni se modificó contabilidad.",
+      payloadJson: { source: "emergencyCloseAll", requestedMode: String(mode), reason: "requested_mode_invalid" },
+    }, { eventType: "execution_scope_blocked", mode: String(mode) });
+    return 0;
+  }
 
   console.log(`${TAG}[EMERGENCY_CLOSE] Closing all positions for mode=${mode}`);
 
@@ -950,29 +1220,55 @@ export async function emergencyCloseAll(): Promise<number> {
     prices[pair] = await getCurrentPrice(pair);
   }
 
+  const activeCyclesBefore = await repo.getAllActiveCycles();
+  const scopedCycles: InstitutionalDcaCycle[] = [];
+  for (const cycle of activeCyclesBefore) {
+    const scope = resolveIdcaExecutionScope(cycle, mode);
+    if (!scope.ok) {
+      await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "emergencyCloseAll");
+      continue;
+    }
+    scopedCycles.push(cycle);
+  }
+
   // ─── Lote 4: Cancel all pending exit instructions before bulk close ───
   try {
-    const activeCyclesBefore = await repo.getAllActiveCycles(mode);
-    for (const c of activeCyclesBefore) {
+    for (const c of scopedCycles) {
       await exitRepo.cancelActiveExitInstructionForCycle(c.id, "emergency_close_all");
     }
   } catch (cancelErr: any) {
     console.error(`${TAG}[EMERGENCY_CLOSE] Failed to cancel exit instructions: ${cancelErr.message}`);
   }
 
-  const closed = await repo.closeCyclesBulk(mode, "emergency_close_all", prices);
-
-  // If live mode, attempt market sells
-  if (mode === "live") {
-    const activeCycles = await repo.getAllActiveCycles("live");
-    for (const cycle of activeCycles) {
-      if (parseFloat(String(cycle.totalQuantity)) > 0) {
-        try {
-          await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true);
-        } catch (e: any) {
-          console.error(`${TAG}[EMERGENCY_CLOSE] Error selling ${cycle.pair}:`, e.message);
+  let closed = 0;
+  for (const cycle of scopedCycles) {
+    try {
+      if (mode === "live" && parseFloat(String(cycle.totalQuantity)) > 0) {
+        // TANGO-5: contar como cerrado solo si la tx atómica confirmó cierre sin remanente.
+        const outcome = await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true, mode);
+        if ((outcome.residualQty ?? 0) > 1e-8) {
+          await createHumanEvent({
+            cycleId: cycle.id, pair: cycle.pair, mode,
+            eventType: "exit_partial_executed",
+            severity: "critical",
+            message: `Cierre de emergencia con remanente: vendido ${outcome.filledQty.toFixed(8)}, residual ${(outcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO contabilizar como cerrado.`,
+            payloadJson: { residualQty: outcome.residualQty, filledQty: outcome.filledQty, intentKey: outcome.intent.clientOrderId },
+          }, { eventType: "exit_partial_executed", pair: cycle.pair, mode, cycleId: cycle.id, quantity: outcome.filledQty });
+        } else {
+          closed++;
         }
+      } else {
+        const price = prices[cycle.pair] || 0;
+        await repo.updateCycle(cycle.id, {
+          status: "closed",
+          closeReason: "emergency_close_all",
+          currentPrice: price.toFixed(8),
+          closedAt: new Date(),
+        });
+        closed++;
       }
+    } catch (e: any) {
+      console.error(`${TAG}[EMERGENCY_CLOSE] Error closing ${cycle.pair} cycle #${cycle.id}:`, e.message);
     }
   }
 
@@ -1024,6 +1320,8 @@ async function runTick(): Promise<void> {
     const mode = config.mode as IdcaMode;
 
     if (mode === "disabled") return;
+
+    try { await reconcilePendingIntents(); } catch (e: any) { console.error(`${TAG}[INTENT_RECONCILE_TICK] ${e.message}`); }
 
     // Check max drawdown
     const drawdownOk = await checkModuleDrawdown(config, mode);
@@ -1127,6 +1425,91 @@ function emitPairDisabledLog(pair: string, mode: string): void {
   }
 }
 
+// ─── Exit-price alert throttling ─────────────────────────────────────
+const EXIT_PRICE_ALERT_THROTTLE_MS = 15 * 60 * 1000;
+type ExitPriceAlertType = "exit_price_degraded" | "exit_price_unavailable";
+const exitPriceAlertState = new Map<string, { lastAtMs: number }>();
+
+function exitPriceAlertKey(pair: string, type: ExitPriceAlertType): string {
+  return `${pair}::${type}`;
+}
+
+function shouldEmitExitPriceAlert(pair: string, type: ExitPriceAlertType, nowMs: number): boolean {
+  for (const [key, state] of exitPriceAlertState) {
+    if (nowMs - state.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
+      exitPriceAlertState.delete(key);
+    }
+  }
+  const key = exitPriceAlertKey(pair, type);
+  const previous = exitPriceAlertState.get(key);
+  if (!previous || nowMs - previous.lastAtMs >= EXIT_PRICE_ALERT_THROTTLE_MS) {
+    exitPriceAlertState.set(key, { lastAtMs: nowMs });
+    return true;
+  }
+  return false;
+}
+
+function clearExitPriceAlertState(pair: string): void {
+  exitPriceAlertState.delete(exitPriceAlertKey(pair, "exit_price_degraded"));
+  exitPriceAlertState.delete(exitPriceAlertKey(pair, "exit_price_unavailable"));
+}
+
+function resolveEngineTrailingBuyCanonicalParams(
+  input: Parameters<typeof resolveTrailingBuyCanonicalParams>[0],
+): ReturnType<typeof resolveTrailingBuyCanonicalParams> {
+  try {
+    return resolveTrailingBuyCanonicalParams(input);
+  } catch (error) {
+    if (input.entryMode !== "dynamic_intelligent_entry") {
+      throw error;
+    }
+    console.warn(
+      `[IDCA][TRAILING_BUY_CANONICAL] dynamic params inválidos para ${input.pair}; usando trailing estático: ` +
+      (error instanceof Error ? error.message : String(error))
+    );
+    return resolveTrailingBuyCanonicalParams({
+      ...input,
+      entryMode: "assisted_entry",
+      dynamicReboundConfig: null,
+      reason: `${input.reason}:static_fallback_after_invalid_dynamic`,
+    });
+  }
+}
+
+async function resolveV2AtrpLadderForEntry(
+  pair: string,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+): Promise<import("./IdcaTypes").LadderResult | null> {
+  if (!assetConfig.ladderAtrpEnabled || !assetConfig.ladderAtrpConfigJson) {
+    return null;
+  }
+  if (resolveIdcaEntryPolicy(config, mode).version !== "v2_candidate") {
+    return null;
+  }
+  try {
+    const { idcaLadderAtrpService } = await import("./IdcaLadderAtrpService");
+    const ladder = await idcaLadderAtrpService.calculateLadder(
+      pair,
+      assetConfig.ladderAtrpConfigJson as import("./IdcaTypes").LadderAtrpConfig,
+      undefined,
+      vwapAnchorMemory.get(pair)?.anchorPrice,
+      { includeInactiveLevels: true },
+    );
+    return {
+      ...ladder,
+      levels: normalizeAtrpLevelWeightsTo100(ladder.levels),
+    };
+  } catch (error) {
+    console.warn(
+      `[IDCA][ATRP_V2] ${pair}: no se pudo resolver ladder efectivo; fallback legacy aislado: ` +
+      (error instanceof Error ? error.message : String(error))
+    );
+    return null;
+  }
+}
+
 // ─── Pair Evaluation ───────────────────────────────────────────────
 
 async function evaluatePair(
@@ -1134,6 +1517,7 @@ async function evaluatePair(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const evaluationNowMs = Date.now();
   console.log(`${TAG}[EVAL_START] pair=${pair}`);
   const assetConfig = await repo.getAssetConfig(pair);
   if (!assetConfig) {
@@ -1152,11 +1536,37 @@ async function evaluatePair(
     emitPairDisabledLog(pair, mode);
   }
 
-  const currentPrice = await getCurrentPrice(pair);
-  if (currentPrice <= 0) {
-    console.warn(`${TAG}[EVAL_SKIP] ${pair}: currentPrice=${currentPrice}`);
+  const exitPriceResolution = await resolveExitPriceForPair(pair, evaluationNowMs);
+  if (exitPriceResolution.price === null) {
+    console.error(`${TAG}[EXIT_PRICE_UNAVAILABLE] ${pair}: no valid realtime/fallback price — exits not evaluated`);
+    if (shouldEmitExitPriceAlert(pair, "exit_price_unavailable", evaluationNowMs)) {
+      await createHumanEvent({
+        pair,
+        mode,
+        eventType: "exit_price_unavailable",
+        severity: "critical",
+        message: "No hay precio válido para evaluar salidas IDCA. No se venderá ni se inventará precio.",
+        payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+      }, { eventType: "exit_price_unavailable", reasonCode: "exit_price_unavailable", pair, mode });
+    }
     return;
   }
+  if (exitPriceResolution.degraded) {
+    console.warn(`${TAG}[EXIT_PRICE_DEGRADED] ${pair}: source=${exitPriceResolution.source} alert=${exitPriceResolution.alert}`);
+    if (shouldEmitExitPriceAlert(pair, "exit_price_degraded", evaluationNowMs)) {
+      await createHumanEvent({
+        pair,
+        mode,
+        eventType: "exit_price_degraded",
+        severity: "warning",
+        message: "Precio de salida degradado: se usa fallback reciente autorizado. Las salidas no se bloquean.",
+        payloadJson: { pair, source: exitPriceResolution.source, alert: exitPriceResolution.alert },
+      }, { eventType: "exit_price_degraded", reasonCode: "exit_price_degraded", pair, mode });
+    }
+  } else {
+    clearExitPriceAlertState(pair);
+  }
+  const currentPrice = exitPriceResolution.price;
 
   // Update price/PnL for ALL active cycles of this pair (main, plus, imported, manual)
   const allPairCycles = await repo.getAllActiveCyclesForPair(pair, mode);
@@ -1434,6 +1844,27 @@ async function evaluatePair(
                 armOpts.drawdownFromReferencePct = drawdownFromReferencePct;
                 armOpts.atrPct = atrPct;
                 armOpts.tbPath = "vwap_anchor";
+              }
+
+              if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate") {
+                armOpts.activationPrice = tbBuyThreshold;
+                armOpts.canonicalParams = resolveEngineTrailingBuyCanonicalParams({
+                  pair,
+                  referencePrice: tbEffectiveRef,
+                  referenceType: tbFrozenAnchor?.anchorPrice ? "vwap_anchor" : "vwap_lower_band1",
+                  activationPrice: tbBuyThreshold,
+                  currentPrice,
+                  staticTrailingPct: reboundMinPct,
+                  entryMode: tbEntryMode,
+                  requiredDistancePct: tbDistanceResult.requiredDistancePct,
+                  drawdownFromReferencePct,
+                  atrPct,
+                  dynamicReboundConfig,
+                  tbPath: "vwap_anchor",
+                  maxDurationMs: 4 * 60 * 60 * 1000,
+                  nowMs: Date.now(),
+                  reason: "vwap_activation_zone",
+                });
               }
 
               TrailingBuyManager.arm(pair, tbEffectiveRef, currentPrice, armOpts);
@@ -1747,18 +2178,43 @@ async function evaluatePair(
               const effectiveTrailingValue = trailingBuyLevel1Config.trailingMode === "rebound_pct"
                 ? sliderReboundPct
                 : trailingBuyLevel1Config.trailingValue; // atrp_fraction: usar valor técnico raw
-              TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, {
+              const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
+                ? sliderReboundPct
+                : effectiveTrailingValue * (atrPct ?? 1);
+              const armLevelOpts: Parameters<typeof TrailingBuyManager.armLevel>[5] = {
                 trailingMode: trailingBuyLevel1Config.trailingMode,
                 trailingValue: effectiveTrailingValue,
                 maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
                 cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
                 atrpMultiplier: atrPct,
                 maxExecutionPrice,
-              });
+              };
 
-              const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
-                ? sliderReboundPct
-                : effectiveTrailingValue * (atrPct ?? 1);
+              if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate") {
+                armLevelOpts.canonicalParams = resolveEngineTrailingBuyCanonicalParams({
+                  pair,
+                  referencePrice: effectiveEntryReference,
+                  referenceType: "level_1_reference",
+                  activationPrice: buyThreshold,
+                  currentPrice,
+                  staticTrailingPct: trailingPct,
+                  entryMode: tbL1EntryMode,
+                  requiredDistancePct: effectiveMinDipPct,
+                  drawdownFromReferencePct: effectiveEntryReference > 0
+                    ? ((effectiveEntryReference - currentPrice) / effectiveEntryReference) * 100
+                    : 0,
+                  atrPct: atrPct ?? 0,
+                  forceStatic: true,
+                  maxExecutablePrice: maxExecutionPrice,
+                  tbPath: "level_1",
+                  maxDurationMs: (trailingBuyLevel1Config.maxWaitMinutes ?? 60) * 60 * 1000,
+                  nowMs: Date.now(),
+                  reason: "level1_activation_zone",
+                });
+              }
+
+              TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, armLevelOpts);
+
               const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
 
               await createHumanEvent({
@@ -1851,6 +2307,9 @@ async function checkEntry(
   trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
 ): Promise<void> {
   const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, trailingBuyEntry, observeOnly);
+  if (trailingBuyEntry && !check.allowed) {
+    TrailingBuyManager.releasePendingTrigger(pair);
+  }
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -2075,9 +2534,13 @@ async function checkEntry(
 
   // Create cycle
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const sizeWeights = check.sizeProfile
+  const atrpLadder = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const legacySizeWeights = check.sizeProfile
     ? smart.getSizeWeights(check.sizeProfile, safetyOrders.length + 1)
     : smart.getSizeWeights("balanced", safetyOrders.length + 1);
+  const sizeWeights = atrpLadder && atrpLadder.levels.length > 0
+    ? atrpLadder.levels.map(level => level.sizePct)
+    : legacySizeWeights;
 
   const baseBuyPct = sizeWeights[0];
   const baseBuyUsd = capitalForCycle * (baseBuyPct / 100);
@@ -2094,7 +2557,7 @@ async function checkEntry(
       buyCount: 1,
       marketScore: check.marketScore || 50,
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -2117,8 +2580,13 @@ async function checkEntry(
   }
 
   // Next safety buy level
-  const nextLevel = safetyOrders.length > 0 ? safetyOrders[0].dipPct : null;
-  let nextBuyPrice = nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
+  const atrpNextLevel = atrpLadder ? nextAtrpLevelAfterBuyCount(atrpLadder.levels, 0) : undefined;
+  const nextLevel = atrpNextLevel
+    ? atrpNextLevel.dipPct
+    : safetyOrders.length > 0 ? safetyOrders[0].dipPct : null;
+  let nextBuyPrice = atrpNextLevel
+    ? atrpNextLevel.triggerPrice
+    : nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
 
   // VWAP override: safety 1 → lowerBand2 (if lower than % fallback)
   const vc = check.vwapContext;
@@ -2143,13 +2611,56 @@ async function checkEntry(
   let feeAmount: number | null | undefined = null;
   let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
 
+  // ─── WP10e: ciclo provisional durable ANTES de cualquier contacto con el venue.
+  // La identidad de la operación es estable (id de ciclo real), independiente
+  // de precio/cantidad; un crash tras el fill es recuperable porque la
+  // reconciliación aplica fills al ciclo provisional y la promoción es un
+  // simple cambio de estado con todos los parámetros de estrategia ya persistidos.
+  let provisionalCycleId = 0;
   if (mode === "live") {
-    // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
+    const provisional = await repo.createCycle({
+      pair,
+      strategy: "institutional_dca_v1",
+      mode,
+      status: "provisional",
+      capitalReservedUsd: capitalForCycle.toFixed(2),
+      capitalUsedUsd: "0",
+      totalCostBasisUsd: "0",
+      totalQuantity: "0",
+      avgEntryPrice: currentPrice.toFixed(8),
+      currentPrice: currentPrice.toFixed(8),
+      buyCount: 0,
+      tpTargetPct: tpPct.toFixed(2),
+      tpTargetPrice: tpPrice.toFixed(8),
+      trailingPct: trailingPct.toFixed(2),
+      nextBuyLevelPct: nextLevel?.toFixed(2) || null,
+      nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+      marketScore: (check.marketScore || 0).toFixed(2),
+      volatilityScore: (check.volatilityScore || 0).toFixed(2),
+      adaptiveSizeProfile: check.sizeProfile || "balanced",
+      tpBreakdownJson: tpBreakdown,
+      cycleType: "main",
+      basePrice: bp.price.toFixed(8),
+      basePriceType: bp.type,
+      basePriceWindowMinutes: bp.windowMinutes,
+      basePriceTimestamp: bp.timestamp,
+      basePriceMetaJson: {
+        ...(bp.meta || {}),
+        ...(assetConfig.vwapEnabled && vc ? { vwapBands: { lowerBand2: vc.lowerBand2, lowerBand3: vc.lowerBand3 } } : {}),
+        provisionalPlanned: { quantity, baseBuyUsd, entryDipPct: check.entryDipPct || 0 },
+      },
+      entryDipPct: (check.entryDipPct || 0).toFixed(4),
+    });
+    provisionalCycleId = provisional.id;
+  }
+
+  if (mode === "live") {
+    // ─── MODO LIVE: ciclo provisional ya existe; la compra referencia su id ─
     const execResult = await executeRealBuyWithGuard(
       pair,
       quantity,
       currentPrice,
-      0, // cycleId aún no existe
+      provisionalCycleId,
       "initial",
       mode,
       assetConfig,
@@ -2157,18 +2668,45 @@ async function checkEntry(
     );
 
     if (!execResult.success) {
-      // Compra fallida - NO crear ciclo
-      console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${execResult.rejectionReason}`);
+      // Compra fallida. Regla de resolución del provisional:
+      //  - terminal sin fill (rejected/expired) o bloqueo previo sin contacto
+      //    con el venue → cerrar como voided (no hubo dinero en juego);
+      //  - cualquier incertidumbre (execution_unknown, send_failed, orden
+      //    aceptada sin fill aún) → MANTENER provisional para reconciliación.
+      const rr = execResult.rejectionReason ?? "";
+      const terminalNoFill = /^no_fill: (rejected|expired)/.test(rr);
+      const uncertainOrSent = /execution_unknown|send_failed|no_fill: (accepted_pending|uncertain|partial)/.test(rr);
+      console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${rr} provisional=${provisionalCycleId} resolution=${uncertainOrSent ? "keep_provisional" : "void"}`);
+      if (!uncertainOrSent) {
+        await repo.updateCycle(provisionalCycleId, {
+          status: "closed",
+          closeReason: terminalNoFill ? "voided_no_fill_terminal" : "voided_before_venue_contact",
+          closedAt: new Date(),
+        } as any).catch((e: any) => console.error(`${TAG}[LIVE][INITIAL_BUY] void failed: ${e.message}`));
+      } else {
+        await createHumanEvent({
+          cycleId: provisionalCycleId,
+          pair,
+          mode,
+          eventType: "provisional_cycle_pending_reconciliation",
+          severity: "critical",
+          message: `Ciclo provisional #${provisionalCycleId} pendiente de reconciliación: la orden pudo haber llegado al venue. La reconciliación aplicará fills y promoverá o anulará el ciclo.`,
+          payloadJson: { rejectionReason: rr, provisionalCycleId },
+        }, { eventType: "provisional_cycle_pending_reconciliation", pair, mode, price: currentPrice, quantity }).catch(() => {});
+      }
       await createHumanEvent({
-        cycleId: undefined,
+        cycleId: provisionalCycleId,
         pair,
         mode,
         eventType: "initial_buy_failed",
         severity: "error",
-        message: `Compra inicial bloqueada: ${execResult.rejectionReason}`,
-        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: execResult.rejectionReason },
+        message: `Compra inicial bloqueada: ${rr}`,
+        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: rr, provisionalCycleId },
       }, { eventType: "initial_buy_failed", pair, mode, price: currentPrice, quantity });
-      return; // Abortar - NO crear ciclo
+      if (trailingBuyEntry) {
+        TrailingBuyManager.releasePendingTrigger(pair);
+      }
+      return; // Abortar - ciclo ya resuelto según la regla anterior
     }
 
     // Fill confirmado - usar valores EJECUTADOS
@@ -2196,8 +2734,10 @@ async function checkEntry(
     executedUsd = baseBuyUsd + feeUsd + slippageUsd;
   }
 
-  // ─── Crear ciclo con valores EJECUTADOS (LIVE) o PLANIFICADOS (SIM) ─
-  const cycle = await repo.createCycle({
+  // ─── Crear/promover ciclo con valores EJECUTADOS (LIVE) o PLANIFICADOS (SIM) ─
+  // LIVE: el ciclo provisional durable ya existe; se promueve a active con los
+  // valores realmente ejecutados. SIM: se crea directamente como antes.
+  const cycleValues = {
     pair,
     strategy: "institutional_dca_v1",
     mode,
@@ -2231,7 +2771,10 @@ async function checkEntry(
       ...(assetConfig.vwapEnabled && vc ? { vwapBands: { lowerBand2: vc.lowerBand2, lowerBand3: vc.lowerBand3 } } : {}),
     },
     entryDipPct: (check.entryDipPct || 0).toFixed(4),
-  });
+  };
+  const cycle = mode === "live"
+    ? await repo.updateCycle(provisionalCycleId, cycleValues as any)
+    : await repo.createCycle(cycleValues as any);
 
   // ─── FASE 4: CYCLE_START snapshot — non-blocking, write-only
   emitIdcaSnapshot({
@@ -2329,6 +2872,10 @@ async function checkEntry(
     entryPrice: avgFillPrice,
     executedAmount: mode === "live" ? netBaseQty : executedQty,
   });
+
+  if (trailingBuyEntry) {
+    TrailingBuyManager.confirmPendingTrigger(pair);
+  }
 
   // Si esta compra vino de trailing buy, notificar específicamente
   if (trailingBuyContext) {
@@ -2882,9 +3429,13 @@ async function checkSafetyBuy(
   const buyCount = cycle.buyCount;
   const maxOrders = assetConfig.maxSafetyOrders;
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+  const atrpLadder = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const atrpLevels = atrpLadder?.levels ?? [];
+  const useAtrpEffectivePlan = atrpLevels.length > 0;
+  const effectiveMaxBuyCount = useAtrpEffectivePlan ? atrpLevels.length : safetyOrders.length + 1;
 
   // Already at max buys
-  if (buyCount >= safetyOrders.length + 1) return;
+  if (buyCount >= effectiveMaxBuyCount) return;
 
   // ─── Lote 4: Guard — No safety buys if exit instruction pending ───────────
   if (await exitRepo.hasPendingExitInstruction(cycle.id)) {
@@ -2906,16 +3457,19 @@ async function checkSafetyBuy(
 
   // Price has reached the next safety buy level
   // Check rebound if required
+  let safetyReboundConfirmed = true;
   if (assetConfig.requireReboundConfirmation) {
-    const candles = ohlcCache.get(pair) || [];
-    const recentCandles = candles.slice(-5).map(c => ({
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-    const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
     const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
-    if (!smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin })) {
+    const evaluation = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      reboundMinPct: reboundMin,
+      includeCurrentPriceInLocalLow: true,
+    });
+    safetyReboundConfirmed = evaluation.result.confirmed;
+    if (!evaluation.result.confirmed) {
       return; // No rebound confirmed yet
     }
   }
@@ -2937,13 +3491,79 @@ async function checkSafetyBuy(
   }
 
   // Execute safety buy
-  const safetyIndex = buyCount; // 0-indexed in safetyOrders, but buyCount starts at 1 (base buy)
-  const safetyOrder = safetyOrders[safetyIndex - 1];
+  const safetyIndex = buyCount; // legacy: 0-indexed in safetyOrders; ATRP: level number equals buyCount
+  const atrpCurrentLevel = useAtrpEffectivePlan
+    ? atrpLevels.find(level => level.level === buyCount)
+    : undefined;
+  const safetyOrder = useAtrpEffectivePlan
+    ? atrpCurrentLevel
+      ? { dipPct: atrpCurrentLevel.dipPct, sizePctOfAssetBudget: atrpCurrentLevel.sizePct }
+      : undefined
+    : safetyOrders[safetyIndex - 1];
   if (!safetyOrder) return;
+
+  // Enforcement v2_candidate en safety buy. DEFENSIVE_SAFETY_BUY no es un
+  // bypass: solo llega aquí después de cooldown, nivel de precio, rebote y
+  // límites de exposición. No modifica sizing ni distancias.
+  const safetyConfluenceEnforcement = resolveEngineConfluenceEnforcement(config, mode);
+  if (safetyConfluenceEnforcement === "enforced") {
+    const allCandles = ohlcCache.get(pair) || [];
+    const avgEntryForConfluence = parseFloat(String(cycle.avgEntryPrice || "0"));
+    const drawdownFromReferencePct = avgEntryForConfluence > 0
+      ? Math.max(0, ((avgEntryForConfluence - currentPrice) / avgEntryForConfluence) * 100)
+      : 0;
+    const recentForMomentum = allCandles.slice(-6);
+    const safetyConfluence = evaluateIdcaEntryConfluence({
+      pair,
+      usedFor: "safety_buy",
+      confluenceProfile: "safety_buy",
+      drawdownFromReferencePct,
+      requiredDistancePct: safetyOrder.dipPct,
+      sliderBasePct: safetyOrder.dipPct,
+      referenceMethod: "safety_ladder",
+      vwapReliable: false,
+      reboundConfirmed: safetyReboundConfirmed,
+      requireReboundConfirmation: !!assetConfig.requireReboundConfirmation,
+      trailingBuyArmed: false,
+      priceInActivationZone: true,
+      shortMomentum: _deriveShortMomentum(recentForMomentum),
+      hasRecoveryCandle: _deriveHasRecoveryCandle(recentForMomentum),
+      capitalUsedUsd: totalCapitalUsed,
+      capitalReservedUsd: capitalReserved,
+      buyCount,
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
+      atrPct: getVolatility(pair),
+      candleCount: allCandles.length,
+      atrReliable: getVolatility(pair) > 0,
+      smartAdjustmentEnabled: false,
+    });
+    logIdcaConfluence(TAG, pair, safetyConfluence);
+
+    if (safetyConfluence.hardBlocked) {
+      await logBlock(pair, mode, "confluence_hard_blocked", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "NO_ENTRY") {
+      await logBlock(pair, mode, "confluence_no_entry", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "WATCH") {
+      await logBlock(pair, mode, "confluence_watch", cycle);
+      return;
+    }
+    if (safetyConfluence.decisionClass === "ARM_TRAILING") {
+      // No existe un trailing buy de safety independiente. En enforcement se
+      // trata como espera, nunca como ejecución directa ni bypass de gates.
+      await logBlock(pair, mode, "confluence_arm_trailing", cycle);
+      return;
+    }
+  }
 
   const sizeProfile = (cycle.adaptiveSizeProfile as IdcaSizeProfile) || "balanced";
   const weights = smart.getSizeWeights(sizeProfile, safetyOrders.length + 1);
-  const buyPct = weights[buyCount] || 25;
+  const buyPct = useAtrpEffectivePlan
+    ? safetyOrder.sizePctOfAssetBudget
+    : weights[buyCount] || 25;
   const buyUsd = capitalReserved * (buyPct / 100);
   const quantity = buyUsd / currentPrice;
 
@@ -3035,10 +3655,19 @@ async function checkSafetyBuy(
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
 
-  // Next level (calculado desde nuevo promedio)
-  const nextSafety = safetyOrders[safetyIndex];
+  // Next level (legacy: calculado desde nuevo promedio; ATRP v2: trigger canónico del ladder)
+  const nextAtrpLevel = useAtrpEffectivePlan
+    ? nextAtrpLevelAfterBuyCount(atrpLevels, buyCount)
+    : undefined;
+  const nextSafety = useAtrpEffectivePlan
+    ? nextAtrpLevel
+      ? { dipPct: nextAtrpLevel.dipPct, sizePctOfAssetBudget: nextAtrpLevel.sizePct }
+      : undefined
+    : safetyOrders[safetyIndex];
   const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
-  let nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
+  let nextBuyPriceCalc = useAtrpEffectivePlan
+    ? nextAtrpLevel?.triggerPrice ?? null
+    : nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
 
   // VWAP override
   if (assetConfig.vwapEnabled && nextBuyPriceCalc !== null) {
@@ -3061,7 +3690,7 @@ async function checkSafetyBuy(
   // ─── Resolver de distancia: aplicar como suelo conservador ──────────────────
   // Solo afecta nextBuyPriceCalc. Nunca modifica avgEntryPrice ni contabilidad.
   // Regla conservadora: effectiveNextBuyPrice = min(existingNextBuyPrice, proposedNextBuyPrice)
-  if (nextBuyPriceCalc !== null) {
+  if (!useAtrpEffectivePlan && nextBuyPriceCalc !== null) {
     const sbEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
     const sbDdCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
     const sbDistanceResult = resolveIdcaRequiredDistance({
@@ -3101,7 +3730,7 @@ async function checkSafetyBuy(
       buyCount: newBuyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -3214,6 +3843,12 @@ async function armTakeProfit(
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "armTakeProfit");
+    return;
+  }
+
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd));
@@ -3236,6 +3871,7 @@ async function armTakeProfit(
     netValue = partialValueUsd - fees - slippage;
   }
 
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "partial_sell",
@@ -3249,9 +3885,10 @@ async function armTakeProfit(
     triggerReason: `TP armed at ${pnlPct.toFixed(2)}%, partial sell ${partialPct.toFixed(0)}%`,
     humanReason: formatOrderReason("partial_sell"),
   });
+  }
 
   if (mode === "live") {
-    await executeRealSell(cycle, "partial_sell", partialQty, false);
+    await executeRealSell(cycle, "partial_sell", partialQty, false, mode);
   }
 
   const remainingQty = totalQty - partialQty;
@@ -3267,13 +3904,16 @@ async function armTakeProfit(
     });
   }
 
+  // TANGO-5: en live la contabilidad (cantidad/coste/PnL) ya la aplicó la tx atómica; aquí solo transición de estado del motor.
   await repo.updateCycle(cycle.id, {
     status: "trailing_active",
     tpArmedAt: new Date(),
     trailingActiveAt: new Date(),
     highestPriceAfterTp: currentPrice.toFixed(8),
-    totalQuantity: remainingQty.toFixed(8),
-    realizedPnlUsd: netValue.toFixed(2),
+    ...(mode !== "live" ? {
+      totalQuantity: remainingQty.toFixed(8),
+      realizedPnlUsd: netValue.toFixed(2),
+    } : {}),
     trailingPct: trailingPct.toFixed(2),
   });
 
@@ -3353,6 +3993,12 @@ async function executeTrailingExit(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeTrailingExit");
+    return;
+  }
+
   const pair = cycle.pair;
   const requestedQty = parseFloat(String(cycle.totalQuantity));
   const asset = pair.split("/")[0];
@@ -3414,9 +4060,10 @@ async function executeTrailingExit(
 
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
   // Prevents fake sell history if the exchange call fails.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "final_sell", actualSellQty, true);
+      liveOutcome = await executeRealSell(cycle, "final_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[TRAILING_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -3440,7 +4087,31 @@ async function executeTrailingExit(
     }
   }
 
-  // Live sell confirmed (or simulation) — now safe to write order record
+  // TANGO-5: sistema único — en live la orden y la contabilidad ya las escribió la tx atómica durable.
+  // Si queda residual, el ciclo NO está cerrado: no comunicar cierre ni emitir snapshot de salida.
+  if (mode === "live" && liveOutcome && (liveOutcome.residualQty ?? 0) > 1e-8) {
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "exit_partial_executed",
+      severity: "critical",
+      message: `Venta trailing con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO con protección — NO es un cierre.`,
+      payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+    }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+    try {
+      await telegram.sendRawMessage(
+        `⚠️ <b>[IDCA][LIVE] SALIDA PARCIAL TRAILING</b>
+
+Par: <b>${pair}</b> #${cycle.id}
+Vendido: <code>${liveOutcome.filledQty.toFixed(8)}</code>
+Residual: <code>${(liveOutcome.residualQty ?? 0).toFixed(8)}</code> — ciclo sigue ACTIVO.`
+      );
+    } catch { /* telegram best-effort */ }
+    return; // protección preservada; la conciliación del residual es la única vía de cierre
+  }
+
+  // Live sell confirmed (or simulation) — now safe to write order record.
+  // TANGO-5: en live la orden ya existe (fila durable de la tx atómica); no duplicar.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "final_sell",
@@ -3454,6 +4125,7 @@ async function executeTrailingExit(
     triggerReason: dustAdjusted ? "trailing_exit_dust_adj" : "trailing_exit",
     humanReason: formatOrderReason("final_sell"),
   });
+  }
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const totalRealized = prevRealized + netValue;
@@ -3469,6 +4141,8 @@ async function executeTrailingExit(
 
   // Store net profit (proceeds − costBasis) so DB semantic is consistent with all other close types
   const trailingNetProfitUsd = totalRealized - capitalUsedForPnl;
+  // TANGO-5: en live el cierre contable ya lo aplicó la tx atómica (status/coste/PnL dentro de la misma transacción).
+  if (mode !== "live") {
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "trailing_exit",
@@ -3477,6 +4151,7 @@ async function executeTrailingExit(
     closedAt,
     ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
   } as any);
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -3550,6 +4225,12 @@ async function executeBreakevenExit(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(cycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, mode, scope.reason, "executeBreakevenExit");
+    return;
+  }
+
   const pair = cycle.pair;
   const requestedQty = parseFloat(String(cycle.totalQuantity));
   const asset = pair.split("/")[0];
@@ -3607,9 +4288,10 @@ async function executeBreakevenExit(
   }
 
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "breakeven_sell", actualSellQty, true);
+      liveOutcome = await executeRealSell(cycle, "breakeven_sell", actualSellQty, true, mode);
     } catch (sellErr: any) {
       console.error(`${TAG}[BREAKEVEN_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -3632,7 +4314,21 @@ async function executeBreakevenExit(
     }
   }
 
-  // Live sell confirmed (or simulation) — now safe to write order record
+  // TANGO-5: en live, si queda residual el ciclo NO está cerrado — no comunicar cierre.
+  if (mode === "live" && liveOutcome && (liveOutcome.residualQty ?? 0) > 1e-8) {
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "exit_partial_executed",
+      severity: "critical",
+      message: `Venta breakeven con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO con protección — NO es un cierre.`,
+      payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+    }, { eventType: "exit_partial_executed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+    return; // protección preservada; conciliación del residual es la única vía de cierre
+  }
+
+  // Live sell confirmed (or simulation) — now safe to write order record.
+  // TANGO-5: en live la orden ya existe (fila durable de la tx atómica); no duplicar.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "breakeven_sell",
@@ -3646,10 +4342,13 @@ async function executeBreakevenExit(
     triggerReason: dustAdjusted ? "breakeven_protection_dust_adj" : "breakeven_protection",
     humanReason: formatOrderReason("breakeven_sell"),
   });
+  }
 
   // Store net profit (may be near-zero for breakeven)
   const capitalUsedForBe = parseFloat(String(cycle.capitalUsedUsd || "0"));
   const beNetProfitUsd = netValue - capitalUsedForBe;
+  // TANGO-5: en live el cierre contable ya lo aplicó la tx atómica.
+  if (mode !== "live") {
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "breakeven_exit",
@@ -3658,6 +4357,7 @@ async function executeBreakevenExit(
     closedAt: new Date(),
     ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
   } as any);
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -3725,6 +4425,98 @@ async function executeBreakevenExit(
 
 // ─── Entry Check Logic ─────────────────────────────────────────────
 
+
+export interface EntryMarketScoreQualityInput {
+  pair: string;
+  currentPrice: number;
+  scoreCandles: TimestampedCandle[];
+  btcCandles?: TimestampedCandle[];
+  weights: smart.MarketScoreInput & Record<string, number>;
+  localHigh: number;
+  nowMs: number;
+}
+
+function finiteOrNaN(v: number | undefined): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : NaN;
+}
+
+function buildMarketScoreInputFromCandles(
+  candles: TimestampedCandle[],
+  currentPrice: number,
+  localHigh: number,
+  nowMs: number,
+) {
+  const closes = candles.map(c => c.close);
+  const ema20Strict = smart.computeEmaStrict(closes, 20);
+  const ema50Strict = smart.computeEmaStrict(closes, 50);
+  const ema20Legacy = smart.computeEMA(closes, 20);
+  const ema50Legacy = smart.computeEMA(closes, 50);
+  const volInputs = smart.computeRelativeVolumeInputs(candles, "idca_ohlcv_cache", 3_600_000, nowMs);
+  const ema20Series = ema20Strict.available ? ema20Strict.series : ema20Legacy;
+  const ema50Series = ema50Strict.available ? ema50Strict.series : ema50Legacy;
+  const input: smart.MarketScoreInput = {
+    currentPrice,
+    ema20: finiteOrNaN(ema20Series[ema20Series.length - 1]),
+    ema50: finiteOrNaN(ema50Series[ema50Series.length - 1]),
+    prevEma20: finiteOrNaN(ema20Series[Math.max(0, ema20Series.length - 2)]),
+    prevEma50: finiteOrNaN(ema50Series[Math.max(0, ema50Series.length - 2)]),
+    rsi: smart.computeRSI(closes),
+    currentVolume: volInputs.available ? volInputs.currentVolume : NaN,
+    avgVolume: volInputs.available ? volInputs.avgVolume : NaN,
+    localHigh,
+  };
+  const availability: smart.MarketScoreAvailability = {
+    ema20_distance: ema20Strict.available,
+    ema20_slope: ema20Strict.available,
+    ema50_distance: ema50Strict.available,
+    ema50_slope: ema50Strict.available,
+    relative_volume: volInputs.available,
+  };
+  return { input, availability, ema20Strict, ema50Strict, volInputs, rsi: input.rsi };
+}
+
+export function marketScoreEntryBlock(detailed: smart.MarketScoreDetailedResult, allowDegradedMarketScore: boolean): { code: "market_score_unavailable" | "market_score_degraded"; message: string } | null {
+  if (allowDegradedMarketScore) return null;
+  if (detailed.status === "unavailable") return { code: "market_score_unavailable", message: `Market score unavailable; missing=${detailed.missing.join(",") || "inputs"}` };
+  if (detailed.status === "degraded") return { code: "market_score_degraded", message: `Market score degraded; missing=${detailed.missing.join(",")}` };
+  return null;
+}
+
+export function evaluateEntryMarketScoreQuality(args: EntryMarketScoreQualityInput): {
+  detailed: smart.MarketScoreDetailedResult;
+  btcScore?: number;
+  volume: ReturnType<typeof smart.computeRelativeVolumeInputs>;
+} {
+  const pairQuality = buildMarketScoreInputFromCandles(args.scoreCandles, args.currentPrice, args.localHigh, args.nowMs);
+  let btcScore: number | undefined;
+  if (args.pair === "ETH/USD") {
+    const btcCandles = args.btcCandles || [];
+    if (btcCandles.length > 0) {
+      const btcHigh = Math.max(...btcCandles.map(c => c.close).slice(-60));
+      const btcPrice = btcCandles[btcCandles.length - 1]?.close ?? args.currentPrice;
+      const btcQuality = buildMarketScoreInputFromCandles(btcCandles, btcPrice, btcHigh, args.nowMs);
+      const btcDetailed = smart.computeMarketScoreDetailed(
+        { ...btcQuality.input, btcScore: undefined },
+        args.weights as any,
+        { ...btcQuality.availability, btc_condition: true },
+      );
+      // Para que BTC sea un contexto fiable debe tener también su EMA50 real.
+      if (btcQuality.ema50Strict.available && btcDetailed.status === "ok" && btcDetailed.score !== null) {
+        btcScore = btcDetailed.score;
+      }
+    }
+  }
+  const detailed = smart.computeMarketScoreDetailed(
+    { ...pairQuality.input, btcScore },
+    args.weights as any,
+    {
+      ...pairQuality.availability,
+      btc_condition: args.pair === "ETH/USD" ? btcScore !== undefined : true,
+    },
+  );
+  return { detailed, btcScore, volume: pairQuality.volInputs };
+}
+
 async function performEntryCheck(
   pair: string,
   currentPrice: number,
@@ -3788,6 +4580,26 @@ async function performEntryCheck(
     };
   }
 
+  const entryDataHealth = await computeEntryDataHealth(pair, { nowMs: now.getTime() });
+  const entryDataGate = resolveEntryDataGate(entryDataHealth);
+  if (!entryDataGate.allow) {
+    blocks.push({
+      code: `data_gate_blocked:${entryDataGate.code}`,
+      message: entryDataGate.reason,
+      timestamp: now,
+    });
+    return {
+      allowed: false,
+      blockReasons: blocks,
+      marketScore: 0,
+      volatilityScore: 0,
+      sizeProfile: "balanced" as IdcaSizeProfile,
+      entryDipPct: 0,
+      basePrice: { price: 0, type: "cycle_start_price" as BasePriceType, windowMinutes: 0, timestamp: now, isReliable: false, reason: entryDataGate.reason, meta: { candleCount: cacheCandles.length, swingHighsFound: 0 } },
+      reboundConfirmed: false,
+    };
+  }
+
   // Calculate base price using deterministic method
   const dipRefMethod = normalizeDipReferenceMethod(assetConfig.dipReference || "hybrid", { pair, origin: "assetConfig.dipReference" });
   const candles = cacheCandles;
@@ -3817,8 +4629,8 @@ async function performEntryCheck(
       return Number.isFinite(t) ? t : fallback;
     }
     if (typeof value === "number") {
-      if (!Number.isFinite(value) || value <= 0) return fallback;
-      return value < 1e12 ? value * 1000 : value;
+      const normalized = normalizeEpochToMs(value, { nowMs: Date.now() });
+      return normalized.ok ? normalized.ms : fallback;
     }
     return fallback;
   };
@@ -4156,7 +4968,9 @@ async function performEntryCheck(
     capitalUsedUsd: 0,
     capitalReservedUsd: 0,
   });
-  let minDip = entryDistanceResult.requiredDistancePct;
+  const atrpEntryPlan = await resolveV2AtrpLadderForEntry(pair, config, assetConfig, mode);
+  const atrpBaseLevel = atrpEntryPlan?.levels.find(level => level.level === 0);
+  let minDip = atrpBaseLevel?.dipPct ?? entryDistanceResult.requiredDistancePct;
   logDistanceResolution(TAG, pair, entryDistanceResult, {
     referencePrice: effectiveBasePrice,
     currentPrice,
@@ -4172,6 +4986,13 @@ async function performEntryCheck(
     ` legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}%` +
     ` atrPct=${atrPct.toFixed(2)}%`
   );
+  if (atrpBaseLevel) {
+    console.log(
+      `${TAG}[ATRP_EFFECTIVE_PLAN] pair=${pair} usedFor=initial_entry ` +
+      `legacyRequiredDistancePct=${entryDistanceResult.requiredDistancePct.toFixed(2)}% ` +
+      `atrpLevel0DipPct=${atrpBaseLevel.dipPct.toFixed(2)}% atrpTriggerPrice=${atrpBaseLevel.triggerPrice.toFixed(8)}`
+    );
+  }
 
   // Construir referenceContext enriquecido (solo metadata — no altera trading logic)
   // hasActiveCycle real: si el servicio dinámico evaluó el ciclo, usar su resultado
@@ -4277,60 +5098,39 @@ async function performEntryCheck(
   let volatilityScore = 0;
   let sizeProfile: IdcaSizeProfile = "balanced";
   let btcScoreForConfluence: number | undefined;
+  let marketScoreStatus: "ok" | "degraded" | "unavailable" | undefined;
+  let marketScoreMissing: string[] = [];
+  let marketScoreRenormalized = false;
 
   if (config.smartModeEnabled) {
     const scoreCandles = ohlcCache.get(pair) || [];
-    if (scoreCandles.length >= 20) {
+    if (scoreCandles.length > 0) {
       const closes = scoreCandles.map(c => c.close);
-      const ema20 = smart.computeEMA(closes, 20);
-      const ema50 = smart.computeEMA(closes, Math.min(50, closes.length));
-      const rsi = smart.computeRSI(closes);
       const atrPct = smart.computeATRPct(scoreCandles);
       volatilityScore = atrPct;
 
       const weights = (config.marketScoreWeightsJson || {}) as smart.MarketScoreInput & Record<string, number>;
-
-      // Use basePriceResult as the reference high for score computation
       const scoreLocalHigh = basePriceResult.price > 0 ? basePriceResult.price : Math.max(...closes.slice(-60));
-
-      // Get BTC score for ETH
-      let btcScore: number | undefined;
-      if (pair === "ETH/USD") {
-        const btcScoreCandles = ohlcCache.get("BTC/USD") || [];
-        if (btcScoreCandles.length >= 20) {
-          const btcCloses = btcScoreCandles.map(c => c.close);
-          const btcEma20 = smart.computeEMA(btcCloses, 20);
-          const btcRsi = smart.computeRSI(btcCloses);
-          btcScore = smart.computeMarketScore({
-            currentPrice: btcCloses[btcCloses.length - 1],
-            ema20: btcEma20[btcEma20.length - 1],
-            ema50: btcEma20[Math.max(0, btcEma20.length - 2)],
-            prevEma20: btcEma20[Math.max(0, btcEma20.length - 2)],
-            prevEma50: btcEma20[Math.max(0, btcEma20.length - 3)],
-            rsi: btcRsi,
-            currentVolume: 1,
-            avgVolume: 1,
-            localHigh: Math.max(...btcCloses.slice(-60)),
-          }, config.marketScoreWeightsJson as any);
-          btcScoreForConfluence = btcScore;
-        }
-      }
-
-      marketScore = smart.computeMarketScore({
+      const quality = evaluateEntryMarketScoreQuality({
+        pair,
         currentPrice,
-        ema20: ema20[ema20.length - 1],
-        ema50: ema50[ema50.length - 1],
-        prevEma20: ema20[Math.max(0, ema20.length - 2)],
-        prevEma50: ema50[Math.max(0, ema50.length - 2)],
-        rsi,
-        currentVolume: 1,
-        avgVolume: 1,
+        scoreCandles,
+        btcCandles: ohlcCache.get("BTC/USD") || [],
+        weights,
         localHigh: scoreLocalHigh,
-        btcScore,
-      }, config.marketScoreWeightsJson as any);
+        nowMs: Date.now(),
+      });
+      const detailed = quality.detailed;
+      btcScoreForConfluence = quality.btcScore;
+      marketScore = detailed.score ?? 0;
+      marketScoreStatus = detailed.status;
+      marketScoreMissing = detailed.missing;
+      marketScoreRenormalized = detailed.renormalized;
 
-      if (marketScore < 50) {
-        blocks.push({ code: "market_score_too_low", message: `Score ${marketScore} < 50`, timestamp: now });
+      const qualityBlock = marketScoreEntryBlock(detailed, (weights as any).allowDegradedMarketScore === true);
+      if (qualityBlock) blocks.push({ ...qualityBlock, timestamp: now });
+      if (detailed.score !== null && detailed.score < 50) {
+        blocks.push({ code: "market_score_too_low", message: `Score ${detailed.score} < 50`, timestamp: now });
       }
 
       sizeProfile = config.adaptivePositionSizingEnabled
@@ -4340,31 +5140,23 @@ async function performEntryCheck(
   }
 
   // ── sizeProfile override por VWAP mensual ────────────────────
-  let monthlyBias: "aggressive" | "balanced" | "defensive" | "unknown" = "unknown";
-  if (assetConfig.vwapEnabled && vwapContext?.vwapMonthly) {
-    const mp = vwapContext.vwapMonthly;
-    if (currentPrice < mp * 0.95) {
-      monthlyBias = "aggressive";
-      sizeProfile = "aggressive_quality";
-    } else if (currentPrice < mp) {
-      monthlyBias = "balanced";
-      // No override — keep market score profile
-    } else {
-      monthlyBias = "defensive";
-      sizeProfile = "defensive";
-    }
-  }
+  const monthlyOverride = assetConfig.vwapEnabled
+    ? resolveMonthlyBiasSizeProfile(currentPrice, vwapContext?.vwapMonthly ?? undefined, sizeProfile)
+    : { monthlyBias: "unknown" as const, sizeProfile };
+  const monthlyBias = monthlyOverride.monthlyBias;
+  sizeProfile = monthlyOverride.sizeProfile;
 
   // Rebound confirmation
   let reboundConfirmed = true;
   if (assetConfig.requireReboundConfirmation && entryDipPct >= minDip) {
-    const reboundCandles = ohlcCache.get(pair) || [];
-    const recentCandles = reboundCandles.slice(-5);
-    const localLow = recentCandles.length > 0
-      ? Math.min(...recentCandles.map(c => c.low))
-      : currentPrice;
     const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
-    reboundConfirmed = smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin });
+    reboundConfirmed = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      reboundMinPct: reboundMin,
+    }).result.confirmed;
     if (!reboundConfirmed) {
       blocks.push({ code: "no_rebound_confirmed", message: `Waiting for rebound confirmation (minBounce=${reboundMin}%)`, timestamp: now });
     }
@@ -4374,6 +5166,7 @@ async function performEntryCheck(
   // Evaluar después de tener: marketScore, reboundConfirmed, atrPct, vwapZone.
   // Sprint 1b default: smartAdjustmentEnabled=false → sólo diagnóstico, sin cambio de minDip.
   let confluenceResult: IdcaConfluenceResult | undefined;
+  const confluenceEnforcement = resolveEngineConfluenceEnforcement(config, mode);
   if (config.smartModeEnabled || entryMode === "dynamic_intelligent_entry") {
     const allCandles = ohlcCache.get(pair) || [];
     const recentForMomentum = allCandles.slice(-6);
@@ -4433,8 +5226,63 @@ async function performEntryCheck(
       });
     }
 
-    // Si confluencia ajustó minDip (smart adjustment activo o dynamic_intelligent_entry)
-    if (confluenceResult.finalRequiredDistancePct !== minDip) {
+    // Enforcement v2_candidate: la confluencia solo añade bloqueos o arma el
+    // trailing existente. Nunca elimina bloqueos de precio/datos/exposición ni
+    // hard gates. DEFENSIVE_SAFETY_BUY no pertenece a entrada inicial y se
+    // degrada explícitamente a WATCH.
+    if (confluenceEnforcement === "enforced" && !confluenceResult.hardBlocked) {
+      const enforcedClass = confluenceResult.decisionClass === "DEFENSIVE_SAFETY_BUY"
+        ? "WATCH"
+        : confluenceResult.decisionClass;
+
+      if (enforcedClass === "WATCH") {
+        if (!blocks.some(block => block.code === "confluence_watch")) {
+          blocks.push({
+            code: "confluence_watch",
+            message: `Confluence WATCH: score=${confluenceResult.confidenceScore} grade=${confluenceResult.confidenceGrade} regime=${confluenceResult.marketRegime}`,
+            timestamp: now,
+          });
+        }
+      } else if (enforcedClass === "ARM_TRAILING" && !trailingBuyEntry) {
+        if (!TrailingBuyManager.isArmed(pair)) {
+          const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
+          const activationPrice = effectiveBasePrice * (1 - minDip / 100);
+          TrailingBuyManager.arm(pair, effectiveBasePrice, currentPrice, {
+            trailingPct: reboundMin,
+            activationPrice,
+            canonicalParams: resolveEngineTrailingBuyCanonicalParams({
+              pair,
+              referencePrice: effectiveBasePrice,
+              referenceType: basePriceMethod ?? "entry_reference",
+              activationPrice,
+              currentPrice,
+              staticTrailingPct: reboundMin,
+              entryMode,
+              requiredDistancePct: minDip,
+              drawdownFromReferencePct: entryDipPct,
+              atrPct,
+              dynamicReboundConfig: (assetConfig as any).dynamicReboundConfigJson || null,
+              maxDurationMs: 4 * 60 * 60 * 1000,
+              nowMs: Date.now(),
+              reason: "confluence_arm_trailing",
+            }),
+          });
+        }
+        if (!blocks.some(block => block.code === "confluence_arm_trailing")) {
+          blocks.push({
+            code: "confluence_arm_trailing",
+            message: `Confluence ARM_TRAILING: trailing buy armado/activo; no se ejecuta compra directa (score=${confluenceResult.confidenceScore})`,
+            timestamp: now,
+          });
+        }
+      }
+    }
+
+    // smartAdjustmentEnabled permanece intencionadamente desactivado en este
+    // call site: el ajuste inteligente de distancia es diagnóstico en Sprint 1b.
+    // En modo enforced no se aplica ningún ajuste de distancia porque la
+    // confluencia no puede relajar ni reemplazar el gate de precio existente.
+    if (!atrpBaseLevel && confluenceEnforcement !== "enforced" && confluenceResult.finalRequiredDistancePct !== minDip) {
       minDip = confluenceResult.finalRequiredDistancePct;
       // Re-evaluar insufficient_dip con el nuevo minDip
       const insuffIdx = blocks.findIndex(b => b.code === "insufficient_dip");
@@ -4466,6 +5314,9 @@ async function performEntryCheck(
     allowed: blocks.length === 0,
     blockReasons: blocks,
     marketScore,
+    marketScoreStatus,
+    marketScoreMissing,
+    marketScoreRenormalized,
     volatilityScore,
     sizeProfile,
     entryDipPct,
@@ -4494,7 +5345,41 @@ async function performEntryCheck(
     referenceUpdatedAt: refResult.referenceUpdatedAt,
     referenceContext,
     confluenceResult,
+    confluenceEnforcement,
+    confluenceDecisionClass: confluenceResult?.decisionClass,
   };
+}
+
+
+export const performEntryCheckForTest = performEntryCheck;
+// TANGO-5: aliases de prueba para verificar las rutas de venta unificadas.
+export const executeTrailingExitForTest = executeTrailingExit;
+export const executeBreakevenExitForTest = executeBreakevenExit;
+export const closePlusCycleForTest = closePlusCycle;
+export const closeRecoveryCycleForTest = closeRecoveryCycle;
+export const getReboundStrengthForTest = getReboundStrength;
+export const selectReboundCandlesForTest = selectReboundCandles;
+export const resolveEngineReboundVariantForTest = resolveEngineReboundVariant;
+export const evaluateEngineReboundForTest = evaluateEngineRebound;
+export const checkSafetyBuyForTest = checkSafetyBuy;
+export const checkPlusActivationForTest = checkPlusActivation;
+export const checkPlusSafetyBuyForTest = checkPlusSafetyBuy;
+export const checkRecoveryActivationForTest = checkRecoveryActivation;
+export const checkRecoverySafetyBuyForTest = checkRecoverySafetyBuy;
+export const evaluatePairForTest = evaluatePair;
+export function __setIdcaOhlcCacheForTest(pair: string, candles: TimestampedCandle[]): void {
+  ohlcCache.set(pair, candles);
+}
+export function __clearIdcaOhlcCacheForTest(): void {
+  ohlcCache.clear();
+}
+export function __clearExitPriceAlertThrottleForTest(): void {
+  exitPriceAlertState.clear();
+  priceCache.clear();
+  priceCacheMeta.clear();
+}
+export function __shouldEmitExitPriceAlertForTest(pair: string, type: ExitPriceAlertType, nowMs: number): boolean {
+  return shouldEmitExitPriceAlert(pair, type, nowMs);
 }
 
 // ─── Module Drawdown Check ─────────────────────────────────────────
@@ -4571,10 +5456,41 @@ function resolveSimulationFeePct(config: InstitutionalDcaConfigRow): number {
 
 // ─── Market Data Helpers ───────────────────────────────────────────
 
+const priceCacheMeta = new Map<string, { price: number; atMs: number }>();
+
+async function resolveExitPriceForPair(pair: string, nowMs = Date.now()) {
+  let realtimePrice: number | null = null;
+  try {
+    const price = await MarketDataService.getPrice(pair);
+    if (price > 0) {
+      realtimePrice = price;
+      priceCache.set(pair, price);
+      priceCacheMeta.set(pair, { price, atMs: nowMs });
+    }
+  } catch {
+    realtimePrice = null;
+  }
+
+  const cached = priceCacheMeta.get(pair) ?? null;
+  const resolution = resolveExitPriceInput({
+    realtimePrice,
+    realtimeAgeMs: realtimePrice !== null ? 0 : null,
+    fallbackPrice: cached?.price ?? null,
+    fallbackAgeMs: cached ? nowMs - cached.atMs : null,
+    maxRealtimeAgeMs: 45_000,
+    maxFallbackAgeMs: 5 * 60_000,
+  });
+  if (resolution.price !== null) {
+    priceCache.set(pair, resolution.price);
+  }
+  return resolution;
+}
+
 async function getCurrentPrice(pair: string): Promise<number> {
   const price = await MarketDataService.getPrice(pair);
   if (price > 0) {
     priceCache.set(pair, price);
+    priceCacheMeta.set(pair, { price, atMs: Date.now() });
     return price;
   }
   return priceCache.get(pair) || 0;
@@ -4721,14 +5637,21 @@ function computeP95Local(values: number[]): number {
 
 // Helper: map raw Kraken OHLC response to TimestampedCandle
 function mapKrakenCandles(candles: any[]): TimestampedCandle[] {
-  return candles.map((c: any) => ({
-    open:   parseFloat(String(c.open   || c[1] || 0)),
-    high:   parseFloat(String(c.high   || c[2] || 0)),
-    low:    parseFloat(String(c.low    || c[3] || 0)),
-    close:  parseFloat(String(c.close  || c[4] || 0)),
-    volume: parseFloat(String(c.volume || c[5] || 0)),
-    time:   c.time ? (c.time > 1e12 ? c.time : c.time * 1000) : (c[0] ? (c[0] > 1e12 ? c[0] : c[0] * 1000) : Date.now()),
-  }));
+  const out: TimestampedCandle[] = [];
+  for (const c of candles) {
+    const rawTime = c.time ?? c[0];
+    const normalized = normalizeEpochToMs(rawTime, { nowMs: Date.now() });
+    if (!normalized.ok) continue;
+    out.push({
+      open:   parseFloat(String(c.open   || c[1] || 0)),
+      high:   parseFloat(String(c.high   || c[2] || 0)),
+      low:    parseFloat(String(c.low    || c[3] || 0)),
+      close:  parseFloat(String(c.close  || c[4] || 0)),
+      volume: parseFloat(String(c.volume || c[5] || 0)),
+      time:   normalized.ms,
+    });
+  }
+  return out;
 }
 
 // Helper: compute bucket context metrics from a candle slice
@@ -4770,12 +5693,12 @@ async function updateOhlcvCache(): Promise<void> {
           ` | last=${new Date(mapped1h[mapped1h.length - 1].time).toISOString().slice(0, 16)}` +
           ` | source=${ExchangeFactory.getDataExchangeType()} (MDS)`
         );
-        // Store last 10 in DB cache
-        for (const c of candles1h.slice(-10)) {
+        // Store last 10 in DB cache using canonical millisecond timestamps.
+        for (const c of mapped1h.slice(-10)) {
           try {
             await repo.upsertOhlcv({
               pair, timeframe: "1h",
-              ts: new Date(c.time * 1000),
+              ts: new Date(c.time),
               open: String(c.open), high: String(c.high),
               low:  String(c.low),  close: String(c.close),
               volume: String(c.volume),
@@ -4910,6 +5833,36 @@ async function executeRealBuyWithGuard(
 ): Promise<BuyExecutionResult> {
   const intendedUsd = intendedQty * price;
 
+  if (!isLiveExecutionMode(mode)) {
+    return {
+      success: false,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: false,
+      originalQty: intendedQty,
+      rejectionReason: `execution_scope_invalid: requested_mode_invalid`,
+    };
+  }
+
+  if (cycleId > 0) {
+    const scopedCycle = await repo.getCycleById(cycleId);
+    const scope = resolveIdcaExecutionScope(scopedCycle, mode);
+    if (!scope.ok) {
+      return {
+        success: false,
+        executedQty: 0,
+        executedUsd: 0,
+        avgPrice: 0,
+        feeUsd: 0,
+        wasAdjusted: false,
+        originalQty: intendedQty,
+        rejectionReason: `execution_scope_invalid: ${scope.reason}`,
+      };
+    }
+  }
+
   // ─── FASE 1: Validar intención con ExecutionGuard ───
   const validation = await liveGuard.validateLiveBuyIntention({
     pair,
@@ -4946,30 +5899,31 @@ async function executeRealBuyWithGuard(
     console.log(`${TAG}[LIVE][BUY][ADJUSTED] ${pair} ${buyType}: ${intendedQty.toFixed(8)} → ${finalQty.toFixed(8)} (${finalUsd.toFixed(2)} USD)`);
   }
 
-  // ─── FASE 2: Enviar orden al exchange ───
-  let exchangeOrderId: string | undefined;
+  // ─── FASE 2/3: Enviar una sola vez con intención durable y reconciliar fill ───
+  // Identidad estable: nunca depende de precio/cantidad, de modo que un
+  // reintento tras timeout/reinicio reconcilia la MISMA intención durable en
+  // lugar de enviar un duplicado. Para compras iniciales el caller crea antes
+  // un ciclo provisional durable y pasa su id real (cycleId > 0); el fallback
+  // por par solo existe para llamadas legacy sin ciclo y también es estable.
+  const intentScope = cycleId > 0
+    ? String(cycleId)
+    : `0_${pair.replace(/[^A-Za-z0-9]/g, "_")}`;
+  const intentKey = `${buyType}_${buyLevel ?? 0}_${intentScope}`;
+  let outcome: ReconciledOutcome;
   try {
-    const tradingExchange = ExchangeFactory.getTradingExchange();
-    if (!tradingExchange.isInitialized()) {
-      throw new Error("Trading exchange not initialized");
-    }
-
-    console.log(`${TAG}[LIVE][BUY][SENDING] ${pair} qty=${finalQty.toFixed(8)} @ ~${price.toFixed(2)}`);
-
-    const orderResult = await tradingExchange.placeOrder({
+    outcome = await submitAndReconcile({
+      cycleId,
       pair,
-      type: "buy",
-      ordertype: "market",
-      volume: finalQty.toFixed(8),
+      side: "buy",
+      requestedQty: finalQty,
+      reason: `${buyType}_buy`,
+      intentKey,
+      // Reserva durable obligatoria (P0): la compra reserva el quote que
+      // intenta gastar y el cap de exposicion disponible validado por el
+      // guard; sin reserva positiva la intencion se rechaza antes del venue.
+      reservedQuoteUsd: finalUsd,
+      availableQuoteCapUsd: Number.isFinite((validation as any).balanceCheck?.availableUsd) ? (validation as any).balanceCheck.availableUsd : null,
     });
-
-    if (!orderResult.success) {
-      throw new Error(orderResult.error || "Order rejected by exchange");
-    }
-
-    exchangeOrderId = orderResult.orderId || orderResult.txid;
-    console.log(`${TAG}[LIVE][BUY][SENT] ${pair} orderId=${exchangeOrderId || "pending"}`);
-
   } catch (e: any) {
     console.error(`${TAG}[LIVE][BUY][SEND_FAILED] ${pair}: ${e.message}`);
     return {
@@ -4984,24 +5938,9 @@ async function executeRealBuyWithGuard(
     };
   }
 
-  // ─── FASE 3: Confirmar fill ───
-  if (!exchangeOrderId) {
-    return {
-      success: false,
-      executedQty: 0,
-      executedUsd: 0,
-      avgPrice: 0,
-      feeUsd: 0,
-      wasAdjusted: validation.reduced ?? false,
-      originalQty: intendedQty,
-      rejectionReason: "no_exchange_order_id",
-    };
-  }
-
-  const fillConfirmation = await liveGuard.confirmOrderFill(pair, exchangeOrderId, 30000, 2000);
-
-  if (!fillConfirmation.confirmed || fillConfirmation.filledQty <= 0) {
-    console.error(`${TAG}[LIVE][BUY][NO_FILL] ${pair} orderId=${exchangeOrderId} status=${fillConfirmation.status}`);
+  const exchangeOrderId = outcome.intent.exchangeOrderId ?? outcome.intent.clientOrderId;
+  if (outcome.filledQty <= 0) {
+    console.error(`${TAG}[LIVE][BUY][NO_FILL] ${pair} intent=${outcome.intent.clientOrderId} state=${outcome.state}`);
     return {
       success: false,
       orderId: exchangeOrderId,
@@ -5011,31 +5950,31 @@ async function executeRealBuyWithGuard(
       feeUsd: 0,
       wasAdjusted: validation.reduced ?? false,
       originalQty: intendedQty,
-      rejectionReason: `no_fill: ${fillConfirmation.status}`,
+      rejectionReason: outcome.state === "uncertain" ? `execution_unknown: ${outcome.state}` : `no_fill: ${outcome.state}`,
     };
   }
 
-  // ─── FASE 4: Éxito — retornar valores reales de ejecución ───
+  const executedUsd = outcome.filledQty * outcome.avgPrice;
   console.log(
     `${TAG}[LIVE][BUY][CONFIRMED] ${pair} orderId=${exchangeOrderId} ` +
-    `qty=${fillConfirmation.filledQty.toFixed(8)} avg=${fillConfirmation.avgFillPrice.toFixed(2)} ` +
-    `fee=${fillConfirmation.feeUsd.toFixed(4)} netQty=${fillConfirmation.netBaseQty?.toFixed(8) || 'N/A'}`
+    `qty=${outcome.filledQty.toFixed(8)} avg=${outcome.avgPrice.toFixed(2)} fee=${outcome.feesUsd.toFixed(4)}`
   );
 
+  // ─── FASE 4: Éxito — retornar valores reales de ejecución ───
   return {
     success: true,
     orderId: exchangeOrderId,
-    executedQty: fillConfirmation.filledQty,
-    executedUsd: fillConfirmation.filledUsd,
-    avgPrice: fillConfirmation.avgFillPrice,
-    feeUsd: fillConfirmation.feeUsd,
+    executedQty: outcome.filledQty,
+    executedUsd,
+    avgPrice: outcome.avgPrice,
+    feeUsd: outcome.feesUsd,
     wasAdjusted: validation.reduced ?? false,
     originalQty: validation.reduced ? intendedQty : undefined,
-    grossBaseQty: fillConfirmation.grossBaseQty,
-    netBaseQty: fillConfirmation.netBaseQty,
-    feeAsset: fillConfirmation.feeAsset,
-    feeAmount: fillConfirmation.feeAmount,
-    feeSource: fillConfirmation.feeSource,
+    grossBaseQty: outcome.filledQty,
+    netBaseQty: outcome.netFilledQty ?? outcome.filledQty,
+    feeAsset: outcome.feeSource === "estimated_preset" && (outcome.netFilledQty ?? outcome.filledQty) < outcome.filledQty ? pair.split("/")[0] : undefined,
+    feeAmount: Math.max(0, outcome.filledQty - (outcome.netFilledQty ?? outcome.filledQty)) || undefined,
+    feeSource: outcome.feeSource === "venue" ? "exchange_api" : outcome.feeSource === "estimated_preset" ? "inferred_from_default_pct" : null,
   };
 }
 
@@ -5167,7 +6106,17 @@ async function executeSafetyBuyLiveSafe(
   };
 }
 
-async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false): Promise<void> {
+async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false, requestedMode: unknown = cycle.mode): Promise<ReconciledOutcome> {
+  const scope = resolveIdcaExecutionScope(cycle, requestedMode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, scope.reason, "executeRealSell");
+    throw new Error(`IDCA_EXECUTION_SCOPE_GUARD: ${scope.reason}`);
+  }
+  if (scope.mode !== "live") {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, "real_order_requires_live", "executeRealSell");
+    throw new Error("IDCA_EXECUTION_SCOPE_GUARD: real_order_requires_live");
+  }
+
   try {
     // HOTFIX: Validar balance base real antes de vender
     const cycleQty = parseFloat(String(cycle.totalQuantity));
@@ -5192,24 +6141,23 @@ async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, 
       console.log(`${TAG}[LIVE][SELL] Dust tolerance applied: original=${quantity.toFixed(8)} adjusted=${sellQty.toFixed(8)} reason=${validation.reason}`);
     }
 
-    const tradingExchange = ExchangeFactory.getTradingExchange();
-    if (!tradingExchange.isInitialized()) {
-      console.error(`${TAG}[LIVE][SELL] Trading exchange not initialized — order NOT sent for ${cycle.pair}`);
-      throw new Error(`Live sell blocked: exchange not initialized (pair=${cycle.pair} type=${orderType})`);
-    }
-    console.log(`${TAG}[LIVE][SELL] Placing order: ${cycle.pair} type=${orderType} qty=${sellQty.toFixed(8)}`);
-    const result = await tradingExchange.placeOrder({
+    console.log(`${TAG}[LIVE][SELL] Submitting durable intent: ${cycle.pair} type=${orderType} qty=${sellQty.toFixed(8)}`);
+    const outcome = await submitAndReconcile({
+      cycleId: cycle.id,
       pair: cycle.pair,
-      type: "sell",
-      ordertype: "market",
-      volume: sellQty.toFixed(8),
+      side: "sell",
+      requestedQty: sellQty,
+      reason: orderType,
+      intentKey: `${orderType}_${sellQty.toFixed(8)}`,
+      closePosition: isFullClose,
+      closeReason: orderType === "manual_sell" ? "manual_close" : orderType === "emergency_sell" ? "emergency_close_all" : orderType,
     });
-    if (result.success) {
-      console.log(`${TAG}[LIVE][SELL] Order accepted: ${cycle.pair} type=${orderType} orderId=${result.orderId || result.txid || "(pending)"}`);
-    } else {
-      console.error(`${TAG}[LIVE][SELL] Order FAILED: ${cycle.pair} type=${orderType} error=${result.error}`);
-      throw new Error(`Live sell order failed: ${result.error}`);
+    if (outcome.state !== "filled") {
+      console.error(`${TAG}[LIVE][SELL] Order not reconciled as filled: ${cycle.pair} type=${orderType} state=${outcome.state}`);
+      throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
     }
+    console.log(`${TAG}[LIVE][SELL] Order reconciled filled: ${cycle.pair} type=${orderType} qty=${outcome.filledQty.toFixed(8)} avg=${outcome.avgPrice.toFixed(8)}`);
+    return outcome;
   } catch (e: any) {
     console.error(`${TAG}[LIVE][SELL] Error placing order for ${cycle.pair}:`, e.message);
     throw e;
@@ -5351,7 +6299,7 @@ async function checkPlusActivation(
 
   // 4) Rebound confirmation if required
   if (plusCfg.requireReboundConfirmation) {
-    const strength = getReboundStrength(pair);
+    const strength = getReboundStrength(pair, config, mode);
     if (strength === "none") return;
   }
 
@@ -5389,7 +6337,7 @@ async function checkPlusActivation(
       buyCount: 1,
       marketScore: parseFloat(String(mainCycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -5666,6 +6614,11 @@ async function checkPlusSafetyBuy(
   // Max entries check
   if (buyCount >= plusCfg.maxPlusEntries) return;
 
+  if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate" && await exitRepo.hasPendingExitInstruction(plusCycle.id)) {
+    console.log(`${TAG}[PLUS_SAFETY_BLOCKED] cycleId=${plusCycle.id} pair=${pair}: exit instruction pending, blocking plus safety buy`);
+    return;
+  }
+
   // Cooldown check
   const lastBuyAt = plusCycle.lastBuyAt ? new Date(plusCycle.lastBuyAt).getTime() : 0;
   const cooldownMs = plusCfg.cooldownMinutesBetweenBuys * 60 * 1000;
@@ -5775,7 +6728,7 @@ async function checkPlusSafetyBuy(
       buyCount: newBuyCount,
       marketScore: parseFloat(String(plusCycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -5869,6 +6822,12 @@ async function closePlusCycle(
   mode: IdcaMode,
   reason: string
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(plusCycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(plusCycle, mode, scope.reason, "closePlusCycle");
+    return;
+  }
+
   const pair = plusCycle.pair;
   const totalQty = parseFloat(String(plusCycle.totalQuantity || "0"));
   const capitalUsed = parseFloat(String(plusCycle.capitalUsedUsd || "0"));
@@ -5883,6 +6842,24 @@ async function closePlusCycle(
 
   const realizedPnl = netValue - capitalUsed;
 
+  // TANGO-5: en live ejecutar PRIMERO — jamás precontabilizar orden ni cierre antes del venue.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
+  if (mode === "live") {
+    liveOutcome = await executeRealSell(plusCycle, "final_sell", totalQty, true, mode);
+    if ((liveOutcome.residualQty ?? 0) > 1e-8) {
+      await createHumanEvent({
+        cycleId: plusCycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "critical",
+        message: `Cierre PLUS con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO es un cierre.`,
+        payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: plusCycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+      return; // protección preservada; conciliación del residual es la única vía de cierre
+    }
+  }
+
+  // TANGO-5: en live la orden y el cierre contable ya los escribió la tx atómica durable.
+  if (mode !== "live") {
   await repo.createOrder({
     cycleId: plusCycle.id,
     pair,
@@ -5907,6 +6884,7 @@ async function closePlusCycle(
     currentPrice: currentPrice.toFixed(8),
     closedAt: new Date(),
   });
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -5915,10 +6893,6 @@ async function closePlusCycle(
       usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) - capitalUsed).toFixed(2),
       realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + realizedPnl).toFixed(2),
     });
-  }
-
-  if (mode === "live") {
-    await executeRealSell(plusCycle, "final_sell", totalQty, true);
   }
 
   await createHumanEvent({
@@ -6154,7 +7128,7 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
       buyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -6396,7 +7370,7 @@ export async function editImportedCycle(
       buyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      reboundStrength: getReboundStrength(pair),
+      reboundStrength: getReboundStrength(pair, config, mode),
       config: dtpConfig,
     });
     tpPct = breakdown.finalTpPct;
@@ -6683,12 +7657,14 @@ async function checkRecoveryActivation(
 
   // 4g) Rebound confirmation
   if (rcfg.requireReboundConfirmation) {
-    const candles = ohlcCache.get(pair) || [];
-    const recentCandles = candles.slice(-5).map(c => ({
-      high: c.high, low: c.low, close: c.close,
-    }));
-    const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
-    if (!smart.detectRebound({ recentCandles, currentPrice, localLow })) {
+    const evaluation = evaluateEngineRebound({
+      pair,
+      currentPrice,
+      config,
+      mode,
+      includeCurrentPriceInLocalLow: true,
+    });
+    if (!evaluation.result.confirmed) {
       blockReasons.push("no_rebound_confirmed");
     }
   }
@@ -7019,6 +7995,11 @@ async function checkRecoverySafetyBuy(
 
   if (buyCount >= rcfg.maxRecoveryEntries) return;
 
+  if (resolveIdcaEntryPolicy(config, mode).version === "v2_candidate" && await exitRepo.hasPendingExitInstruction(recoveryCycle.id)) {
+    console.log(`${TAG}[RECOVERY_SAFETY_BLOCKED] cycleId=${recoveryCycle.id} pair=${pair}: exit instruction pending, blocking recovery safety buy`);
+    return;
+  }
+
   // Cooldown
   const lastBuyAt = recoveryCycle.lastBuyAt ? new Date(recoveryCycle.lastBuyAt).getTime() : 0;
   const cooldownMs = 30 * 60 * 1000; // 30min fixed cooldown for recovery safety buys
@@ -7200,6 +8181,12 @@ async function closeRecoveryCycle(
   mode: IdcaMode,
   closeReason: string
 ): Promise<void> {
+  const scope = resolveIdcaExecutionScope(recoveryCycle, mode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(recoveryCycle, mode, scope.reason, "closeRecoveryCycle");
+    return;
+  }
+
   const pair = recoveryCycle.pair;
   const remainingQty = parseFloat(String(recoveryCycle.totalQuantity));
   const capitalUsed = parseFloat(String(recoveryCycle.capitalUsedUsd || "0"));
@@ -7224,7 +8211,25 @@ async function closeRecoveryCycle(
   const durM = Math.floor((durMs % 3600000) / 60000);
   const durationStr = durH > 24 ? `${Math.floor(durH / 24)}d ${durH % 24}h` : `${durH}h ${durM}m`;
 
-  if (remainingQty > 0) {
+  // TANGO-5: en live ejecutar PRIMERO — jamás precontabilizar; la tx atómica escribe orden y cierre.
+  let liveOutcome: import("./IdcaLiveOrderReconciler").ReconciledOutcome | null = null;
+  let liveResidual = false;
+  if (mode === "live" && remainingQty > 0) {
+    liveOutcome = await executeRealSell(recoveryCycle, "final_sell", remainingQty, true, mode);
+    liveResidual = (liveOutcome.residualQty ?? 0) > 1e-8;
+    if (liveResidual) {
+      await createHumanEvent({
+        cycleId: recoveryCycle.id, pair, mode,
+        eventType: "exit_partial_executed",
+        severity: "critical",
+        message: `Cierre recovery con remanente: vendido ${liveOutcome.filledQty.toFixed(8)}, residual ${(liveOutcome.residualQty ?? 0).toFixed(8)} permanece. El ciclo sigue ACTIVO — NO es un cierre.`,
+        payloadJson: { residualQty: liveOutcome.residualQty, filledQty: liveOutcome.filledQty, intentKey: liveOutcome.intent.clientOrderId },
+      }, { eventType: "exit_partial_executed", pair, mode, cycleId: recoveryCycle.id, price: currentPrice, quantity: liveOutcome.filledQty });
+      return; // protección preservada; conciliación del residual es la única vía de cierre
+    }
+  }
+
+  if (remainingQty > 0 && mode !== "live") {
     await repo.createOrder({
       cycleId: recoveryCycle.id, pair, mode,
       orderType: "final_sell",
@@ -7238,13 +8243,10 @@ async function closeRecoveryCycle(
       triggerReason: `Recovery close: ${closeReason}`,
       humanReason: formatOrderReason("final_sell"),
     });
-
-    if (mode === "live") {
-      await executeRealSell(recoveryCycle, "final_sell", remainingQty, true);
-    }
   }
 
-  // Store net profit
+  // Store net profit — TANGO-5: en live la tx atómica ya cerró contablemente el ciclo.
+  if (mode !== "live") {
   await repo.updateCycle(recoveryCycle.id, {
     status: "closed",
     closeReason,
@@ -7252,6 +8254,7 @@ async function closeRecoveryCycle(
     realizedPnlUsd: pnlUsd.toFixed(2),
     closedAt,
   });
+  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -7316,6 +8319,14 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   if (!cycle) throw new Error(`Ciclo #${cycleId} no encontrado`);
   if (cycle.status === "closed") throw new Error("El ciclo ya está cerrado");
 
+  const config = await repo.getIdcaConfig();
+  const requestedMode = config.mode;
+  const scope = resolveIdcaExecutionScope(cycle, requestedMode);
+  if (!scope.ok) {
+    await emitInvalidExecutionScopeEvent(cycle, requestedMode, scope.reason, "manualCloseCycle");
+    throw new Error(`IDCA_EXECUTION_SCOPE_GUARD: ${scope.reason}`);
+  }
+
   // ─── Lote 4: Check for blocking exit instruction ───
   const activeInstr = await exitRepo.getActiveExitInstruction(cycleId);
   if (activeInstr && activeInstr.status === "failed_requires_review") {
@@ -7327,13 +8338,80 @@ export async function manualCloseCycle(cycleId: number): Promise<{
 
   const pair = cycle.pair;
   const mode = cycle.mode as IdcaMode;
-  const config = await repo.getIdcaConfig();
 
   const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
   if (totalQty <= 0) throw new Error("El ciclo no tiene cantidad disponible para vender");
 
   const currentPrice = await getCurrentPrice(pair);
   if (!currentPrice || currentPrice <= 0) throw new Error(`No se pudo obtener precio actual para ${pair}`);
+
+  if (mode === "live") {
+    const outcome = await executeRealSell(cycle, "manual_sell", totalQty, true, mode);
+    if (outcome.state !== "filled") throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
+    const quantitySold = outcome.filledQty;
+    const sellPrice = outcome.avgPrice || currentPrice;
+    const grossValue = quantitySold * sellPrice;
+    const liveFees = outcome.feesUsd;
+    const netValueLive = grossValue - liveFees;
+    const capitalUsedLive = parseFloat(String(cycle.capitalUsedUsd || "0"));
+    const totalCostBasisLive = parseFloat(String((cycle as any).totalCostBasisUsd || "0")) || capitalUsedLive;
+    const prevRealizedLive = parseFloat(String(cycle.realizedPnlUsd || "0"));
+    // TANGO-5: coste siempre proporcional a lo vendido — nunca consumir el coste íntegro con residual.
+    const residualLive = outcome.residualQty ?? 0;
+    const proportionLive = totalQty > 0 ? Math.min(1, quantitySold / totalQty) : 1;
+    const costConsumedLive = capitalUsedLive * proportionLive;
+    const realizedIncrementLive = netValueLive - costConsumedLive;
+    const realizedPnlLive = prevRealizedLive + realizedIncrementLive;
+    const realizedPnlPctLive = totalCostBasisLive > 0 ? (realizedPnlLive / totalCostBasisLive) * 100 : 0;
+    const isPartialLive = residualLive > 1e-8;
+
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: isPartialLive ? "exit_partial_executed" : "manual_close",
+      severity: isPartialLive ? "critical" : "info",
+      message: isPartialLive
+        ? `Venta manual PARCIAL: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, residual ${residualLive.toFixed(8)} permanece — el ciclo sigue ACTIVO, NO es un cierre.`
+        : `Cierre manual: vendido ${quantitySold.toFixed(6)} @ ${sellPrice.toFixed(2)}, PnL=${realizedPnlLive >= 0 ? "+" : ""}$${realizedPnlLive.toFixed(2)}`,
+      payloadJson: {
+        sellPrice, quantity: quantitySold, grossValueUsd: grossValue, netValueUsd: netValueLive,
+        fees: liveFees, realizedPnlUsd: realizedPnlLive, realizedPnlPct: realizedPnlPctLive,
+        capitalUsed: capitalUsedLive, clientOrderId: outcome.intent.clientOrderId,
+      },
+    }, {
+      eventType: isPartialLive ? "exit_partial_executed" : "manual_close", pair, mode,
+      price: sellPrice, quantity: quantitySold,
+      pnlUsd: realizedPnlLive, pnlPct: realizedPnlPctLive,
+      capitalUsed: capitalUsedLive,
+    });
+
+    try {
+      const pnlSign = realizedPnlLive >= 0 ? "+" : "";
+      await telegram.sendRawMessage(
+        isPartialLive
+          ? `⚠️ *Venta manual PARCIAL*
+Par: ${pair}
+Vendido: ${quantitySold.toFixed(6)}
+Residual: ${residualLive.toFixed(8)} — ciclo sigue ACTIVO.`
+          : `🔴 *Cierre manual de posición*
+` +
+        `Par: ${pair}
+Modo: LIVE
+CycleId: #${cycle.id}
+` +
+        `Precio venta: $${sellPrice.toFixed(2)}
+Cantidad: ${quantitySold.toFixed(6)}
+` +
+        `PnL realizado: ${pnlSign}$${realizedPnlLive.toFixed(2)}`
+      );
+    } catch { /* ignore telegram errors */ }
+
+    const closedCycle = await repo.getCycleById(cycle.id);
+    return {
+      cycle: closedCycle!, sellPrice, quantity: quantitySold,
+      grossValueUsd: grossValue, netValueUsd: netValueLive,
+      realizedPnlUsd: realizedPnlLive, realizedPnlPct: realizedPnlPctLive,
+    };
+  }
 
   const sellValueUsd = totalQty * currentPrice;
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
@@ -7372,9 +8450,6 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     humanReason: formatOrderReason("manual_sell"),
   });
 
-  if (mode === "live") {
-    await executeRealSell(cycle, "manual_sell", totalQty, true);
-  }
 
   // Lote 4: zero capitalUsedUsd on full close; preserve totalCostBasisUsd as historical
   const prevRealizedCostBasis = parseFloat(String((cycle as any).realizedCostBasisUsd || "0"));

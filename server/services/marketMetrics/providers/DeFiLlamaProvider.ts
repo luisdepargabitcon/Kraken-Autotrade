@@ -13,6 +13,86 @@ const SOURCE = "defillama";
 // Stablecoins relevantes para medir liquidez del mercado crypto
 const TRACKED_STABLECOINS = ["USDT", "USDC", "DAI", "FRAX", "BUSD", "TUSD", "USDP", "GUSD"];
 
+export interface StablecoinAssetInput {
+  symbol?: string;
+  circulating?: { peggedUSD?: number };
+  circulatingPrevDay?: { peggedUSD?: number };
+  circulatingPrevWeek?: { peggedUSD?: number };
+}
+
+export function buildStablecoinMetricRecords(
+  peggedAssets: StablecoinAssetInput[],
+  now: Date
+): RawMetricRecord[] {
+  const records: RawMetricRecord[] = [];
+  const seenAssets = new Set<string>();
+  let totalCirc24hAgo = 0;
+  let totalCircNow = 0;
+
+  for (const asset of peggedAssets) {
+    const symbol = (asset.symbol ?? "").toUpperCase();
+    if (!TRACKED_STABLECOINS.includes(symbol) || seenAssets.has(symbol)) continue;
+    seenAssets.add(symbol);
+
+    const circNow = Number(asset.circulating?.peggedUSD ?? 0);
+    const circ24h = Number(asset.circulatingPrevDay?.peggedUSD ?? 0);
+    const circ7d = Number(asset.circulatingPrevWeek?.peggedUSD ?? 0);
+
+    totalCircNow += circNow;
+    totalCirc24hAgo += circ24h > 0 ? circ24h : circNow;
+
+    if (circNow > 0 && circ24h > 0) {
+      const delta24h = ((circNow - circ24h) / circ24h) * 100;
+      records.push({
+        source: SOURCE,
+        metric: "stablecoin_supply_delta_24h",
+        asset: symbol,
+        pair: null,
+        value: parseFloat(delta24h.toFixed(4)),
+        tsProvider: now,
+        meta: {
+          circNow,
+          circ24h,
+          circ7d,
+          suspiciousExtreme: Math.abs(delta24h) > 10,
+        },
+      });
+    }
+
+    if (circNow > 0 && circ7d > 0) {
+      const delta7d = ((circNow - circ7d) / circ7d) * 100;
+      records.push({
+        source: SOURCE,
+        metric: "stablecoin_supply_delta_7d",
+        asset: symbol,
+        pair: null,
+        value: parseFloat(delta7d.toFixed(4)),
+        tsProvider: now,
+        meta: { circNow, circ7d, suspiciousExtreme: Math.abs(delta7d) > 10 },
+      });
+    }
+  }
+
+  if (totalCircNow > 0 && totalCirc24hAgo > 0) {
+    const totalDelta24h = ((totalCircNow - totalCirc24hAgo) / totalCirc24hAgo) * 100;
+    records.push({
+      source: SOURCE,
+      metric: "stablecoin_supply_delta_24h",
+      asset: "ALL",
+      pair: null,
+      value: parseFloat(totalDelta24h.toFixed(4)),
+      tsProvider: now,
+      meta: {
+        totalCircNow,
+        totalCirc24hAgo,
+        trackedCount: seenAssets.size,
+        suspiciousExtreme: Math.abs(totalDelta24h) > 10,
+      },
+    });
+  }
+  return records;
+}
+
 export class DeFiLlamaProvider implements IMetricsProvider {
   readonly name = "defillama";
   readonly enabled = true;
@@ -44,63 +124,8 @@ export class DeFiLlamaProvider implements IMetricsProvider {
         return { records: [], error: "No peggedAssets in response", unavailable: true };
       }
 
-      const records: RawMetricRecord[] = [];
       const now = new Date();
-
-      let totalCirc24hAgo = 0;
-      let totalCircNow = 0;
-
-      for (const asset of peggedAssets) {
-        const symbol: string = (asset.symbol ?? "").toUpperCase();
-        if (!TRACKED_STABLECOINS.includes(symbol)) continue;
-
-        const circNow: number = asset.circulating?.peggedUSD ?? 0;
-        const circ24h: number = asset.circulatingPrevDay?.peggedUSD ?? 0;
-        const circ7d: number = asset.circulatingPrevWeek?.peggedUSD ?? 0;
-
-        totalCircNow += circNow;
-        totalCirc24hAgo += circ24h > 0 ? circ24h : circNow;
-
-        if (circNow > 0 && circ24h > 0) {
-          const delta24h = ((circNow - circ24h) / circ24h) * 100;
-          records.push({
-            source: SOURCE,
-            metric: "stablecoin_supply_delta_24h",
-            asset: symbol,
-            pair: null,
-            value: parseFloat(delta24h.toFixed(4)),
-            tsProvider: now,
-            meta: { circNow, circ24h, circ7d },
-          });
-        }
-
-        if (circNow > 0 && circ7d > 0) {
-          const delta7d = ((circNow - circ7d) / circ7d) * 100;
-          records.push({
-            source: SOURCE,
-            metric: "stablecoin_supply_delta_7d",
-            asset: symbol,
-            pair: null,
-            value: parseFloat(delta7d.toFixed(4)),
-            tsProvider: now,
-            meta: { circNow, circ7d },
-          });
-        }
-      }
-
-      // Métrica agregada: delta total del mercado de stablecoins
-      if (totalCircNow > 0 && totalCirc24hAgo > 0) {
-        const totalDelta24h = ((totalCircNow - totalCirc24hAgo) / totalCirc24hAgo) * 100;
-        records.push({
-          source: SOURCE,
-          metric: "stablecoin_supply_delta_24h",
-          asset: "ALL",
-          pair: null,
-          value: parseFloat(totalDelta24h.toFixed(4)),
-          tsProvider: now,
-          meta: { totalCircNow, totalCirc24hAgo, trackedCount: TRACKED_STABLECOINS.length },
-        });
-      }
+      const records = buildStablecoinMetricRecords(peggedAssets, now);
 
       log(`[DeFiLlama] Obtenidas ${records.length} métricas de stablecoins`, "trading");
       return { records };

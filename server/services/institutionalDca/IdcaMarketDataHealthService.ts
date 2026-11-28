@@ -1,3 +1,4 @@
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
 /**
  * IdcaMarketDataHealthService
  *
@@ -11,6 +12,8 @@
  */
 
 import { MarketDataService, type Timeframe } from "../MarketDataService";
+import { computeRelativeVolumeInputs } from "./IdcaSmartLayer";
+import type { EntryDataHealth } from "./idcaDataGate";
 import { idcaLog } from "./idcaLog";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -445,10 +448,10 @@ export async function checkMarketDataHealth(
   }
 
   // Normalizar time a ms
-  const normalizedCandles = candles.map(c => ({
-    ...c,
-    time: c.time > 1e12 ? c.time : c.time * 1000,
-  }));
+  const normalizedCandles = candles.flatMap(c => {
+    const normalized = normalizeEpochToMs(c.time, { nowMs: now });
+    return normalized.ok ? [{ ...c, time: normalized.ms }] : [];
+  });
 
   const candleCount = normalizedCandles.length;
   const sortedCandles = [...normalizedCandles].sort((a, b) => a.time - b.time);
@@ -601,4 +604,102 @@ export async function checkMarketDataHealth(
 
 export function getBackfillStatus(pair: string): BackfillStatus {
   return backfillState.get(pair) ?? "no_necesario";
+}
+
+const ENTRY_TIMEFRAME_MS = 60 * 60 * 1000;
+
+function worstValidity(values: Array<EntryDataHealth["validity"]>): EntryDataHealth["validity"] {
+  if (values.includes("invalid")) return "invalid";
+  if (values.includes("unknown")) return "unknown";
+  if (values.includes("stale")) return "stale";
+  return "valid";
+}
+
+/** Salud real de datos para nuevas entradas IDCA, basada en el contrato market-data. */
+export async function computeEntryDataHealth(
+  pair: string,
+  options: { nowMs: number },
+): Promise<EntryDataHealth> {
+  const nowMs = options.nowMs;
+  const maxAgeMs = ENTRY_TIMEFRAME_MS * 2;
+  const missing = new Set<string>();
+  const components: NonNullable<EntryDataHealth["components"]> = {};
+
+  const pairSeries = await MarketDataService.getCandleSeries(pair, "1h", { minCandles: 100 });
+  const btcSeries = pair === "ETH/USD"
+    ? await MarketDataService.getCandleSeries("BTC/USD", "1h", { minCandles: 100 })
+    : null;
+
+  const closedCount = pairSeries.candles.filter((candle) => candle.isClosed).length;
+  const checks: Array<[string, number]> = [
+    ["ema20", 40],
+    ["ema50", 100],
+    ["rsi", 15],
+    ["atr", 15],
+  ];
+  for (const [name, required] of checks) {
+    const available = closedCount >= required;
+    components[name] = { available, reason: available ? undefined : "insufficient_history" };
+    if (!available) missing.add(name);
+  }
+
+  const volumeInput = computeRelativeVolumeInputs(
+    pairSeries.candles.map((candle) => ({
+      time: candle.openTime,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? undefined,
+    })),
+    pairSeries.source,
+    ENTRY_TIMEFRAME_MS,
+    nowMs,
+  );
+  components.relative_volume = volumeInput.available
+    ? { available: true }
+    : { available: false, reason: volumeInput.reason };
+  if (!volumeInput.available) missing.add("relative_volume");
+
+  if (pairSeries.gaps > 0) missing.add("gaps");
+  if (pairSeries.quality.missing.includes("warmup")) missing.add("warmup");
+
+  if (btcSeries) {
+    const btcClosed = btcSeries.candles.filter((candle) => candle.isClosed).length;
+    const btcAvailable = btcClosed >= 100 && btcSeries.quality.validity !== "invalid";
+    components.btc_condition = { available: btcAvailable, reason: btcAvailable ? undefined : "btc_insufficient_history" };
+    if (!btcAvailable) missing.add("btc_condition");
+    if (btcSeries.gaps > 0) missing.add("btc_gaps");
+  }
+
+  const ages = [pairSeries.quality.ageMs, btcSeries?.quality.ageMs ?? null]
+    .filter((age): age is number => age !== null);
+  const validity = worstValidity([pairSeries.quality.validity, btcSeries?.quality.validity ?? "valid"]);
+  const ageMs = ages.length > 0 ? Math.max(...ages) : null;
+  let effectiveValidity = ageMs === null || ageMs > maxAgeMs ? "stale" : validity;
+  if (missing.has("warmup") && effectiveValidity === "valid") effectiveValidity = "unknown";
+  const origin = btcSeries ? `${pairSeries.origin}+${btcSeries.origin}` : pairSeries.origin;
+
+  const missingList = [...missing];
+  const warmup = missingList.includes("warmup") || Object.values(components).some(
+    component => component.reason === "insufficient_history" || component.reason === "btc_insufficient_history"
+  );
+  const source = btcSeries ? `${pairSeries.source}+${btcSeries.source}` : pairSeries.source;
+  const status = effectiveValidity === "valid"
+    ? missingList.length > 0 ? "partial" : "ok"
+    : effectiveValidity === "stale"
+      ? "stale"
+      : effectiveValidity;
+
+  return {
+    validity: effectiveValidity,
+    ageMs,
+    maxAgeMs,
+    missing: missingList,
+    origin,
+    source,
+    status,
+    warmup,
+    components,
+  };
 }

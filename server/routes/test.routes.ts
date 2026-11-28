@@ -376,7 +376,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
           parsedSnapshot = null;
         }
 
-        const exchangeType = ExchangeFactory.getTradingExchangeType();
+        const exchangeType = ExchangeFactory.getTradingExchangeType() ?? "none";
         const saved = await storage.saveOpenPositionByLotId({
           lotId,
           exchange: exchangeType,

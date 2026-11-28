@@ -21,6 +21,9 @@ import {
   getQualityBadgeText,
   formatAgeLabel,
   formatDateTime,
+  formatEntryDataAgeMs,
+  formatEntryDataOrigin,
+  formatEntryDataStatus,
   buildMarketContextNarrative,
   type VwapZone,
   type MarketNarrative,
@@ -221,7 +224,7 @@ const DATA_READINESS_LABELS: Record<string, { text: string; color: string; sever
   warmup:  { text: "Calentando",        color: "text-blue-400",   severity: "warn" },
 };
 
-function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
+export function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
   const state = DATA_READINESS_LABELS[health.dataReadinessState] ?? { text: health.dataReadinessState ?? "Desconocido", color: "text-zinc-400" };
   const ageMin = health.lastCandleAgeMinutes;
 
@@ -254,6 +257,24 @@ function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
             </span>
           </div>
         )}
+        <div className="flex justify-between gap-1">
+          <span className="text-[9px] text-muted-foreground/40 font-mono">Entrada</span>
+          <span className="text-[9px] font-mono text-foreground/60">
+            {formatEntryDataAgeMs(health.entryDataHealth?.ageMs)}
+          </span>
+        </div>
+        <div className="flex justify-between gap-1">
+          <span className="text-[9px] text-muted-foreground/40 font-mono">Origen</span>
+          <span className="text-[9px] font-mono text-foreground/60">
+            {formatEntryDataOrigin(health.entryDataHealth?.origin)}
+          </span>
+        </div>
+        <div className="col-span-2 flex justify-between gap-1">
+          <span className="text-[9px] text-muted-foreground/40 font-mono">Estado entrada</span>
+          <span className="text-[9px] font-mono text-foreground/60">
+            {formatEntryDataStatus(health.entryDataHealth ?? undefined)}
+          </span>
+        </div>
       </div>
       {health.canUseDynamicAnchor && (
         <div className="flex items-center gap-1 text-[9px] text-emerald-400/70 font-mono">

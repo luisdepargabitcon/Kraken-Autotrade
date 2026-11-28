@@ -9,7 +9,9 @@
  */
 import { InstitutionalDcaCycle, InstitutionalDcaAssetConfigRow } from "@shared/schema";
 import { idcaMarketContextService, MarketContext } from "./IdcaMarketContextService";
-import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+import * as repo from "./IdcaRepository";
+import { submitAndReconcile } from "./IdcaLiveOrderReconciler";
 
 export interface ExecutionConfig {
   // Estrategia de ejecución
@@ -46,6 +48,9 @@ export interface ExecutionRequest {
   urgency: "low" | "medium" | "high" | "critical";
   reason: string;
   config: ExecutionConfig;
+  // STRICT MODE GUARD (P0): execution through this manager requires the exact
+  // string "live". Any other value (including undefined) fails closed.
+  mode?: string;
 }
 
 export interface ExecutionResult {
@@ -118,6 +123,19 @@ class IdcaExecutionManager {
    * Ejecuta una orden usando la estrategia configurada
    */
   async executeOrder(request: ExecutionRequest): Promise<ExecutionResult> {
+    // STRICT MODE GUARD (P0): solo el modo exacto "live" puede ejecutar ordenes
+    // reales. Cualquier otro valor — simulation, undefined, null, corrupto o
+    // desconocido — falla cerrado antes de cualquier efecto.
+    if (request.mode !== "live") {
+      throw new Error(`IDCA_EXECUTION_MODE_GUARD: executeOrder requires exact mode "live", got ${JSON.stringify(request.mode)}`);
+    }
+    if (request.cycleId > 0) {
+      const cycle = await repo.getCycleById(request.cycleId);
+      const scope = resolveIdcaExecutionScope(cycle, request.mode);
+      if (!scope.ok) {
+        throw new Error(`IDCA_EXECUTION_MODE_GUARD: execution scope mismatch or invalid persisted mode (${scope.reason})`);
+      }
+    }
     const startTime = Date.now();
     const state = this.initializeExecutionState(request);
     
@@ -171,35 +189,9 @@ class IdcaExecutionManager {
     request: ExecutionRequest,
     state: ExecutionState
   ): Promise<ExecutionResult> {
-    const exchange = ExchangeFactory.getTradingExchange();
-    
-    let orderResult: OrderResult;
-    let retries = 0;
-    
-    while (retries <= request.config.maxRetries) {
-      try {
-        const order = await exchange.placeOrder({
-          pair: request.pair,
-          type: request.side as "buy" | "sell",
-          ordertype: "market",
-          volume: request.totalQuantity.toFixed(8),
-        });
-        
-        if (order) {
-          orderResult = await this.parseOrderResult(order, request, retries);
-          state.orders.push(orderResult);
-          state.executedQuantity += orderResult.quantity;
-          break;
-        }
-      } catch (error) {
-        retries++;
-        if (retries > request.config.maxRetries) {
-          throw new Error(`Simple execution failed after ${retries} retries: ${(error as Error).message}`);
-        }
-        
-        await this.delay(request.config.retryDelayMs);
-      }
-    }
+    const orderResult = await this.submitReconciledOrder(request, request.totalQuantity, "simple");
+    state.orders.push(orderResult);
+    state.executedQuantity += orderResult.quantity;
     
     return this.buildExecutionResult(state, request);
   }
@@ -229,19 +221,9 @@ class IdcaExecutionManager {
       const currentChildSize = Math.min(adjustedChildSize, remainingQuantity);
       
       try {
-        const exchange = ExchangeFactory.getTradingExchange();
-        const order = await exchange.placeOrder({
-          pair: request.pair,
-          type: request.side as "buy" | "sell",
-          ordertype: "market",
-          volume: currentChildSize.toFixed(8),
-        });
-        
-        if (order) {
-          const orderResult = await this.parseOrderResult(order, request, 0);
-          state.orders.push(orderResult);
-          state.executedQuantity += orderResult.quantity;
-        }
+        const orderResult = await this.submitReconciledOrder(request, currentChildSize, `child_${i + 1}`);
+        state.orders.push(orderResult);
+        state.executedQuantity += orderResult.quantity;
         
         // Delay entre órdenes hijas
         if (i < actualChildCount - 1) {
@@ -276,19 +258,9 @@ class IdcaExecutionManager {
       const sliceSize = Math.min(baseSliceSize * variance, remainingQuantity);
       
       try {
-        const exchange = ExchangeFactory.getTradingExchange();
-        const order = await exchange.placeOrder({
-          pair: request.pair,
-          type: request.side as "buy" | "sell",
-          ordertype: "market",
-          volume: sliceSize.toFixed(8),
-        });
-        
-        if (order) {
-          const orderResult = await this.parseOrderResult(order, request, 0);
-          state.orders.push(orderResult);
-          state.executedQuantity += orderResult.quantity;
-        }
+        const orderResult = await this.submitReconciledOrder(request, sliceSize, `twap_${i + 1}`);
+        state.orders.push(orderResult);
+        state.executedQuantity += orderResult.quantity;
         
       } catch (error) {
         console.warn(`[IdcaExecutionManager] TWAP slice ${i + 1} failed:`, error);
@@ -365,6 +337,46 @@ class IdcaExecutionManager {
     
     this.executionStates.set(request.cycleId, state);
     return state;
+  }
+
+  /**
+   * Envía una orden a través del reconciler durable. Las claves son por tramo;
+   * una repetición de la misma clave reconcilia y nunca reenvía.
+   */
+  private async submitReconciledOrder(
+    request: ExecutionRequest,
+    quantity: number,
+    key: string
+  ): Promise<OrderResult> {
+    let closePosition = false;
+    if (request.side === "sell" && request.cycleId > 0) {
+      const cycle = await repo.getCycleById(request.cycleId);
+      const cycleQty = parseFloat(String(cycle?.totalQuantity ?? "0"));
+      closePosition = cycleQty > 0 && quantity >= cycleQty * 0.9975;
+    }
+    const outcome = await submitAndReconcile({
+      cycleId: request.cycleId,
+      pair: request.pair,
+      side: request.side,
+      requestedQty: quantity,
+      reason: request.reason,
+      intentKey: `${request.reason}_${key}`,
+      closePosition,
+    });
+    if (outcome.filledQty <= 0) {
+      throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
+    }
+    return {
+      orderId: outcome.intent.clientOrderId,
+      exchangeOrderId: outcome.intent.exchangeOrderId ?? undefined,
+      quantity: outcome.filledQty,
+      price: outcome.avgPrice,
+      valueUsd: outcome.filledQty * outcome.avgPrice,
+      feesUsd: outcome.feesUsd,
+      status: outcome.state === "filled" ? "filled" : "partial",
+      executedAt: new Date(),
+      retryCount: 0,
+    };
   }
 
   /**

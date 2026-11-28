@@ -1,3 +1,4 @@
+import { normalizeEpochToMs } from "../marketData/epochNormalizer";
 /**
  * IdcaMarketContextService — Servicio unificado de contexto de mercado
  *
@@ -201,12 +202,12 @@ class IdcaMarketContextService {
     }
 
     // FASE 7: Convertir OHLC.time de segundos (Kraken) a milisegundos para computeBasePrice y computeVwapAnchored.
-    // IdcaEngine hace esta conversión via mapKrakenCandles(c.time * 1000).
+    // IdcaEngine aplica la misma normalización canónica en mapKrakenCandles.
     // MarketDataService.getCandles devuelve OHLC[] directamente del exchange con time en segundos.
-    const candles = rawCandles.map((c: any) => ({
-      ...c,
-      time: c.time > 1e12 ? c.time : c.time * 1000,
-    }));
+    const candles = rawCandles.flatMap((c: any) => {
+      const normalized = normalizeEpochToMs(c.time, { nowMs: Date.now() });
+      return normalized.ok ? [{ ...c, time: normalized.ms }] : [];
+    });
 
     // FASE 6: Log warm-up si hay pocas velas
     const MIN_WARMUP_CANDLES = 24;

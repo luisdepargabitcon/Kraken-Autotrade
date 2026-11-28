@@ -216,6 +216,9 @@ export interface IdcaEntryCheckResult {
   allowed: boolean;
   blockReasons: IdcaBlockReason[];
   marketScore?: number;
+  marketScoreStatus?: "ok" | "degraded" | "unavailable";
+  marketScoreMissing?: string[];
+  marketScoreRenormalized?: boolean;
   volatilityScore?: number;
   sizeProfile?: IdcaSizeProfile;
   entryDipPct?: number;
@@ -250,6 +253,8 @@ export interface IdcaEntryCheckResult {
   referenceUpdatedAt?: string;
   referenceContext?: import("./IdcaReferenceContext").ReferenceContext;
   confluenceResult?: IdcaConfluenceResult;
+  confluenceEnforcement?: "diagnostic" | "enforced";
+  confluenceDecisionClass?: IdcaDecisionClass;
 }
 
 export interface IdcaPairEvaluation {

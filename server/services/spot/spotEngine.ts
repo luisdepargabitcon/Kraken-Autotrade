@@ -3428,6 +3428,9 @@ async function persistAndReserveRealEntryIntentAtomic(
   }
 
   return await db.transaction(async (tx) => {
+    // TANGO-5 §2: lock COMPARTIDO con IDCA — serializa las reservas de compra de
+    // todos los motores de la cuenta en el mismo dominio transaccional.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('account_live_buy_reservation'))`);
     // 1. Lock bot_config and read current reservation
     const configRow = await tx.execute(sql`
       SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved
@@ -3440,12 +3443,24 @@ async function persistAndReserveRealEntryIntentAtomic(
     }
     const currentReserved = Number(configRow.rows[0].reserved);
 
+    // TANGO-5 §2: exposición de CUENTA — las compras pendientes de otros motores
+    // (p. ej. IDCA) compiten por el mismo quote y deben descontarse dentro del lock.
+    const otherEnginesRes = await tx.execute(sql`
+      SELECT COALESCE(SUM(CAST(reserved_quote_usd AS numeric)), 0) AS pending_other
+      FROM order_intents
+      WHERE engine_owner != ${SPOT_ENGINE_OWNER}
+        AND side = 'buy'
+        AND reserved_quote_usd IS NOT NULL
+        AND status IN ('submitting','accepted_pending','uncertain','partial','pending','accepted')
+    `);
+    const otherEnginesPending = Number(otherEnginesRes.rows[0]?.pending_other ?? 0) || 0;
+
     // R10.7-9: ALWAYS validate notionalUsd <= available capital INSIDE the lock —
     // there is no code path that reserves without checking balance.
-    const available = grossQuoteBalance - currentReserved;
+    const available = grossQuoteBalance - currentReserved - otherEnginesPending;
     if (notionalUsd > available) {
       throw new RealIntentPersistenceError(
-        `persistAndReserve: insufficient capital — notional=${notionalUsd}, available=${available} (balance=${grossQuoteBalance}, reserved=${currentReserved})`
+        `persistAndReserve: insufficient capital — notional=${notionalUsd}, available=${available} (balance=${grossQuoteBalance}, reserved=${currentReserved}, otherEnginesPending=${otherEnginesPending})`
       );
     }
 

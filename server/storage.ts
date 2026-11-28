@@ -404,6 +404,23 @@ export interface IStorage {
     asset: string | null;
     pair: string | null;
     value: number;
+    tsProvider: Date | null;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }>>;
+  getMarketMetricSnapshots(params: {
+    source: string;
+    metric: string;
+    asset: string | null;
+    since: Date;
+    limit?: number;
+  }): Promise<Array<{
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsProvider: Date | null;
     tsIngested: Date;
     meta: Record<string, unknown>;
   }>>;
@@ -3341,10 +3358,19 @@ export class DatabaseStorage implements IStorage {
     await db.execute(sql`
       INSERT INTO market_metrics_snapshots
         (source, metric, asset, pair, value, ts_provider, ts_ingested, meta)
-      VALUES
-        (${record.source}, ${record.metric}, ${record.asset}, ${record.pair},
-         ${record.value}, ${record.tsProvider}, ${record.tsIngested},
-         ${JSON.stringify(record.meta)}::jsonb)
+      SELECT
+        ${record.source}, ${record.metric}, ${record.asset}, ${record.pair},
+        ${record.value}, ${record.tsProvider}, ${record.tsIngested},
+        ${JSON.stringify(record.meta)}::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM market_metrics_snapshots existing
+        WHERE existing.source = ${record.source}
+          AND existing.metric = ${record.metric}
+          AND existing.asset IS NOT DISTINCT FROM ${record.asset}
+          AND COALESCE(existing.ts_provider, existing.ts_ingested) = COALESCE(${record.tsProvider}::timestamptz, ${record.tsIngested}::timestamptz)
+        LIMIT 1
+      )
     `);
   }
 
@@ -3354,19 +3380,22 @@ export class DatabaseStorage implements IStorage {
     asset: string | null;
     pair: string | null;
     value: number;
+    tsProvider: Date | null;
     tsIngested: Date;
     meta: Record<string, unknown>;
   }>> {
-    // Obtener el snapshot más reciente por (metric, asset) en las últimas 24h
+    // Carga acotada: snapshot más reciente por (metric, asset) en las últimas 24h.
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (metric, COALESCE(asset, ''))
         source, metric, asset, pair,
         CAST(value AS FLOAT) AS value,
+        ts_provider,
         ts_ingested,
         meta
       FROM market_metrics_snapshots
       WHERE ts_ingested > NOW() - INTERVAL '24 hours'
       ORDER BY metric, COALESCE(asset, ''), ts_ingested DESC
+      LIMIT 200
     `);
     return (rows.rows as any[]).map(r => ({
       source:     r.source,
@@ -3374,6 +3403,51 @@ export class DatabaseStorage implements IStorage {
       asset:      r.asset ?? null,
       pair:       r.pair ?? null,
       value:      parseFloat(r.value),
+      tsProvider: r.ts_provider ? new Date(r.ts_provider) : null,
+      tsIngested: new Date(r.ts_ingested),
+      meta:       (typeof r.meta === "string" ? JSON.parse(r.meta) : r.meta) ?? {},
+    }));
+  }
+
+  async getMarketMetricSnapshots(params: {
+    source: string;
+    metric: string;
+    asset: string | null;
+    since: Date;
+    limit?: number;
+  }): Promise<Array<{
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsProvider: Date | null;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }>> {
+    const limit = Math.max(1, Math.min(params.limit ?? 200, 500));
+    const rows = await db.execute(sql`
+      SELECT
+        source, metric, asset, pair,
+        CAST(value AS FLOAT) AS value,
+        ts_provider,
+        ts_ingested,
+        meta
+      FROM market_metrics_snapshots
+      WHERE source = ${params.source}
+        AND metric = ${params.metric}
+        AND asset IS NOT DISTINCT FROM ${params.asset}
+        AND COALESCE(ts_provider, ts_ingested) >= ${params.since}
+      ORDER BY COALESCE(ts_provider, ts_ingested) ASC
+      LIMIT ${limit}
+    `);
+    return (rows.rows as any[]).map(r => ({
+      source:     r.source,
+      metric:     r.metric,
+      asset:      r.asset ?? null,
+      pair:       r.pair ?? null,
+      value:      parseFloat(r.value),
+      tsProvider: r.ts_provider ? new Date(r.ts_provider) : null,
       tsIngested: new Date(r.ts_ingested),
       meta:       (typeof r.meta === "string" ? JSON.parse(r.meta) : r.meta) ?? {},
     }));

@@ -235,37 +235,9 @@ export class KrakenService implements IExchangeService {
     price?: string;
     volume: string;
   }): Promise<OrderResult> {
-    if (!this.client) throw new Error("Kraken client not initialized");
-    
-    const krakenPair = this.formatPair(params.pair);
-    const orderParams: any = {
-      pair: krakenPair,
-      type: params.type,
-      ordertype: params.ordertype,
-      volume: params.volume,
-    };
-
-    if (params.price) {
-      orderParams.price = params.price;
-    }
-
-    try {
-      balanceCache.invalidate('kraken');
-      const result = await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams), `kraken.placeOrder:${params.pair}:${params.type}`) as { txid?: string[] };
-      const txids = result?.txid || [];
-      return {
-        success: txids.length > 0,
-        orderId: txids[0],
-        txid: txids[0],
-        volume: parseFloat(params.volume),
-        price: params.price ? parseFloat(params.price) : undefined
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+    // DOCTRINE: Kraken is a market-data venue only. Order placement on Kraken is
+    // unconditionally forbidden regardless of configuration, credentials or flags.
+    throw new Error("KRAKEN_EXECUTION_FORBIDDEN: Kraken is data-only; trading venue is Revolut X");
   }
 
   async placeOrderRaw(params: {
@@ -275,33 +247,15 @@ export class KrakenService implements IExchangeService {
     price?: string;
     volume: string;
   }): Promise<any> {
-    if (!this.client) throw new Error("Kraken client not initialized");
-    
-    const krakenPair = this.formatPair(params.pair);
-    const orderParams: any = {
-      pair: krakenPair,
-      type: params.type,
-      ordertype: params.ordertype,
-      volume: params.volume,
-    };
-
-    if (params.price) {
-      orderParams.price = params.price;
-    }
-
-    balanceCache.invalidate('kraken');
-    return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams), `kraken.placeOrderRaw:${params.pair}:${params.type}`);
+    // DOCTRINE: Kraken is a market-data venue only. Order placement on Kraken is
+    // unconditionally forbidden regardless of configuration, credentials or flags.
+    throw new Error("KRAKEN_EXECUTION_FORBIDDEN: Kraken is data-only; trading venue is Revolut X");
   }
 
   async cancelOrder(txid: string): Promise<boolean> {
-    if (!this.client) throw new Error("Kraken client not initialized");
-    try {
-      balanceCache.invalidate('kraken');
-      await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }), `kraken.cancelOrder:${txid.slice(0, 8)}`);
-      return true;
-    } catch {
-      return false;
-    }
+    // DOCTRINE: Kraken is a market-data venue only. Order mutation on Kraken is
+    // unconditionally forbidden regardless of configuration, credentials or flags.
+    throw new Error("KRAKEN_EXECUTION_FORBIDDEN: Kraken is data-only; trading venue is Revolut X");
   }
 
   async getOpenOrders() {

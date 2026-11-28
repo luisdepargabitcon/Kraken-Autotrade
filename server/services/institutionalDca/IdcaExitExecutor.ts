@@ -15,6 +15,8 @@ import type {
 } from "@shared/schema";
 import type { IdcaExitInstruction } from "@shared/schema";
 import type { IdcaMode } from "./IdcaTypes";
+import { resolveIdcaExecutionScope } from "./IdcaExecutionScope";
+import { submitAndReconcile, type ReconciledOutcome } from "./IdcaLiveOrderReconciler";
 
 const TAG = "[IDCA_EXIT_EXEC]";
 const EXECUTING_TIMEOUT_MINUTES = 5;
@@ -183,28 +185,24 @@ async function executeSimulationSell(
 async function executeLiveSell(
   cycle: InstitutionalDcaCycle,
   acc: SellAccounting,
-  clientOrderId: string
-): Promise<string | null> {
-  const exchange = ExchangeFactory.getTradingExchange();
-  const sellOrder = await exchange.placeOrder({
+  clientOrderId: string,
+  closePosition: boolean,
+  closeReason: string
+): Promise<ReconciledOutcome> {
+  const outcome = await submitAndReconcile({
+    cycleId: cycle.id,
     pair: cycle.pair,
-    type: "sell",
-    ordertype: "market",
-    volume: acc.quantitySold.toFixed(8),
-    // userref / clientOrderId passed if exchange supports it (Kraken: userref)
-    ...(clientOrderId ? { userref: clientOrderId } : {}),
+    side: "sell",
+    requestedQty: acc.quantitySold,
+    reason: "exit_instruction",
+    intentKey: clientOrderId || `exit_${cycle.id}`,
+    closePosition,
+    closeReason,
   });
-
-  if (!sellOrder) throw new Error("placeOrder devolvió null/undefined");
-
-  const hasOrderId = !!(sellOrder.orderId || sellOrder.txid);
-  if (!hasOrderId) {
-    throw new Error(
-      `live_no_order_id: order creada (success=${sellOrder.success}) pero sin orderId/txid confirmado.`
-    );
+  if (outcome.state !== "filled" && !(outcome.state === "partial" && outcome.terminal && outcome.filledQty > 0)) {
+    throw new Error(`IDCA_ORDER_NOT_FILLED: ${outcome.state}`);
   }
-
-  return sellOrder.orderId || sellOrder.txid || null;
+  return outcome;
 }
 
 // ─── Cycle accounting update ──────────────────────────────────────────────────
@@ -311,6 +309,30 @@ export async function executeExitInstruction(
   const cycleId = instr.cycleId;
   const closePct = parseFloat(String(instr.closePct));
 
+  const cycleForScope = (await repo.getCycleById(cycleId)) ?? null;
+  const scope = resolveIdcaExecutionScope(cycleForScope, mode);
+  if (!scope.ok) {
+    console.error(
+      `${TAG} #${instructionId} EXECUTION_SCOPE_BLOCKED: requested=${String(mode)} ` +
+      `persisted=${String(cycleForScope?.mode)} reason=${scope.reason}`
+    );
+    await repo.createEvent({
+      cycleId,
+      pair: instr.pair,
+      mode: String(instr.mode),
+      eventType: "execution_scope_blocked",
+      severity: "critical",
+      message: `Instrucción de salida #${instructionId} bloqueada por scope de modo inválido (${scope.reason}).`,
+      payloadJson: {
+        instructionId,
+        requestedMode: String(mode),
+        persistedMode: cycleForScope?.mode ?? null,
+        reason: scope.reason,
+      },
+    });
+    return;
+  }
+
   // 2. Generate clientOrderId + mark executing
   const clientOrderId = `IDCA_EXIT_${cycleId}_${instructionId}_${Date.now()}`;
   const marked = await exitRepo.markExecuting(instructionId, clientOrderId);
@@ -362,35 +384,56 @@ export async function executeExitInstruction(
       acc = computeSellAccounting(cycle, closePct, currentPrice, config, mode);
     }
 
-    // 6. Execute sell
-    let exchangeOrderId: string | null = null;
-    if (mode === "simulation") {
-      exchangeOrderId = await executeSimulationSell(cycle, acc, closePct, instructionId);
-    } else {
-      exchangeOrderId = await executeLiveSell(cycle, acc, clientOrderId);
-    }
-
-    // 7. Update cycle — always pass original closePct (100 or partial), NOT a derived percentage
     const closeReason = instr.type === "price_target"
       ? "price_target_exit"
       : instr.type === "scheduled_time"
       ? "scheduled_exit"
       : "manual_exit";
 
-    await updateCycleAfterSell(cycle, acc, closePct, currentPrice, closeReason);
+    // 6. Execute sell
+    let exchangeOrderId: string | null = null;
+    let positionClosed = mode === "simulation" && closePct === 100;
+    if (mode === "simulation") {
+      exchangeOrderId = await executeSimulationSell(cycle, acc, closePct, instructionId);
+    } else {
+      const liveOutcome = await executeLiveSell(cycle, acc, clientOrderId, closePct === 100, closeReason);
+      positionClosed = liveOutcome.state === "filled" && closePct === 100;
+      exchangeOrderId = liveOutcome.intent.exchangeOrderId || liveOutcome.intent.clientOrderId;
+      const oldCapitalUsedLive = parseFloat(String(cycle.capitalUsedUsd || "0"));
+      const qtySold = liveOutcome.filledQty;
+      const ratio = closePct === 100 && liveOutcome.state === "filled" ? 1 : Math.min(1, qtySold / Math.max(totalQty, 1e-12));
+      const costBasisSoldLive = oldCapitalUsedLive * ratio;
+      const grossLive = qtySold * liveOutcome.avgPrice;
+      const feesLive = liveOutcome.feesUsd;
+      const netLive = grossLive - feesLive;
+      acc = {
+        quantitySold: qtySold,
+        sellRatio: ratio,
+        costBasisSold: costBasisSoldLive,
+        remainingCost: Math.max(0, oldCapitalUsedLive - costBasisSoldLive),
+        grossSellValue: grossLive,
+        fees: feesLive,
+        slippage: 0,
+        netSellValue: netLive,
+        realizedPnlIncrement: netLive - costBasisSoldLive,
+      };
+    }
 
-    // 8. Create order record (dust adjustment noted in triggerReason for traceability)
-    const orderType = closePct < 100 ? "partial_sell" : "final_sell";
-    const effectiveTriggerReason = dustAdjusted ? `${orderType}_dust_adj` : orderType;
-    await createExitOrder(cycle, acc, currentPrice, exchangeOrderId, orderType, effectiveTriggerReason);
+    // 7. Update cycle — simulation only; live accounting is applied once by IdcaLiveOrderReconciler
+    if (mode === "simulation") {
+      await updateCycleAfterSell(cycle, acc, closePct, currentPrice, closeReason);
+      const orderType = closePct < 100 ? "partial_sell" : "final_sell";
+      const effectiveTriggerReason = dustAdjusted ? `${orderType}_dust_adj` : orderType;
+      await createExitOrder(cycle, acc, currentPrice, exchangeOrderId, orderType, effectiveTriggerReason);
+    }
 
     // 9. Mark instruction executed
-    const remainingQty = closePct < 100
-      ? parseFloat(String(cycle.totalQuantity || "0")) - acc.quantitySold
-      : 0;
+    const remainingQty = positionClosed
+      ? 0
+      : Math.max(0, parseFloat(String(cycle.totalQuantity || "0")) - acc.quantitySold);
     await exitRepo.markExecuted(instructionId, {
       executionExchangeOrderId: exchangeOrderId,
-      executionPrice: currentPrice,
+      executionPrice: mode === "live" ? (acc.quantitySold > 0 ? acc.grossSellValue / acc.quantitySold : currentPrice) : currentPrice,
       executionQuantity: acc.quantitySold,
       costBasisSoldUsd: acc.costBasisSold,
       realizedPnlIncrementUsd: acc.realizedPnlIncrement,
@@ -407,10 +450,10 @@ export async function executeExitInstruction(
       cycleId,
       pair: cycle.pair,
       mode,
-      eventType: closePct < 100 ? "partial_sell_executed" : "cycle_closed",
+      eventType: positionClosed ? "cycle_closed" : "partial_sell_executed",
       severity: "info",
       message:
-        closePct < 100
+        !positionClosed
           ? `Venta parcial ${closePct}% ejecutada: ${acc.quantitySold.toFixed(6)} @ $${currentPrice.toFixed(2)}, PnL parcial=${pnlSign}$${acc.realizedPnlIncrement.toFixed(2)}`
           : `Ciclo cerrado (${closeReason}): ${acc.quantitySold.toFixed(6)} @ $${currentPrice.toFixed(2)}, PnL=${pnlSign}$${acc.realizedPnlIncrement.toFixed(2)}`,
       payloadJson: {

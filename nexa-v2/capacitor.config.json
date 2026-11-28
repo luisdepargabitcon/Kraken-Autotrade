@@ -1,0 +1,6 @@
+{
+  "appId": "com.nexa.autotrade.v2",
+  "appName": "NEXA V2",
+  "webDir": "web",
+  "android": { "allowMixedContent": false }
+}

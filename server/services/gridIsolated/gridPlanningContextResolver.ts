@@ -106,6 +106,7 @@ export interface GridMarketAndConstraintsInput {
   executionPolicy: string;
   takerFallbackEnabled: boolean;
   tickerMaxAgeMs?: number;
+  preferPublicPairConstraints?: boolean;
 }
 
 export interface GridMarketAndConstraintsResult {
@@ -158,7 +159,9 @@ export async function resolveGridMarketAndConstraints(
   // 1. Pair constraints (Revolut X).
   let pairConstraints: RevolutXPairConstraints;
   try {
-    pairConstraints = await revolutXService.resolveGridPairConstraints(input.pair);
+    pairConstraints = await revolutXService.resolveGridPairConstraints(input.pair, undefined, {
+      publicOnly: input.preferPublicPairConstraints === true,
+    });
   } catch {
     pairConstraints = fallbackPairConstraints(input.pair);
   }
@@ -229,6 +232,7 @@ export async function resolveGridPlanningContext(
       executionPolicy: input.executionPolicy,
       takerFallbackEnabled: input.takerFallbackEnabled,
       tickerMaxAgeMs: input.tickerMaxAgeMs,
+      preferPublicPairConstraints: input.config?.mode === "SHADOW",
     });
 
   if (!referenceMarket.verifiedForPlanning) {
@@ -270,6 +274,10 @@ export async function resolveGridPlanningContext(
             progressiveIntensity: input.allocationInput.progressiveIntensity,
             maxLevelPct: input.allocationInput.maxLevelPct,
             minLevelUsd: input.allocationInput.minLevelUsd,
+          },
+          {
+            mode: input.config?.mode,
+            shadowReferenceCapitalUsd: Number(input.config?.gridWalletInitialUsd ?? 0),
           },
         );
       } catch {

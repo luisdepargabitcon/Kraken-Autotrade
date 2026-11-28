@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { EventsWebSocketProvider } from "@/context/EventsWebSocketContext";
+import { AuthGate } from "@/components/AuthGate";
 import { MobileTabBar } from "@/components/mobile/MobileTabBar";
 import NexaHome from "@/pages/NexaHome";
 import Dashboard from "@/pages/Dashboard";
@@ -78,13 +79,15 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <EventsWebSocketProvider>
-          <Toaster />
-          <div className="mobile-content-padding">
-            <Router />
-          </div>
-          <MobileTabBar />
-        </EventsWebSocketProvider>
+        <AuthGate>
+          <EventsWebSocketProvider>
+            <Toaster />
+            <div className="mobile-content-padding">
+              <Router />
+            </div>
+            <MobileTabBar />
+          </EventsWebSocketProvider>
+        </AuthGate>
       </TooltipProvider>
     </QueryClientProvider>
   );

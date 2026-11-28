@@ -37,12 +37,12 @@ export function registerMarketMetricsRoutes(app: Express): void {
   app.get("/api/market-metrics/status", async (req, res) => {
     try {
       const config = await marketMetricsService.getConfig();
-      const providerStatuses = marketMetricsService.getProviderStatuses();
+      const diagnostics = await marketMetricsService.getDiagnostics();
       res.json({
         enabled: config.enabled,
         mode: config.mode,
         sensitivity: config.sensitivity,
-        providers: providerStatuses,
+        ...diagnostics,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Error obteniendo estado" });

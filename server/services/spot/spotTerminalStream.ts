@@ -511,14 +511,16 @@ class SpotTerminalWsServer {
     const userAgent: string = req.headers["user-agent"] ?? "unknown";
     const wsOrigin: string | undefined = req.headers.origin as string | undefined;
 
-    if (!ticket) {
+    const authV2Validated = (req as any).authV2WsValidated === true;
+
+    if (!authV2Validated && !ticket) {
       log(`[WS-SPOT-TERMINAL] No ticket provided — rejecting (ip: ${clientIp})`, "websocket");
       socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"MISSING_TICKET\"}");
       socket.destroy();
       return;
     }
 
-    if (!validateAndConsumeTicket(ticket, clientIp, userAgent, wsOrigin)) {
+    if (!authV2Validated && !validateAndConsumeTicket(ticket || "", clientIp, userAgent, wsOrigin)) {
       log(`[WS-SPOT-TERMINAL] Invalid/expired/fingerprint/origin-mismatch ticket — rejecting (ip: ${clientIp})`, "websocket");
       socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"INVALID_TICKET\"}");
       socket.destroy();

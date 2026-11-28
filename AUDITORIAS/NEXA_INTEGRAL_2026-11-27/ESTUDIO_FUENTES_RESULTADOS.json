@@ -1,0 +1,144 @@
+{
+  "generatedAt": "2026-11-27T22:04:25.711Z",
+  "limits": "Una ventana de ~30 días; divergencia observada no garantiza el futuro; volúmenes de cada venue NO son sumables ni equivalentes.",
+  "results": [
+    {
+      "asset": "BTC",
+      "source": "bitstamp",
+      "quote": "USD",
+      "candles": 720,
+      "alignedWithKraken": 719,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": -0.0036,
+        "meanAbs": 0.0107,
+        "p95Abs": 0.0266,
+        "maxAbs": 0.3564
+      },
+      "volumeRatioVsKraken": {
+        "median": 0.461,
+        "p5": 0.136,
+        "p95": 1.442
+      },
+      "note": "Cotización en USD."
+    },
+    {
+      "asset": "BTC",
+      "source": "bitfinex",
+      "quote": "USD",
+      "candles": 720,
+      "alignedWithKraken": 718,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": 0.1664,
+        "meanAbs": 0.1664,
+        "p95Abs": 0.3133,
+        "maxAbs": 0.8543
+      },
+      "volumeRatioVsKraken": {
+        "median": 0.236,
+        "p5": 0.062,
+        "p95": 0.912
+      },
+      "note": "Cotización en USD."
+    },
+    {
+      "asset": "BTC",
+      "source": "binance_spot",
+      "quote": "USDT",
+      "candles": 720,
+      "alignedWithKraken": 718,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": 0.1332,
+        "meanAbs": 0.1332,
+        "p95Abs": 0.2062,
+        "maxAbs": 0.6355
+      },
+      "volumeRatioVsKraken": {
+        "median": 6.225,
+        "p5": 2.227,
+        "p95": 16.495
+      },
+      "note": "Cotización en USDT: la divergencia incluye la base USDT/USD; no es equivalente a USD."
+    },
+    {
+      "asset": "ETH",
+      "source": "bitstamp",
+      "quote": "USD",
+      "candles": 720,
+      "alignedWithKraken": 719,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": -0.0032,
+        "meanAbs": 0.016,
+        "p95Abs": 0.043,
+        "maxAbs": 0.1412
+      },
+      "volumeRatioVsKraken": {
+        "median": 0.307,
+        "p5": 0.077,
+        "p95": 0.959
+      },
+      "note": "Cotización en USD."
+    },
+    {
+      "asset": "ETH",
+      "source": "bitfinex",
+      "quote": "USD",
+      "candles": 720,
+      "alignedWithKraken": 718,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": 0.1609,
+        "meanAbs": 0.1609,
+        "p95Abs": 0.3093,
+        "maxAbs": 0.9112
+      },
+      "volumeRatioVsKraken": {
+        "median": 0.228,
+        "p5": 0.057,
+        "p95": 1.155
+      },
+      "note": "Cotización en USD."
+    },
+    {
+      "asset": "ETH",
+      "source": "binance_spot",
+      "quote": "USDT",
+      "candles": 720,
+      "alignedWithKraken": 718,
+      "gapsInSource": 0,
+      "duplicateTimestamps": 0,
+      "nonHourAlignedTimestamps": 0,
+      "invalidOhlcRows": 0,
+      "closeDiffPct": {
+        "mean": 0.1269,
+        "meanAbs": 0.1269,
+        "p95Abs": 0.1882,
+        "maxAbs": 0.2409
+      },
+      "volumeRatioVsKraken": {
+        "median": 9.885,
+        "p5": 3.166,
+        "p95": 24.645
+      },
+      "note": "Cotización en USDT: la divergencia incluye la base USDT/USD; no es equivalente a USD."
+    }
+  ]
+}

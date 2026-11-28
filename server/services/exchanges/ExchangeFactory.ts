@@ -6,6 +6,8 @@ import { balanceCache } from './BalanceCache';
 import { krakenRateLimiter } from '../../utils/krakenRateLimiter';
 
 export type ExchangeType = 'kraken' | 'revolutx';
+export type ExecutionVenueType = 'revolutx';
+export type ExecutionVenueUnavailableReason = 'not_selected' | 'disabled' | 'not_initialized' | 'forbidden_selection';
 
 export interface ExchangeStatus {
   name: ExchangeType;
@@ -16,16 +18,23 @@ export interface ExchangeStatus {
   makerFeePct: number;
 }
 
+interface ForbiddenSelectionDiagnostics {
+  reason: ExecutionVenueUnavailableReason;
+  configuredExchange: unknown;
+  at: string;
+}
+
 export class ExchangeFactoryClass {
   private static instance: ExchangeFactoryClass;
-  
-  private activeExchange: ExchangeType = 'kraken';
-  private tradingExchange: ExchangeType = 'kraken';
+
+  private activeExchange: ExchangeType | null = null;
+  private tradingExchange: ExchangeType | null = null;
   private dataExchange: ExchangeType = 'kraken';
   private exchangeEnabled: Record<ExchangeType, boolean> = {
     kraken: true,
     revolutx: false
   };
+  private forbiddenSelection: ForbiddenSelectionDiagnostics | null = null;
 
   static getInstance(): ExchangeFactoryClass {
     if (!ExchangeFactoryClass.instance) {
@@ -35,23 +44,43 @@ export class ExchangeFactoryClass {
   }
 
   getExchange(type?: ExchangeType): IExchangeService {
-    const exchangeType = type || this.activeExchange;
-    
-    switch (exchangeType) {
+    if (!type) return this.getExecutionVenue();
+
+    switch (type) {
       case 'revolutx':
         if (!revolutXService.isInitialized()) {
-          console.warn('[ExchangeFactory] Revolut X not initialized, falling back to Kraken');
-          return krakenService;
+          console.error('[ExchangeFactory] VENUE_UNAVAILABLE:not_initialized: Revolut X not initialized; no fallback venue allowed');
+          throw new Error('VENUE_UNAVAILABLE:not_initialized: Revolut X not initialized');
         }
         return revolutXService;
       case 'kraken':
-      default:
         return krakenService;
     }
   }
 
+  getExecutionVenue(): IExchangeService {
+    if (this.tradingExchange !== 'revolutx') {
+      const reason: ExecutionVenueUnavailableReason = this.tradingExchange === 'kraken'
+        ? 'forbidden_selection'
+        : this.forbiddenSelection?.reason ?? 'not_selected';
+      return this.throwVenueUnavailable(reason);
+    }
+    if (!this.exchangeEnabled.revolutx) {
+      return this.throwVenueUnavailable('disabled');
+    }
+    if (!revolutXService.isInitialized()) {
+      return this.throwVenueUnavailable('not_initialized');
+    }
+    return revolutXService;
+  }
+
+  private throwVenueUnavailable(reason: ExecutionVenueUnavailableReason): never {
+    console.error(`[ExchangeFactory] VENUE_UNAVAILABLE:${reason}: Revolut X execution venue unavailable`);
+    throw new Error(`VENUE_UNAVAILABLE:${reason}: Revolut X execution venue unavailable`);
+  }
+
   getTradingExchange(): IExchangeService {
-    return this.getExchange(this.tradingExchange);
+    return this.getExecutionVenue();
   }
 
   getDataExchange(): IExchangeService {
@@ -59,21 +88,25 @@ export class ExchangeFactoryClass {
   }
 
   getActiveExchange(): IExchangeService {
-    return this.getExchange(this.activeExchange);
+    return this.getExecutionVenue();
   }
 
   setTradingExchange(type: ExchangeType): void {
+    if (type === 'kraken') {
+      throw new Error('KRAKEN_TRADING_FORBIDDEN: Kraken is data-only; Revolut X is the sole execution venue');
+    }
     if (!this.exchangeEnabled[type]) {
       throw new Error(`Exchange ${type} is not enabled`);
     }
-    
+
     const exchange = this.getExchange(type);
     if (!exchange.isInitialized()) {
       throw new Error(`Exchange ${type} is not configured`);
     }
-    
+
     this.tradingExchange = type;
     this.activeExchange = type;
+    this.forbiddenSelection = null;
     console.log(`[ExchangeFactory] Trading exchange set to: ${type}`);
   }
 
@@ -81,37 +114,27 @@ export class ExchangeFactoryClass {
     if (!this.exchangeEnabled[type]) {
       throw new Error(`Exchange ${type} is not enabled`);
     }
-    
+
     const exchange = this.getExchange(type);
     if (!exchange.isInitialized()) {
       throw new Error(`Exchange ${type} is not configured`);
     }
-    
+
     this.dataExchange = type;
     console.log(`[ExchangeFactory] Data exchange set to: ${type}`);
   }
 
   setActiveExchange(type: ExchangeType): void {
-    if (!this.exchangeEnabled[type]) {
-      throw new Error(`Exchange ${type} is not enabled`);
-    }
-    
-    const exchange = this.getExchange(type);
-    if (!exchange.isInitialized()) {
-      throw new Error(`Exchange ${type} is not configured`);
-    }
-    
-    this.activeExchange = type;
-    this.tradingExchange = type;
+    this.setTradingExchange(type);
     console.log(`[ExchangeFactory] Active exchange set to: ${type}`);
   }
 
-  getActiveExchangeType(): ExchangeType {
-    return this.activeExchange;
+  getActiveExchangeType(): ExecutionVenueType | null {
+    return this.activeExchange === 'revolutx' ? 'revolutx' : null;
   }
 
-  getTradingExchangeType(): ExchangeType {
-    return this.tradingExchange;
+  getTradingExchangeType(): ExecutionVenueType | null {
+    return this.tradingExchange === 'revolutx' ? 'revolutx' : null;
   }
 
   getDataExchangeType(): ExchangeType {
@@ -126,12 +149,12 @@ export class ExchangeFactoryClass {
     if (type === this.activeExchange && !enabled) {
       throw new Error('Cannot disable the active exchange');
     }
-    
+
     const enabledCount = Object.values(this.exchangeEnabled).filter(Boolean).length;
     if (!enabled && enabledCount <= 1) {
       throw new Error('At least one exchange must be enabled');
     }
-    
+
     this.exchangeEnabled[type] = enabled;
     console.log(`[ExchangeFactory] Exchange ${type} enabled: ${enabled}`);
   }
@@ -185,30 +208,57 @@ export class ExchangeFactoryClass {
       console.log('[ExchangeFactory] Kraken initialized');
     }
 
-    if (config.revolutxApiKey && config.revolutxPrivateKey) {
+    const hasRevolutXCredentials = !!(config.revolutxApiKey && config.revolutxPrivateKey);
+    if (hasRevolutXCredentials) {
       revolutXService.initialize({
-        apiKey: config.revolutxApiKey,
+        apiKey: config.revolutxApiKey!,
         apiSecret: '',
-        privateKey: config.revolutxPrivateKey
+        privateKey: config.revolutxPrivateKey!
       });
       this.exchangeEnabled.revolutx = config.revolutxEnabled === true;
       console.log('[ExchangeFactory] Revolut X initialized');
+    } else {
+      this.exchangeEnabled.revolutx = false;
     }
 
-    const tradingEx = config.tradingExchange || config.activeExchange || 'kraken';
-    if (this.exchangeEnabled[tradingEx]) {
-      const exchange = this.getExchange(tradingEx);
-      if (exchange.isInitialized()) {
-        this.tradingExchange = tradingEx;
-        this.activeExchange = tradingEx;
-      }
+    const configuredExchange = config.tradingExchange ?? config.activeExchange;
+    let unavailableReason: ExecutionVenueUnavailableReason | null = null;
+
+    if (configuredExchange === 'kraken') {
+      unavailableReason = 'forbidden_selection';
+    } else if (configuredExchange !== 'revolutx') {
+      unavailableReason = configuredExchange == null ? 'not_selected' : 'forbidden_selection';
+    } else if (!hasRevolutXCredentials) {
+      unavailableReason = 'not_initialized';
+    } else if (!this.exchangeEnabled.revolutx) {
+      unavailableReason = 'disabled';
+    } else if (!revolutXService.isInitialized()) {
+      unavailableReason = 'not_initialized';
+    }
+
+    if (unavailableReason) {
+      this.tradingExchange = null;
+      this.activeExchange = null;
+      this.forbiddenSelection = {
+        reason: unavailableReason,
+        configuredExchange,
+        at: new Date().toISOString(),
+      };
+      console.error(
+        `[ExchangeFactory] EXECUTION_VENUE_NOT_SELECTED reason=${unavailableReason} configured=${String(configuredExchange)}; ` +
+        'no fallback or automatic Revolut X authorization is allowed'
+      );
+    } else {
+      this.tradingExchange = 'revolutx';
+      this.activeExchange = 'revolutx';
+      this.forbiddenSelection = null;
     }
 
     // Data exchange is ALWAYS Kraken - it has the best OHLC/market data API
     // This is intentionally hardcoded and ignores config.dataExchange
     this.dataExchange = 'kraken';
 
-    console.log(`[ExchangeFactory] Trading: ${this.tradingExchange}, Data: ${this.dataExchange}`);
+    console.log(`[ExchangeFactory] Trading: ${this.tradingExchange ?? 'none'}, Data: ${this.dataExchange}`);
   }
 
   getTradingExchangeFees(): { takerFeePct: number; makerFeePct: number } {
@@ -227,8 +277,8 @@ export class ExchangeFactoryClass {
     return {
       timestamp: new Date().toISOString(),
       exchanges: {
-        active: this.activeExchange,
-        trading: this.tradingExchange,
+        active: this.activeExchange ?? 'none',
+        trading: this.tradingExchange ?? 'none',
         data: this.dataExchange,
         kraken: {
           initialized: krakenService.isInitialized(),
@@ -240,6 +290,7 @@ export class ExchangeFactoryClass {
           rateLimiter: revolutXService.getRateLimiterStats(),
         },
       },
+      forbiddenSelection: this.forbiddenSelection,
       nonceManager: krakenNonceManager.getStats(),
       krakenRateLimiter: krakenRateLimiter.getStats(),
       balanceCache: balanceCache.getStats(),

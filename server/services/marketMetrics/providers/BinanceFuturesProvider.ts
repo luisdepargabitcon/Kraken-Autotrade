@@ -7,6 +7,7 @@
 
 import { log } from "../../../utils/logger";
 import type { IMetricsProvider, ProviderFetchResult, RawMetricRecord } from "./IMetricsProvider";
+import { normalizeEpochToMs } from "../../marketData/epochNormalizer";
 
 const BINANCE_FUTURES_BASE = "https://fapi.binance.com/fapi/v1";
 const BINANCE_FUTURES_DATA  = "https://fapi.binance.com/futures/data";
@@ -14,6 +15,16 @@ const FETCH_TIMEOUT_MS = 12_000;
 const SOURCE = "binance";
 
 const TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
+function providerTs(raw: unknown, now: Date): Date | null {
+  if (raw === undefined || raw === null) return now;
+  const normalized = normalizeEpochToMs(raw, { nowMs: now.getTime() });
+  return normalized.ok ? new Date(normalized.ms) : null;
+}
+
+export function convertFundingRateFractionToPct(rateFraction: number): number {
+  return parseFloat((rateFraction * 100).toFixed(6));
+}
+
 const SYMBOL_TO_ASSET: Record<string, string> = {
   BTCUSDT: "BTC",
   ETHUSDT: "ETH",
@@ -92,7 +103,7 @@ export class BinanceFuturesProvider implements IMetricsProvider {
             asset: SYMBOL_TO_ASSET[symbol] ?? symbol,
             pair: null,
             value: parseFloat(oiUsd.toFixed(2)),
-            tsProvider: row.timestamp ? new Date(row.timestamp) : now,
+            tsProvider: providerTs(row.timestamp, now),
             meta: { symbol, sumOpenInterest: row.sumOpenInterest },
           });
         }
@@ -119,8 +130,8 @@ export class BinanceFuturesProvider implements IMetricsProvider {
           metric: "funding_rate",
           asset: SYMBOL_TO_ASSET[symbol] ?? symbol,
           pair: null,
-          value: parseFloat((rate * 100).toFixed(6)), // convertir a %
-          tsProvider: row.fundingTime ? new Date(Number(row.fundingTime)) : now,
+          value: convertFundingRateFractionToPct(rate), // Binance publica fracción por intervalo de funding; el motor compara %.
+          tsProvider: providerTs(row.fundingTime, now),
           meta: { symbol, markPrice: row.markPrice },
         });
       } catch (e: any) {

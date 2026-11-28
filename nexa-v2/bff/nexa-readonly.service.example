@@ -1,0 +1,25 @@
+# Ejemplo systemd, NO instalar sin auditar la máquina.
+[Unit]
+Description=NEXA private read-only gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexa-ro
+Group=nexa-ro
+WorkingDirectory=/opt/nexa-ro/bff
+EnvironmentFile=/etc/nexa-ro/env
+ExecStart=/usr/bin/node /opt/nexa-ro/bff/read-only-server.mjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nexa-ro
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
